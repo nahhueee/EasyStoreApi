@@ -1,0 +1,97 @@
+import {MiscRepo} from '../data/miscRepository';
+import {Router, Request, Response} from 'express';
+import logger from '../log/loggerGeneral';
+const router : Router  = Router();
+
+//#region OBTENER
+router.get('/materiales', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.MaterialesSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de materiales.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/colores', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.ColoresSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de colores.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/procesos', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.ProcesosSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de procesos.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/tipos-producto', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.TiposProductoSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de tipos de producto.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/subtipos-producto', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.SubtiposProductoSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de subtipos.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/generos', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.GenerosSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de generos.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/lineas-talle', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.LineaTallesSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de lineas de talle.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/talles/:id', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.TallesSelector(req.params.id));
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de talles.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+//#endregion
+
+// Export the router
+export default router; 

@@ -154,6 +154,19 @@ CREATE TABLE materiales_colores (
     idMaterial INT
 );
 
+DROP TABLE IF EXISTS lineas_talle;
+CREATE TABLE lineas_talle (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
+
+DROP TABLE IF EXISTS talles;
+CREATE TABLE talles (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idLineaTalle INT,
+    descripcion VARCHAR(8)
+);
+
 
 INSERT INTO parametros(clave, valor) 
 VALUES 
