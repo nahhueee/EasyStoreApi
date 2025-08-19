@@ -1,0 +1,180 @@
+DROP DATABASE IF EXISTS dbeasysales;
+CREATE DATABASE dbeasysales;
+
+USE dbeasysales;
+
+DROP TABLE IF EXISTS parametros;
+CREATE TABLE parametros (
+    clave VARCHAR(30) PRIMARY KEY,
+    valor VARCHAR(50) NOT NULL DEFAULT ''
+);
+
+DROP TABLE IF EXISTS parametros_facturacion;
+CREATE TABLE parametros_facturacion (
+    condicion VARCHAR(50),
+    puntoVta INT,
+    cuil BIGINT,
+    razon VARCHAR(100),
+    direccion VARCHAR(250)
+);
+
+DROP TABLE IF EXISTS backups;
+CREATE TABLE backups (
+    nombre VARCHAR(30) PRIMARY KEY,
+    fecha DATE
+);
+
+DROP TABLE IF EXISTS usuarios;
+CREATE TABLE usuarios (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    usuario VARCHAR(30),
+    nombre VARCHAR(100),
+    email VARCHAR(100),
+    pass VARCHAR(30),
+    idCargo INT
+);
+
+DROP TABLE IF EXISTS cargos;
+CREATE TABLE cargos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100)
+);
+
+DROP TABLE IF EXISTS clientes;
+CREATE TABLE clientes (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100)
+);
+
+DROP TABLE IF EXISTS tipos_pago;
+CREATE TABLE tipos_pago (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(15)
+);
+
+DROP TABLE IF EXISTS ventas_entrega;
+CREATE TABLE ventas_entrega (
+    id INT PRIMARY KEY,
+    idCliente INT NOT NULL,
+    monto DECIMAL(10,2) NOT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+ENGINE=InnoDB;
+
+DROP TABLE IF EXISTS ventas_entrega_detalle;
+CREATE TABLE ventas_entrega_detalle (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idEntrega INT NOT NULL,
+    idVenta INT NOT NULL,
+    montoAplicado DECIMAL(10,2) NOT NULL
+)
+ENGINE=InnoDB;
+
+DROP TABLE IF EXISTS etiquetas;
+CREATE TABLE etiquetas (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50),
+    tamanio VARCHAR(10),
+    titulo VARCHAR(50),
+    mOferta INT,
+    mCodigo INT,
+    mPrecio INT,
+    mNombre INT,
+    mVencimiento INT,
+    bordeColor VARCHAR(10),
+    bordeAncho VARCHAR(10),
+    tituloColor VARCHAR(10),
+    tituloAlineacion VARCHAR(10),
+    ofertaFondo VARCHAR(10),
+    ofertaAlineacion VARCHAR(10),
+    nombreAlineacion VARCHAR(10),
+    vencimientoAlineacion VARCHAR(10),
+    precioAlineacion VARCHAR(10),
+    precioColor VARCHAR(10)
+);
+
+
+
+
+DROP TABLE IF EXISTS productos;
+CREATE TABLE productos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    codigo VARCHAR(30),
+    nombre VARCHAR(100),
+    idProceso INT,
+    idTipo INT,
+    idSubTipo INT,
+    idGenero INT,
+    idMaterial INT,
+    idColor INT,
+    moldeleria INT
+);
+
+DROP TABLE IF EXISTS procesos;
+CREATE TABLE procesos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
+
+DROP TABLE IF EXISTS tipos;
+CREATE TABLE tipos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
+
+DROP TABLE IF EXISTS subTipos;
+CREATE TABLE subTipos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
+
+DROP TABLE IF EXISTS generos;
+CREATE TABLE generos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50),
+    abreviatura VARCHAR(10)
+);
+
+DROP TABLE IF EXISTS colores;
+CREATE TABLE colores (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50),
+    hexa VARCHAR(10)
+);
+
+DROP TABLE IF EXISTS materiales;
+CREATE TABLE materiales (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
+
+DROP TABLE IF EXISTS materiales_colores;
+CREATE TABLE materiales_colores (
+    idColor INT,
+    idMaterial INT
+);
+
+
+INSERT INTO parametros(clave, valor) 
+VALUES 
+('version','2.0.1'),
+('dni',''), 
+('expresion',''), 
+('backups', 'false'), 
+('dias', 'Lunes, Martes, Viernes'), 
+('hora', '20:30'), 
+('avisoNvaVersion', 'true'),
+('actualizado', 'false');
+
+INSERT INTO parametros_facturacion(condicion, puntoVta, cuil, razon, direccion) 
+VALUES ('monotributista', 0, 0, '', '');
+
+INSERT INTO productos(id,codigo,nombre,cantidad,tipoPrecio,costo,precio,redondeo,porcentaje,vencimiento,faltante,unidad,imagen) 
+VALUES(NULL,'*','VARIOS',1,'$',1,1,NULL,NULL,NULL,NULL,'UNI',NULL);
+
+INSERT INTO tipos_pago(id, nombre) VALUES (NULL,'EFECTIVO'), (NULL,'TARJETA'), (NULL,'TRANSFERENCIA'), (NULL,'COMBINADO');
+INSERT INTO cargos(id, nombre) VALUES (NULL,'ADMINISTRADOR'), (NULL,'EMPLEADO');
+INSERT INTO clientes(id, nombre) VALUES (NULL,'CONSUMIDOR FINAL');
+INSERT INTO usuarios(id, usuario, nombre, email, pass, idCargo) VALUES (NULL, 'ADMIN', 'ADMINISTRADOR', NULL, '1235', 1);
+
+

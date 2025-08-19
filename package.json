@@ -1,0 +1,51 @@
+{
+  "name": "easysalesapi",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsc && nodemon --ignore src/log/backup.json --ignore src/log/general.json --ignore src/log/update.json src/index.ts",
+    "tsc": "tsc",
+    "build": "tsc && node setup.js",
+    "migration": "npx knex migrate:latest",
+    "rollback": "npx knex migrate:rollback",
+    "new-migration": "npx knex migrate:make"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/knex": "^0.16.1",
+    "@types/morgan": "^1.9.9",
+    "@types/mysql": "^2.15.26",
+    "@types/node": "^20.14.2",
+    "cpy-cli": "^5.0.0",
+    "express": "^4.19.2",
+    "fs-extra": "^11.3.0",
+    "morgan": "^1.10.0",
+    "nodemon": "^3.1.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "afip.ts": "^3.2.2",
+    "axios": "^1.7.7",
+    "cors": "^2.8.5",
+    "dgram": "^1.0.1",
+    "dotenv": "^16.4.5",
+    "form-data": "^4.0.2",
+    "knex": "^3.1.0",
+    "macaddress": "^0.5.3",
+    "moment": "^2.30.1",
+    "moment-timezone": "^0.5.45",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.9.7",
+    "node-cron": "^3.0.3",
+    "pdf-to-printer": "^5.6.0",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.0",
+    "winston": "^3.17.0",
+    "xlsx": "^0.18.5"
+  }
+}
