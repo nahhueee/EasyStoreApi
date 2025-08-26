@@ -72,21 +72,10 @@ router.get('/generos', async (req:Request, res:Response) => {
 
 router.get('/lineas-talle', async (req:Request, res:Response) => {
     try{ 
-        res.json(await MiscRepo.LineaTallesSelector());
+        res.json(await MiscRepo.ObtenerLineasTalle());
 
     } catch(error:any){
         let msg = "Error al obtener el listado de lineas de talle.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
-router.get('/talles/:id', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await MiscRepo.TallesSelector(req.params.id));
-
-    } catch(error:any){
-        let msg = "Error al obtener el listado de talles.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

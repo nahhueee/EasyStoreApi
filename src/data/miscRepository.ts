@@ -1,3 +1,4 @@
+import { RowDataPacket } from 'mysql2';
 import db from '../db';
 
 class MiscRepository{
@@ -87,26 +88,18 @@ class MiscRepository{
         }
     }
 
-    async LineaTallesSelector(){
+    async ObtenerLineasTalle(){
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM lineas_talle');
-            return [rows][0];
+            const [rows] = await connection.execute<RowDataPacket[]>('SELECT * FROM lineas_talle');
 
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
+            const result = rows.map(row => ({
+                id: row.id,
+                talles: row.descripcion.split("-")
+            }));
 
-    async TallesSelector(idLinea){
-        const connection = await db.getConnection();
-        
-        try {
-            const [rows] = await connection.query('SELECT * FROM talles WHERE idLinea = ?', [idLinea]);
-            return [rows][0];
+           return result;
 
         } catch (error:any) {
             throw error;

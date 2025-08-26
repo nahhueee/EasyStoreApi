@@ -15,12 +15,12 @@ router.post('/obtener', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/verificar/:cod', async (req:Request, res:Response) => {
+router.get('/obtener-uno/:codigo', async (req:Request, res:Response) => {
     try{ 
-        res.json(await ProductosRepo.VerificarYObtener(req.params));
+        res.json(await ProductosRepo.ObtenerUno({codigo: req.params.codigo}));
 
     } catch(error:any){
-        let msg = "Error intentando buscar productos.";
+        let msg = "Error intentando obtener el pedido con codigo: " + req.params.codigo;
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }
@@ -37,16 +37,6 @@ router.post('/buscar-productos', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/productos-soloPrecio', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await ProductosRepo.ObtenerProductosSoloPrecio());
-
-    } catch(error:any){
-        let msg = "Error al obtener el listado de productos tipo soloPrecio.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
 //#endregion
 
 //#region ABM
@@ -56,63 +46,6 @@ router.post('/agregar', async (req:Request, res:Response) => {
 
     } catch(error:any){
         let msg = "Error al intentar agregar el producto.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
-router.post('/actualizar-varios', async (req:Request, res:Response) => {
-    try{ 
-        let errores:string[] = [];
-        let insertados:number = 0;
-        let actualizados:number = 0;
-
-        const productos = req.body.productos;
-        const accionActualizar = req.body.accion;
-        if (!productos || !Array.isArray(productos)) {
-            return res.status(400).json({ mensaje: "Formato inválido de productos." });
-        }
-
-        for (const [i, prod] of productos.entries()) {
-            try {
-            const existente = await ProductosRepo.ValidarCodigo(prod);
-            if (existente==0) {
-                await ProductosRepo.Agregar(prod);
-                insertados++;
-            } else {
-                prod.id = existente;
-
-                if(accionActualizar == "ACTUALIZAR"){
-                    await ProductosRepo.Modificar(prod);
-                    actualizados++;
-                }else if(accionActualizar == "SUMARSTOCK"){
-                    const producto = await ProductosRepo.ObtenerUno(prod.id)
-                    let nvaCantidad = prod.cantidad + producto.cantidad;
-                    
-                    if(producto.id!=0){
-                        await ProductosRepo.AniadirCantidad({cant:nvaCantidad, idProducto:producto.id});
-                        actualizados++;
-                    }else{
-                        errores.push(`No se pudo actualizar el producto con código ${prod.codigo}.`);
-                    }
-                }
-                else{
-                    errores.push(`Ya existe un producto con el código ${prod.codigo}.`);
-                }
-            }
-            } catch (err) { //Si se encuentran errores grabamos
-                errores.push(`Error en fila ${i + 1}: ${err}`);
-            }
-        }
-
-        return res.json({
-            insertados,
-            actualizados,
-            errores,
-        });
-
-    } catch(error:any){
-        let msg = "Error al intentar actualizar productos desde Excel.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }
@@ -136,28 +69,6 @@ router.put('/aniadir', async (req:Request, res:Response) => {
 
     } catch(error:any){
         let msg = "Error al intentar añadir cantidad al producto.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
-router.put('/actualizar-faltante', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await ProductosRepo.ActualizarFaltante(req.body));
-
-    } catch(error:any){
-        let msg = "Error al intentar actualizar el nro aviso faltante.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
-router.put('/actualizar-vencimiento', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await ProductosRepo.ActualizarVencimiento(req.body));
-
-    } catch(error:any){
-        let msg = "Error al intentar actualizar la fecha de vencimiento.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

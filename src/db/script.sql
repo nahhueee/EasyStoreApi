@@ -1,7 +1,7 @@
-DROP DATABASE IF EXISTS dbeasysales;
-CREATE DATABASE dbeasysales;
+DROP DATABASE IF EXISTS dbeasystore;
+CREATE DATABASE dbeasystore;
 
-USE dbeasysales;
+USE dbeasystore;
 
 DROP TABLE IF EXISTS parametros;
 CREATE TABLE parametros (
@@ -107,23 +107,26 @@ CREATE TABLE productos (
     idGenero INT,
     idMaterial INT,
     idColor INT,
-    moldeleria INT
+    moldeleria INT,
+    imagen VARCHAR(300),
+    fechaBaja DATE
 );
 
 DROP TABLE IF EXISTS procesos;
 CREATE TABLE procesos (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    descripcion VARCHAR(50)
+    descripcion VARCHAR(50),
+    abreviatura VARCHAR(10)
 );
 
-DROP TABLE IF EXISTS tipos;
-CREATE TABLE tipos (
+DROP TABLE IF EXISTS tipos_producto;
+CREATE TABLE tipos_producto (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     descripcion VARCHAR(50)
 );
 
-DROP TABLE IF EXISTS subTipos;
-CREATE TABLE subTipos (
+DROP TABLE IF EXISTS subtipos_producto;
+CREATE TABLE subtipos_producto (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     descripcion VARCHAR(50)
 );
@@ -160,17 +163,20 @@ CREATE TABLE lineas_talle (
     descripcion VARCHAR(50)
 );
 
-DROP TABLE IF EXISTS talles;
-CREATE TABLE talles (
+DROP TABLE IF EXISTS talles_producto;
+CREATE TABLE talles_producto (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idProducto INT,
     idLineaTalle INT,
-    descripcion VARCHAR(8)
+    talle VARCHAR(5),
+    cantidad INT,
+    precio DECIMAL(10,2),
+    costo DECIMAL(10,2)
 );
-
 
 INSERT INTO parametros(clave, valor) 
 VALUES 
-('version','2.0.1'),
+('version','1.0.0'),
 ('dni',''), 
 ('expresion',''), 
 ('backups', 'false'), 
@@ -182,12 +188,19 @@ VALUES
 INSERT INTO parametros_facturacion(condicion, puntoVta, cuil, razon, direccion) 
 VALUES ('monotributista', 0, 0, '', '');
 
-INSERT INTO productos(id,codigo,nombre,cantidad,tipoPrecio,costo,precio,redondeo,porcentaje,vencimiento,faltante,unidad,imagen) 
-VALUES(NULL,'*','VARIOS',1,'$',1,1,NULL,NULL,NULL,NULL,'UNI',NULL);
+INSERT INTO productos 
+(codigo, nombre, idProceso, idTipo, idSubTipo, idGenero, idMaterial, idColor, moldeleria, imagen, fechaBaja) 
+VALUES 
+('1', 'VARIOS', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
 INSERT INTO tipos_pago(id, nombre) VALUES (NULL,'EFECTIVO'), (NULL,'TARJETA'), (NULL,'TRANSFERENCIA'), (NULL,'COMBINADO');
 INSERT INTO cargos(id, nombre) VALUES (NULL,'ADMINISTRADOR'), (NULL,'EMPLEADO');
 INSERT INTO clientes(id, nombre) VALUES (NULL,'CONSUMIDOR FINAL');
 INSERT INTO usuarios(id, usuario, nombre, email, pass, idCargo) VALUES (NULL, 'ADMIN', 'ADMINISTRADOR', NULL, '1235', 1);
-
+INSERT INTO lineas_talle(descripcion)
+VALUES
+('XXP-PE-ME-GR-XXG'),
+('4-6-8-10-12-14-16-18'),
+('28-30-32-34-36-38-40-42-44-46'),
+('XS-S-M-L-XL-XXL-3XL-4XL-5XL-6XL');
 

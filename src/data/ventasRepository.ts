@@ -449,12 +449,12 @@ async function ObtenerDetalleVenta(connection, idVenta:number){
                 detalle.precio = parseFloat(row['precio']);
                 detalle.costo = parseFloat(row['costo']);
                 detalle.total = detalle.precio! * detalle.cantidad!;
-                detalle.producto = new Producto({
-                    id: row['idProducto'], 
-                    nombre: row['producto'], 
-                    soloPrecio: row['soloPrecio'] == 1 ? true : false, 
-                    precio: parseFloat(row['precioProducto'])
-                });
+                // detalle.producto = new Producto({
+                //     id: row['idProducto'], 
+                //     nombre: row['producto'], 
+                //     soloPrecio: row['soloPrecio'] == 1 ? true : false, 
+                //     precio: parseFloat(row['precioProducto'])
+                // });
 
 
                 detalles.push(detalle)

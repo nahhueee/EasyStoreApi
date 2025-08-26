@@ -1,6 +1,13 @@
 import moment from 'moment';
 import db from '../db';
-import { Producto } from '../models/Producto';
+import { Producto, TablaProducto } from '../models/Producto';
+import { Proceso } from '../models/Proceso';
+import { Material } from '../models/Material';
+import { Genero } from '../models/Genero';
+import { Color } from '../models/Color';
+import { TipoProducto } from '../models/TipoProducto';
+import { SubtipoProducto } from '../models/SubtipoProducto';
+import { TallesProducto } from '../models/TallesProducto';
 
 class ProductosRepository{
 
@@ -17,32 +24,46 @@ class ProductosRepository{
             const [rows] = await connection.query(queryRegistros);
             const resultado = await connection.query(queryTotal);
 
-            const productos:Producto[] = [];
+            const productos:TablaProducto[] = [];
            
             if (Array.isArray(rows)) {
                 for (let i = 0; i < rows.length; i++) { 
                     const row = rows[i];
 
-                    let producto:Producto = new Producto({
-                        id: row['id'],
-                        codigo: row['codigo'],
-                        nombre: row['nombre'],
-                        cantidad: row['cantidad'],
-                        costo: row['costo'],
-                        precio: row['precio'],
-                        tipoPrecio: row['tipoPrecio'],
-                        redondeo: row['redondeo'],
-                        porcentaje: row['porcentaje'],
-                        vencimiento: row['vencimiento'],
-                        faltante: row['faltante'],
-                        unidad: row['unidad'],
-                        imagen: row['imagen'],
-                        idCategoria: row['idCategoria'],
-                        soloPrecio: row['soloPrecio'],
-                    });
-                    
-                    productos.push(producto);
-                  }
+                    let tablaProducto: TablaProducto = new TablaProducto();
+                    tablaProducto.id = row['id'],
+                    tablaProducto.codigo = row['codigo'],
+                    tablaProducto.nombre = row['nombre'],
+                    tablaProducto.moldeleria = row['moldeleria'],
+                    tablaProducto.imagen = row['imagen'],
+                    tablaProducto.proceso = row['proceso'];
+                    tablaProducto.abrevProceso = row['abrevProceso'];
+                    tablaProducto.material = row['material'];
+                    tablaProducto.genero = row['genero'];
+                    tablaProducto.color = row['color'];
+                    tablaProducto.hexa = row['hexa'];
+                    tablaProducto.tipo = row['tipo'];
+                    tablaProducto.subtipo = row['subtipo'];
+                    tablaProducto.t1 = row['t1'];
+                    tablaProducto.t2 = row['t2'];
+                    tablaProducto.t3 = row['t3'];
+                    tablaProducto.t4 = row['t4'];
+                    tablaProducto.t5 = row['t5'];
+                    tablaProducto.t6 = row['t6'];
+                    tablaProducto.t7 = row['t7'];
+                    tablaProducto.t8 = row['t8'];
+                    tablaProducto.t9 = row['t9'];
+                    tablaProducto.t10 = row['t10'];
+
+                    tablaProducto.total = parseInt(tablaProducto.t1) + parseInt(tablaProducto.t2) +
+                                          parseInt(tablaProducto.t3) + parseInt(tablaProducto.t4) +
+                                          parseInt(tablaProducto.t5) + parseInt(tablaProducto.t6) +
+                                          parseInt(tablaProducto.t7) + parseInt(tablaProducto.t8) +
+                                          parseInt(tablaProducto.t9) + parseInt(tablaProducto.t10);
+
+
+                    productos.push(tablaProducto);
+                }
             }
 
             return {total:resultado[0][0].total, registros:productos};
@@ -52,6 +73,48 @@ class ProductosRepository{
         } finally{
             connection.release();
         }
+    }
+
+    async ObtenerUno(filtros:any){
+        const connection = await db.getConnection();
+
+        try {
+            let consulta = await ObtenerQuery(filtros,false);
+            const rows = await connection.query(consulta);
+
+            if (Array.isArray(rows)) {
+                let resultado:Producto = new Producto();
+
+                const row = rows[0];
+                resultado = await this.CompletarObjeto(row);
+                return resultado;
+            }
+
+            return null;
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async CompletarObjeto(row){
+        let producto:Producto = new Producto();
+        producto.id = row['id'],
+        producto.codigo = row['codigo'],
+        producto.nombre = row['nombre'],
+        producto.moldeleria = row['moldeleria'],
+        producto.imagen = row['imagen'],
+        producto.proceso = new Proceso({id: row['idProceso'], descripcion: row['proceso']});
+        producto.material = new Material({id: row['idMaterial'], descripcion: row['material']});
+        producto.genero = new Genero({id: row['idGenero'], descripcion: row['genero'], abreviatura: row['abreviatura']});
+        producto.color = new Color({id: row['idColor'], descripcion: row['color'], hexa: row['hexa']});
+        producto.tipo = new TipoProducto({id: row['idTipo'], descripcion: row['tipo']});
+        producto.subtipo = new SubtipoProducto({id: row['idSubtipo'], descripcion: row['subtipo']});
+        producto.talles = await ObtenerTallesProducto(producto.id);
+
+        return producto;
     }
 
     //Busca los productos segun lo que digite el usuario
@@ -76,14 +139,7 @@ class ProductosRepository{
                 for (let i = 0; i < rows.length; i++) { 
                     const row = rows[i];
 
-                    let producto:Producto = new Producto({
-                        id: row['id'],
-                        codigo: row['codigo'],
-                        nombre: row['nombre'],
-                        costo: row['costo'],
-                        precio: row['precio'],
-                        unidad: row['unidad'],
-                    });
+                    let producto:Producto = new Producto();
                     
                     productos.push(producto);
                   }
@@ -97,90 +153,33 @@ class ProductosRepository{
             connection.release();
         }
     }
-
-    async ObtenerProductosSoloPrecio(){
-        const connection = await db.getConnection();
-        
-        try {
-            const [rows] = await connection.query('SELECT id, codigo, nombre FROM productos WHERE soloPrecio = 1');
-            return [rows][0];
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
-
-    async ObtenerUno(id:number){
-        const connection = await db.getConnection();
-
-        try {
-            const [rows] = await connection.query('SELECT id, codigo, nombre, cantidad, costo, precio, unidad FROM productos WHERE id = ?', [id]);
-            let resultado:Producto = new Producto();
-           
-            if (Array.isArray(rows)) {
-                const row = rows[0];
-
-                resultado = new Producto({
-                    id: row['id'],
-                    codigo: row['codigo'],
-                    cantidad: row['cantidad'],
-                    nombre: row['nombre'],
-                    costo: row['costo'],
-                    precio: row['precio'],
-                    unidad: row['unidad'],
-                });
-            }
-
-            return resultado;
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
     //#endregion
 
     //#region ABM
-    async ValidarCodigo(data:any){
-        const connection = await db.getConnection();
-        
-        try {
-            return await ValidarExistencia(connection, data, false, true);
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
-
     async Agregar(data:any): Promise<string>{
         const connection = await db.getConnection();
 
         try {
-            let existe = await ValidarExistencia(connection, data, false, false);
+            let existe = await ValidarExistencia(connection, data, false);
             if(existe)//Verificamos si ya existe un producto con el mismo codigo
                 return "Ya existe un producto con el mismo código.";
             
-            const consulta = `INSERT INTO productos(codigo,nombre,cantidad,tipoPrecio,costo,precio,redondeo,porcentaje,faltante,vencimiento,unidad,imagen,soloPrecio)
-                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+            const consulta = `INSERT INTO productos(
+                                codigo,nombre,idProceso,idTipo,idSubtipo,
+                                idGenero,idMaterial,idColor,moldeleria,imagen)
+                              VALUES(?,?,?,?,?,?,?,?,?,?)`;
 
             const parametros = [data.codigo.toUpperCase(),
                                 data.nombre.toUpperCase(),
-                                data.cantidad,
-                                data.tipoPrecio,
-                                data.costo,
-                                data.precio,
-                                data.redondeo,
-                                data.porcentaje,
-                                data.faltante,
-                                data.vencimiento ? moment(data.vencimiento).format('YYYY-MM-DD'): null,
-                                data.unidad,
-                                data.imagen,
-                                data.soloPrecio ? 1 : 0];
+                                data.proceso.id,
+                                data.tipo.id,
+                                data.subtipo.id,
+                                data.genero.id,
+                                data.material.id,
+                                data.color.id,
+                                data.moldeleria,
+                                data.imagen
+                            ];
             
             await connection.query(consulta, parametros);
             return "OK";
@@ -196,39 +195,33 @@ class ProductosRepository{
         const connection = await db.getConnection();
 
         try {
-            let existe = await ValidarExistencia(connection, data, true, false);
+            let existe = await ValidarExistencia(connection, data, true);
             if(existe)//Verificamos si ya existe un producto con el mismo codigo
                 return "Ya existe un producto con el mismo código.";
             
             const consulta = `UPDATE productos SET
                                 codigo = ?,
                                 nombre = ?,
-                                cantidad = ?,
-                                tipoPrecio = ?,
-                                costo = ?,
-                                precio = ?,
-                                redondeo = ?,
-                                porcentaje = ?,
-                                faltante = ?,
-                                vencimiento = ?,
-                                unidad = ?,
-                                imagen = ?,
-                                soloPrecio = ?
+                                idProceso = ?,
+                                idTipo = ?,
+                                idSubtipo = ?,
+                                idGenero = ?,
+                                idMaterial = ?,
+                                idColor = ?,
+                                moldeleria = ?,
+                                imagen = ?
                                 WHERE id = ?`;
 
             const parametros = [data.codigo.toUpperCase(),
                                 data.nombre.toUpperCase(),
-                                data.cantidad,
-                                data.tipoPrecio,
-                                data.costo,
-                                data.precio,
-                                data.redondeo,
-                                data.porcentaje,
-                                data.faltante,
-                                data.vencimiento ? moment(data.vencimiento).format('YYYY-MM-DD'): null,
-                                data.unidad,
+                                data.proceso.id,
+                                data.tipo.id,
+                                data.subtipo.id,
+                                data.genero.id,
+                                data.material.id,
+                                data.color.id,
+                                data.moldeleria,
                                 data.imagen,
-                                data.soloPrecio ? 1 : 0,
                                 data.id];
 
             await connection.query(consulta, parametros);
@@ -241,11 +234,15 @@ class ProductosRepository{
         }
     }
 
-    async Eliminar(id:string): Promise<string>{
+   async Eliminar(id:string): Promise<string>{
         const connection = await db.getConnection();
         
         try {
-            await connection.query("DELETE FROM productos WHERE id = ?", [id]);
+            let consulta = " UPDATE productos " +
+                           " SET fechaBaja = ? " +
+                           " WHERE id = ?";
+
+            await connection.query(consulta, [new Date(), id]);
             return "OK";
 
         } catch (error:any) {
@@ -275,47 +272,6 @@ class ProductosRepository{
         }
     }
 
-    async ActualizarFaltante(data:any): Promise<string>{
-        const connection = await db.getConnection();
-
-        try {
-            const consulta = `UPDATE productos SET
-                              faltante = ?
-                              WHERE id = ?`;
-
-            const parametros = [data.faltante, data.idProducto];
-
-            await connection.query(consulta, parametros);
-            return "OK";
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
-
-    async ActualizarVencimiento(data:any): Promise<string>{
-        const connection = await db.getConnection();
-
-        try {
-            const consulta = `UPDATE productos SET
-                              vencimiento = ?
-                              WHERE id = ?`;
-
-            const parametros = [data.vencimiento ? moment(data.vencimiento).format('YYYY-MM-DD'): null, data.idProducto];
-
-            await connection.query(consulta, parametros);
-            return "OK";
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
-
-
     async ActualizarImagen(data:any): Promise<string>{
         const connection = await db.getConnection();
         try {
@@ -335,29 +291,6 @@ class ProductosRepository{
         }
     }
 
-    async VerificarYObtener(parametro:any){
-        const connection = await db.getConnection();
-
-        try {
-            const existe = await ValidarExistencia(connection, {codigo:parametro.cod}, false, false);
-            let producto: Producto = new Producto();
-
-            if(existe){
-                let consulta = " SELECT id, codigo, nombre, cantidad, tipoPrecio, costo, precio, redondeo, porcentaje, vencimiento, faltante, unidad, imagen, soloPrecio " +
-                               " FROM productos WHERE codigo = ? ";
-                
-                const rows = await connection.query(consulta, parametro.cod);
-                producto = new Producto(rows[0][0]);
-            }   
-
-            return {existe, producto}
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        } 
-    }
     //#endregion
 
     //#region ACTUALIZAR PRECIOS
@@ -432,21 +365,14 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         // #region FILTROS
         if (filtros.busqueda != null && filtros.busqueda != "") 
             filtro += " AND (p.nombre LIKE '%"+ filtros.busqueda + "%' OR p.codigo LIKE '%" + filtros.busqueda + "%')";
-
-        if (filtros.faltantes != null && filtros.faltantes == true)
-            filtro += " AND p.cantidad <= p.faltante + 1";
-
-        if (filtros.vencimientos != null && filtros.vencimientos == true)
-            filtro += " AND p.vencimiento IS NOT NULL";
-
+        if (filtros.codigo != null && filtros.codigo != "") 
+            filtro += " AND (p.codigo = "+ filtros.codigo + ")";
         // #endregion
 
         // #region ORDENAMIENTO
         if (filtros.orden != null && filtros.orden != ""){
             orden += " ORDER BY p."+ filtros.orden + " " + filtros.direccion;
-        }else if(filtros.vencimientos != null && filtros.vencimientos == true){
-            orden += " ORDER BY p.vencimiento ASC";
-        } 
+        }
         else{
             orden += " ORDER BY p.id DESC";
         }    
@@ -465,9 +391,34 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
-                " SELECT p.* " +
+                " SELECT p.*, pro.descripcion proceso, pro.abreviatura abrevProceso, tp.descripcion tipo, stp.descripcion subtipo, " +
+                " g.abreviatura genero, g.abreviatura, c.descripcion color, c.hexa, m.descripcion material, " +
+                
+                // PIVOT de talles
+                "SUM(CASE WHEN pt.talle = 't1' THEN pt.cantidad ELSE 0 END) AS t1," +
+                "SUM(CASE WHEN pt.talle = 't2'  THEN pt.cantidad ELSE 0 END) AS t2," +
+                "SUM(CASE WHEN pt.talle = 't3'  THEN pt.cantidad ELSE 0 END) AS t3," +
+                "SUM(CASE WHEN pt.talle = 't4'  THEN pt.cantidad ELSE 0 END) AS t4," +
+                "SUM(CASE WHEN pt.talle = 't5' THEN pt.cantidad ELSE 0 END) AS t5," +
+                "SUM(CASE WHEN pt.talle = 't6' THEN pt.cantidad ELSE 0 END) AS t6," +
+                "SUM(CASE WHEN pt.talle = 't7' THEN pt.cantidad ELSE 0 END) AS t7," +
+                "SUM(CASE WHEN pt.talle = 't8' THEN pt.cantidad ELSE 0 END) AS t8," +
+                "SUM(CASE WHEN pt.talle = 't9' THEN pt.cantidad ELSE 0 END) AS t9," +
+                "SUM(CASE WHEN pt.talle = 't10' THEN pt.cantidad ELSE 0 END) AS t10" +
+
                 " FROM productos p " +
-                " WHERE p.id <> 1 " +
+                " LEFT JOIN procesos pro ON pro.id = p.idProceso " +
+                " LEFT JOIN tipos_producto tp ON tp.id = p.idTipo " +
+                " LEFT JOIN subtipos_producto stp ON stp.id = p.idSubtipo " +
+                " LEFT JOIN generos g ON g.id = p.idGenero " +
+                " LEFT JOIN colores c ON c.id = p.idColor " +
+                " LEFT JOIN materiales m ON m.id = p.idMaterial " +
+                " LEFT JOIN talles_producto pt ON pt.idProducto = p.id " +
+                " WHERE p.fechaBaja IS NULL AND p.id <> 1 " +
+                " GROUP BY p.id, p.nombre, p.codigo, p.idProceso, p.idTipo, " +
+                " p.idSubtipo, p.idGenero, p.idColor, p.idMaterial, " +
+                " pro.descripcion, tp.descripcion, stp.descripcion, " +
+                " g.descripcion, g.abreviatura, c.descripcion, c.hexa, m.descripcion " +
                 filtro +
                 orden +
                 paginado +
@@ -480,20 +431,50 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
     }
 }
 
-async function ValidarExistencia(connection, data:any, modificando:boolean, consultaExcel:boolean):Promise<any>{
+async function ObtenerTallesProducto(idProducto:number):Promise<any>{
+    const connection = await db.getConnection();
     try {
-        let consulta = " SELECT id FROM productos WHERE codigo = ? ";
+        const consulta = " SELECT tp.cantidad, tp.costo, tp.precio, tp.talle, tp.idLineaTalle  " +
+                         " FROM talles_producto tp " +
+                         " WHERE tp.id = ? ";
+
+        const [rows] = await connection.query(consulta,[idProducto]);
+       
+        const tallesProducto:TallesProducto[] = [];
+           
+        if (Array.isArray(rows)) {
+            for (let i = 0; i < rows.length; i++) { 
+                const row = rows[i];
+                tallesProducto.push(new TallesProducto({
+                    cantidad: row['cantidad'],
+                    costo: row['costo'],
+                    precio: row['precio'],
+                    talle: row['talle'],
+                    idLineaTalle: row['idLineaTalle']
+                }));
+            }
+        }
+
+        return tallesProducto;
+
+    } catch (error) {
+        throw error; 
+    } finally{
+        connection.release();
+    }
+    
+}
+
+async function ValidarExistencia(connection, data:any, modificando:boolean):Promise<any>{
+    try {
+        let consulta = " SELECT id FROM productos WHERE fechaBaja IS NOT NULL AND codigo = ? ";
         if(modificando) consulta += " AND id <> ? ";
         const parametros = [data.codigo.toUpperCase(), data.id];
         const rows = await connection.query(consulta,parametros);
 
-        if(!consultaExcel){
-            if(rows[0].length > 0) return true;
-            return false;
-        }else{ //Si es consulta desde importacion excel necesito el ID
-            if(rows[0].length > 0) return rows[0][0].id;
-            return 0;
-        }
+        if(rows[0].length > 0) return true;
+        
+        return false;
         
     } catch (error) {
         throw error; 
