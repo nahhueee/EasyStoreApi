@@ -15,17 +15,6 @@ router.get('/materiales', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/colores', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await MiscRepo.ColoresSelector());
-
-    } catch(error:any){
-        let msg = "Error al obtener el listado de colores.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
 router.get('/procesos', async (req:Request, res:Response) => {
     try{ 
         res.json(await MiscRepo.ProcesosSelector());

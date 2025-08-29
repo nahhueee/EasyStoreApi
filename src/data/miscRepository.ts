@@ -1,5 +1,7 @@
 import { RowDataPacket } from 'mysql2';
 import db from '../db';
+import { Material } from '../models/Material';
+import { Color } from '../models/Color';
 
 class MiscRepository{
 
@@ -9,21 +11,21 @@ class MiscRepository{
         
         try {
             const [rows] = await connection.query('SELECT * FROM materiales');
-            return [rows][0];
+            const materiales:Material[] = [];
+            
+            if (Array.isArray(rows)) {
+                for (let i = 0; i < rows.length; i++) { 
+                    const row = rows[i];
 
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
+                    let material:Material = new Material();
+                    material.id = row['id'];
+                    material.descripcion = row['descripcion'];
+                    material.colores = await ObtenerColoresMaterial(connection, material.id!);
 
-    async ColoresSelector(){
-        const connection = await db.getConnection();
-        
-        try {
-            const [rows] = await connection.query('SELECT * FROM colores');
-            return [rows][0];
+                    materiales.push(material);
+                }
+            }
+            return materiales;
 
         } catch (error:any) {
             throw error;
@@ -109,5 +111,36 @@ class MiscRepository{
     }
     //#endregion
 }
+
+async function ObtenerColoresMaterial(connection, idMaterial:number){
+    try {
+        const consulta = " SELECT c.* FROM materiales_colores mc " +
+                         " LEFT JOIN colores c on c.id = mc.idColor " +
+                         " WHERE mc.idMaterial = ?";
+
+        const [rows] = await connection.query(consulta, [idMaterial]);
+
+        const colores:Color[] = [];
+
+        if (Array.isArray(rows)) {
+            for (let i = 0; i < rows.length; i++) { 
+                const row = rows[i];
+                
+                let color:Color = new Color();
+                color.id = row['id'];
+                color.descripcion = row['descripcion'];
+                color.hexa = row['hexa'];
+                
+                colores.push(color)
+              }
+        }
+
+        return colores;
+
+    } catch (error) {
+        throw error; 
+    }
+}
+
 
 export const MiscRepo = new MiscRepository();
