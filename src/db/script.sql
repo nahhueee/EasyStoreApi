@@ -191,7 +191,7 @@ CREATE TABLE talles_producto (
 
 INSERT INTO parametros(clave, valor) 
 VALUES 
-('version','1.0.0'),
+('version','1.1.0'),
 ('dni',''), 
 ('expresion',''), 
 ('backups', 'false'), 
@@ -204,9 +204,9 @@ INSERT INTO parametros_facturacion(condicion, puntoVta, cuil, razon, direccion)
 VALUES ('monotributista', 0, 0, '', '');
 
 INSERT INTO productos 
-(codigo, nombre, idProceso, idTipo, idSubTipo, idGenero, idMaterial, idColor, moldeleria, imagen, fechaBaja) 
+(codigo, nombre, idProceso, idTipo, idSubTipo, idGenero, idMaterial, idColor, idTemporada, moldeleria, imagen, fechaBaja) 
 VALUES 
-('1', 'VARIOS', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+('1', 'VARIOS', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
 INSERT INTO tipos_pago(id, nombre) VALUES (NULL,'EFECTIVO'), (NULL,'TARJETA'), (NULL,'TRANSFERENCIA'), (NULL,'COMBINADO');
 INSERT INTO cargos(id, nombre) VALUES (NULL,'ADMINISTRADOR'), (NULL,'EMPLEADO');
