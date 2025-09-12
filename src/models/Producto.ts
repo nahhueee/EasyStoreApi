@@ -1,23 +1,19 @@
-import { Color } from "./Color";
-import { Genero } from "./Genero";
-import { Material } from "./Material";
-import { Proceso } from "./Proceso";
-import { SubtipoProducto } from "./SubtipoProducto";
 import { TallesProducto } from "./TallesProducto";
-import { TipoProducto } from "./TipoProducto";
-
 export class Producto {
     id : number = 0;
     codigo? : string;
     nombre? : string;
-    proceso?: Proceso;
-    tipo?: TipoProducto;
-    subtipo?: SubtipoProducto;
-    genero?: Genero;
-    material?: Material;
-    color?: Color;
+    empresa?: string;
+    cliente?: number;
+    proceso?: number;
+    tipo?: number;
+    subtipo?: number;
+    genero?: number;
+    temporada?: number;
+    material?: number;
+    color?: number;
     moldeleria?: number;
-    imagen?: string;
+    imagen: string = "";
     talles?: TallesProducto[];
 }
 
@@ -30,6 +26,9 @@ export class TablaProducto {
     tipo?: string;
     subtipo?: string;
     genero?: string;
+    abrevGenero?: string;
+    temporada?: string;
+    abrevTemporada?: string;
     material?: string;
     color?: string;
     hexa?:string;
@@ -48,4 +47,28 @@ export class TablaProducto {
     t10:string = "";
 
     total:number = 0;
+}
+
+export class ExcelProducto {
+    Proceso?: string;
+    Codigo? : string;
+    Nombre? : string;
+    Producto?: string;
+    Tipo?: string;
+    Genero?: string;
+    Material?: string;
+    Color?: string;
+
+    XS:string = "";
+    S:string = "";
+    M:string = "";
+    L:string = "";
+    XL:string = "";
+    XXL:string = "";
+    ["3XL"]:string = "";
+    ["4XL"]:string = "";
+    ["5XL"]:string = "";
+    ["6XL"]:string = "";
+
+    Total:number = 0;
 }

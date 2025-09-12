@@ -43,7 +43,9 @@ CREATE TABLE cargos (
 DROP TABLE IF EXISTS clientes;
 CREATE TABLE clientes (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    nombre VARCHAR(100)
+    nombre VARCHAR(100),
+    email VARCHAR(100),
+    telefono VARCHAR(20)
 );
 
 DROP TABLE IF EXISTS tipos_pago;
@@ -101,12 +103,15 @@ CREATE TABLE productos (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     codigo VARCHAR(30),
     nombre VARCHAR(100),
+    empresa VARCHAR(50),
     idProceso INT,
+    idCliente INT,
     idTipo INT,
     idSubTipo INT,
     idGenero INT,
     idMaterial INT,
     idColor INT,
+    idTemporada INT,
     moldeleria INT,
     imagen VARCHAR(300),
     fechaBaja DATE
@@ -122,13 +127,15 @@ CREATE TABLE procesos (
 DROP TABLE IF EXISTS tipos_producto;
 CREATE TABLE tipos_producto (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    descripcion VARCHAR(50)
+    descripcion VARCHAR(50),
+    abreviatura VARCHAR(10)
 );
 
 DROP TABLE IF EXISTS subtipos_producto;
 CREATE TABLE subtipos_producto (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    descripcion VARCHAR(50)
+    descripcion VARCHAR(50),
+    abreviatura VARCHAR(10)
 );
 
 DROP TABLE IF EXISTS generos;
@@ -151,6 +158,13 @@ CREATE TABLE materiales (
     descripcion VARCHAR(50)
 );
 
+DROP TABLE IF EXISTS temporadas;
+CREATE TABLE temporadas (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50),
+    abreviatura VARCHAR(10)
+);
+
 DROP TABLE IF EXISTS materiales_colores;
 CREATE TABLE materiales_colores (
     idColor INT,
@@ -169,6 +183,7 @@ CREATE TABLE talles_producto (
     idProducto INT,
     idLineaTalle INT,
     talle VARCHAR(5),
+    ubicacion INT,
     cantidad INT,
     precio DECIMAL(10,2),
     costo DECIMAL(10,2)
@@ -195,7 +210,7 @@ VALUES
 
 INSERT INTO tipos_pago(id, nombre) VALUES (NULL,'EFECTIVO'), (NULL,'TARJETA'), (NULL,'TRANSFERENCIA'), (NULL,'COMBINADO');
 INSERT INTO cargos(id, nombre) VALUES (NULL,'ADMINISTRADOR'), (NULL,'EMPLEADO');
-INSERT INTO clientes(id, nombre) VALUES (NULL,'CONSUMIDOR FINAL');
+INSERT INTO clientes(id, nombre, email, telefono) VALUES (NULL,'CONSUMIDOR FINAL', '', '');
 INSERT INTO usuarios(id, usuario, nombre, email, pass, idCargo) VALUES (NULL, 'ADMIN', 'ADMINISTRADOR', NULL, '1235', 1);
 INSERT INTO lineas_talle(descripcion)
 VALUES

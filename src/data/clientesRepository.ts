@@ -65,8 +65,8 @@ class ClientesRepository{
             if(existe)//Verificamos si ya existe un cliente con el mismo nombre 
                 return "Ya existe un cliente con el mismo nombre.";
             
-            const consulta = "INSERT INTO clientes(nombre) VALUES (?)";
-            const parametros = [data.nombre.toUpperCase()];
+            const consulta = "INSERT INTO clientes(nombre,email,telefono) VALUES (?,?,?)";
+            const parametros = [data.nombre.toUpperCase(), data.email, data.telefono];
             
             await connection.query(consulta, parametros);
             return "OK";
@@ -87,10 +87,12 @@ class ClientesRepository{
                 return "Ya existe un cliente con el mismo nombre.";
             
                 const consulta = `UPDATE clientes 
-                SET nombre = ?
+                SET nombre = ?,
+                    email = ?,
+                    telefono = ?
                 WHERE id = ? `;
 
-            const parametros = [data.nombre.toUpperCase(), data.id];
+            const parametros = [data.nombre.toUpperCase(), data.email, data.telefono, data.id];
             await connection.query(consulta, parametros);
             return "OK";
 
