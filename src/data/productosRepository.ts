@@ -158,7 +158,7 @@ class ProductosRepository{
         producto.nombre = row['nombre'],
         producto.empresa = row['empresa'],
         producto.cliente = row['idCliente'],
-        producto.temporada = row['temporada'],
+        producto.temporada = row['idTemporada'],
         producto.proceso = row['idProceso'],
         producto.tipo = row['idTipo'],
         producto.subtipo = row['idSubTipo'],
@@ -228,7 +228,7 @@ class ProductosRepository{
             //#region Insert Producto
             const consulta = `INSERT INTO productos(
                                 codigo,nombre,empresa,idCliente,idProceso,idTipo,idSubtipo,
-                                idGenero,temporada,idMaterial,idColor,moldeleria)
+                                idGenero,idTemporada,idMaterial,idColor,moldeleria)
                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`;
 
             const parametros = [producto.codigo!.toUpperCase(),
@@ -283,7 +283,7 @@ class ProductosRepository{
                                 codigo = ?,
                                 nombre = ?,
                                 empresa = ?,
-                                temporada = ?,
+                                idTemporada = ?,
                                 idCliente = ?,
                                 idProceso = ?,
                                 idTipo = ?,
