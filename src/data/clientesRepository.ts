@@ -65,8 +65,8 @@ class ClientesRepository{
             if(existe)//Verificamos si ya existe un cliente con el mismo nombre 
                 return "Ya existe un cliente con el mismo nombre.";
             
-            const consulta = "INSERT INTO clientes(nombre,email,telefono) VALUES (?,?,?)";
-            const parametros = [data.nombre.toUpperCase(), data.email, data.telefono];
+            const consulta = "INSERT INTO clientes(nombre,email,telefono,direccion,idCondIva,documento) VALUES (?,?,?,?,?,?)";
+            const parametros = [data.nombre.toUpperCase(), data.email, data.telefono, data.direccion, data.condIva, data.documento];
             
             await connection.query(consulta, parametros);
             return "OK";
@@ -89,10 +89,13 @@ class ClientesRepository{
                 const consulta = `UPDATE clientes 
                 SET nombre = ?,
                     email = ?,
-                    telefono = ?
+                    telefono = ?,
+                    direccion = ?,
+                    idCondIva = ?,
+                    documento = ?
                 WHERE id = ? `;
 
-            const parametros = [data.nombre.toUpperCase(), data.email, data.telefono, data.id];
+            const parametros = [data.nombre.toUpperCase(), data.email, data.telefono, data.direccion, data.condIva, data.documento, data.id];
             await connection.query(consulta, parametros);
             return "OK";
 
@@ -132,9 +135,9 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 
         // #region FILTROS
         if (filtros.busqueda != null && filtros.busqueda != "") 
-            filtro += " WHERE c.nombre LIKE '%"+ filtros.busqueda + "%' ";
+            filtro += " AND c.nombre LIKE '%"+ filtros.busqueda + "%' ";
         if (filtros.idCliente != null && filtros.idCliente != 0) 
-            filtro += " WHERE c.id = "+ filtros.idCliente;
+            filtro += " AND c.id = "+ filtros.idCliente;
         // #endregion
 
         if (esTotal)
@@ -150,8 +153,10 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
-            " SELECT c.* " +
+            " SELECT c.*, ci.descripcion condicion " +
             " FROM clientes c" +
+            " LEFT JOIN condiciones_iva ci on ci.id = c.idCondIva" +
+            " WHERE c.id <> 1 " +
             filtro +
             " ORDER BY c.id DESC" +
             paginado +

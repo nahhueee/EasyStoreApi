@@ -120,16 +120,16 @@ class ProductosRepository{
                     tablaProducto.Color = row['color'];
                     tablaProducto.Producto = row['tipo'];
                     tablaProducto.Tipo = row['subtipo'];
-                    tablaProducto.XS = row['t1'];
-                    tablaProducto.S = row['t2'];
-                    tablaProducto.M = row['t3'];
-                    tablaProducto.L = row['t4'];
-                    tablaProducto.XL = row['t5'];
-                    tablaProducto.XXL = row['t6'];
-                    tablaProducto['3XL'] = row['t7'];
-                    tablaProducto['4XL'] = row['t8'];
-                    tablaProducto['5XL'] = row['t9'];
-                    tablaProducto['6XL'] = row['t10'];
+                    tablaProducto.XS = parseInt(row['t1']);
+                    tablaProducto.S = parseInt(row['t2']);
+                    tablaProducto.M = parseInt(row['t3']);
+                    tablaProducto.L = parseInt(row['t4']);
+                    tablaProducto.XL = parseInt(row['t5']);
+                    tablaProducto.XXL = parseInt(row['t6']);
+                    tablaProducto['3XL'] = parseInt(row['t7']);
+                    tablaProducto['4XL'] = parseInt(row['t8']);
+                    tablaProducto['5XL'] = parseInt(row['t9']);
+                    tablaProducto['6XL'] = parseInt(row['t10']);
 
                     tablaProducto.Total = parseInt(row['t1']) + parseInt(row['t2']) +
                                           parseInt(row['t3']) + parseInt(row['t4']) +

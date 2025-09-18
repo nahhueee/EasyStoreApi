@@ -59,16 +59,16 @@ export class ExcelProducto {
     Material?: string;
     Color?: string;
 
-    XS:string = "";
-    S:string = "";
-    M:string = "";
-    L:string = "";
-    XL:string = "";
-    XXL:string = "";
-    ["3XL"]:string = "";
-    ["4XL"]:string = "";
-    ["5XL"]:string = "";
-    ["6XL"]:string = "";
+    XS:number = 0;
+    S:number = 0;
+    M:number = 0;
+    L:number = 0;
+    XL:number = 0;
+    XXL:number = 0;
+    ["3XL"]:number = 0;
+    ["4XL"]:number = 0;
+    ["5XL"]:number = 0;
+    ["6XL"]:number = 0;
 
     Total:number = 0;
 }

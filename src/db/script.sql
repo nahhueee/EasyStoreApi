@@ -45,7 +45,10 @@ CREATE TABLE clientes (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(100),
     email VARCHAR(100),
-    telefono VARCHAR(20)
+    telefono VARCHAR(20),
+    direccion VARCHAR(250),
+    idCondIva INT,
+    documento BIGINT
 );
 
 DROP TABLE IF EXISTS tipos_pago;
@@ -189,9 +192,16 @@ CREATE TABLE talles_producto (
     costo DECIMAL(10,2)
 );
 
+DROP TABLE IF EXISTS condiciones_iva;
+CREATE TABLE condiciones_iva (
+    id INT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
+
+
 INSERT INTO parametros(clave, valor) 
 VALUES 
-('version','1.1.0'),
+('version','1.1.1'),
 ('dni',''), 
 ('expresion',''), 
 ('backups', 'false'), 
@@ -210,7 +220,7 @@ VALUES
 
 INSERT INTO tipos_pago(id, nombre) VALUES (NULL,'EFECTIVO'), (NULL,'TARJETA'), (NULL,'TRANSFERENCIA'), (NULL,'COMBINADO');
 INSERT INTO cargos(id, nombre) VALUES (NULL,'ADMINISTRADOR'), (NULL,'EMPLEADO');
-INSERT INTO clientes(id, nombre, email, telefono) VALUES (NULL,'CONSUMIDOR FINAL', '', '');
+INSERT INTO clientes(id, nombre, email, telefono, direccion, idCondIva, documento) VALUES (NULL,'CONSUMIDOR FINAL', '', '', '', 0, 0);
 INSERT INTO usuarios(id, usuario, nombre, email, pass, idCargo) VALUES (NULL, 'ADMIN', 'ADMINISTRADOR', NULL, '1235', 1);
 INSERT INTO lineas_talle(descripcion)
 VALUES
@@ -218,4 +228,12 @@ VALUES
 ('4-6-8-10-12-14-16-18'),
 ('28-30-32-34-36-38-40-42-44-46'),
 ('XS-S-M-L-XL-XXL-3XL-4XL-5XL-6XL');
+
+INSERT INTO condiciones_iva (id, descripcion) VALUES
+(5, 'Consumidor Final'),
+(1, 'IVA Responsable Inscripto'),
+(6, 'Responsable Monotributo'),
+(13, 'Monotributista Social'),
+(15, 'IVA No Alcanzado');
+
 

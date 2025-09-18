@@ -137,6 +137,20 @@ class MiscRepository{
             connection.release();
         }
     }
+
+    async CondicionesIvaSelector(){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.query('SELECT * FROM condiciones_iva');
+            return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
     //#endregion
 }
 

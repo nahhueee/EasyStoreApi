@@ -91,6 +91,17 @@ router.get('/lineas-talle', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
+
+router.get('/condiciones-iva', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.CondicionesIvaSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de condiciones de IVA.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 //#endregion
 
 // Export the router
