@@ -40,24 +40,22 @@ class ProductosRepository{
                     tablaProducto.hexa = row['hexa'];
                     tablaProducto.tipo = row['tipo'];
                     tablaProducto.subtipo = row['subtipo'];
-                    tablaProducto.t1 = row['t1'];
-                    tablaProducto.t2 = row['t2'];
-                    tablaProducto.t3 = row['t3'];
-                    tablaProducto.t4 = row['t4'];
-                    tablaProducto.t5 = row['t5'];
-                    tablaProducto.t6 = row['t6'];
-                    tablaProducto.t7 = row['t7'];
-                    tablaProducto.t8 = row['t8'];
-                    tablaProducto.t9 = row['t9'];
-                    tablaProducto.t10 = row['t10'];
 
-                    tablaProducto.total = parseInt(tablaProducto.t1) + parseInt(tablaProducto.t2) +
-                                          parseInt(tablaProducto.t3) + parseInt(tablaProducto.t4) +
-                                          parseInt(tablaProducto.t5) + parseInt(tablaProducto.t6) +
-                                          parseInt(tablaProducto.t7) + parseInt(tablaProducto.t8) +
-                                          parseInt(tablaProducto.t9) + parseInt(tablaProducto.t10);
+                    const factor = tablaProducto.proceso === "PEDIDOS APROBADOS" ? -1 : 1;
 
+                    tablaProducto.t1 = parseInt(row['t1'])  * factor;
+                    tablaProducto.t2 = parseInt(row['t2'])  * factor;
+                    tablaProducto.t3 = parseInt(row['t3'])  * factor;
+                    tablaProducto.t4 = parseInt(row['t4'])  * factor;
+                    tablaProducto.t5 = parseInt(row['t5'])  * factor;
+                    tablaProducto.t6 = parseInt(row['t6'])  * factor;
+                    tablaProducto.t7 = parseInt(row['t7']) * factor;
+                    tablaProducto.t8 = parseInt(row['t8']) * factor;
+                    tablaProducto.t9 = parseInt(row['t9']) * factor;
+                    tablaProducto.t10 = parseInt(row['t10']) * factor;
 
+                    const columnas = ['t1','t2','t3','t4','t5','t6','t7','t8','t9','t10'];
+                    tablaProducto.total = columnas.reduce((acc, col) => acc + parseInt(row[col] || '0') * factor, 0);
                     productos.push(tablaProducto);
                 }
             }
@@ -110,6 +108,7 @@ class ProductosRepository{
             if (Array.isArray(rows)) {
                 for (let i = 0; i < rows.length; i++) { 
                     const row = rows[i];
+                    
 
                     let tablaProducto: ExcelProducto = new ExcelProducto();
                     tablaProducto.Codigo = row['codigo'],
@@ -120,23 +119,22 @@ class ProductosRepository{
                     tablaProducto.Color = row['color'];
                     tablaProducto.Producto = row['tipo'];
                     tablaProducto.Tipo = row['subtipo'];
-                    tablaProducto.XS = parseInt(row['t1']);
-                    tablaProducto.S = parseInt(row['t2']);
-                    tablaProducto.M = parseInt(row['t3']);
-                    tablaProducto.L = parseInt(row['t4']);
-                    tablaProducto.XL = parseInt(row['t5']);
-                    tablaProducto.XXL = parseInt(row['t6']);
-                    tablaProducto['3XL'] = parseInt(row['t7']);
-                    tablaProducto['4XL'] = parseInt(row['t8']);
-                    tablaProducto['5XL'] = parseInt(row['t9']);
-                    tablaProducto['6XL'] = parseInt(row['t10']);
 
-                    tablaProducto.Total = parseInt(row['t1']) + parseInt(row['t2']) +
-                                          parseInt(row['t3']) + parseInt(row['t4']) +
-                                          parseInt(row['t5']) + parseInt(row['t6']) +
-                                          parseInt(row['t7']) + parseInt(row['t8']) +
-                                          parseInt(row['t9']) + parseInt(row['t10']);
+                    const factor = tablaProducto.Proceso === "PEDIDOS APROBADOS" ? -1 : 1;
 
+                    tablaProducto.XS   = parseInt(row['t1'])  * factor;
+                    tablaProducto.S    = parseInt(row['t2'])  * factor;
+                    tablaProducto.M    = parseInt(row['t3'])  * factor;
+                    tablaProducto.L    = parseInt(row['t4'])  * factor;
+                    tablaProducto.XL   = parseInt(row['t5'])  * factor;
+                    tablaProducto.XXL  = parseInt(row['t6'])  * factor;
+                    tablaProducto['3XL'] = parseInt(row['t7']) * factor;
+                    tablaProducto['4XL'] = parseInt(row['t8']) * factor;
+                    tablaProducto['5XL'] = parseInt(row['t9']) * factor;
+                    tablaProducto['6XL'] = parseInt(row['t10']) * factor;
+
+                    const columnas = ['t1','t2','t3','t4','t5','t6','t7','t8','t9','t10'];
+                    tablaProducto.Total = columnas.reduce((acc, col) => acc + parseInt(row[col] || '0') * factor, 0);
 
                     productos.push(tablaProducto);
                 }

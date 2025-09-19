@@ -35,16 +35,16 @@ export class TablaProducto {
     moldeleria?: number;
     imagen?: string;
 
-    t1:string = "";
-    t2:string = "";
-    t3:string = "";
-    t4:string = "";
-    t5:string = "";
-    t6:string = "";
-    t7:string = "";
-    t8:string = "";
-    t9:string = "";
-    t10:string = "";
+    t1:number = 0;
+    t2:number = 0;
+    t3:number = 0;
+    t4:number = 0;
+    t5:number = 0;
+    t6:number = 0;
+    t7:number = 0;
+    t8:number = 0;
+    t9:number = 0;
+    t10:number = 0;
 
     total:number = 0;
 }
