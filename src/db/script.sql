@@ -44,6 +44,7 @@ DROP TABLE IF EXISTS clientes;
 CREATE TABLE clientes (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(100),
+<<<<<<< HEAD
     razonSocial VARCHAR(100),
     telefono VARCHAR(20),
     celular VARCHAR(20),
@@ -75,6 +76,14 @@ CREATE TABLE direcciones_cliente (
 ENGINE=InnoDB;
 
 
+=======
+    email VARCHAR(100),
+    telefono VARCHAR(20),
+    direccion VARCHAR(250),
+    idCondIva INT,
+    documento BIGINT
+);
+>>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 
 DROP TABLE IF EXISTS tipos_pago;
 CREATE TABLE tipos_pago (
@@ -229,6 +238,7 @@ CREATE TABLE condiciones_iva (
     descripcion VARCHAR(50)
 );
 
+<<<<<<< HEAD
 DROP TABLE IF EXISTS condiciones_pago;
 CREATE TABLE condiciones_pago (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -236,6 +246,8 @@ CREATE TABLE condiciones_pago (
 );
 
 
+=======
+>>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 
 INSERT INTO parametros(clave, valor) 
 VALUES 
@@ -258,7 +270,11 @@ VALUES
 
 INSERT INTO tipos_pago(id, nombre) VALUES (NULL,'EFECTIVO'), (NULL,'TARJETA'), (NULL,'TRANSFERENCIA'), (NULL,'COMBINADO');
 INSERT INTO cargos(id, nombre) VALUES (NULL,'ADMINISTRADOR'), (NULL,'EMPLEADO');
+<<<<<<< HEAD
 INSERT INTO `clientes` (`id`, `nombre`, `razonSocial`, `telefono`, `celular`, `contacto`, `email`, `idCondIva`, `idTipoDocumento`, `documento`, `condicionPago`, `idCategoria`, `fechaAlta`, `fechaBaja`) VALUES (NULL, 'CONSUMIDOR FINAL', 'CONSUMIDOR FINAL', '0', '0', 'CONSUMIDOR FINAL', NULL, '0', '0', '0', '0', '0', CURRENT_TIMESTAMP, NULL);
+=======
+INSERT INTO clientes(id, nombre, email, telefono, direccion, idCondIva, documento) VALUES (NULL,'CONSUMIDOR FINAL', '', '', '', 0, 0);
+>>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 INSERT INTO usuarios(id, usuario, nombre, email, pass, idCargo) VALUES (NULL, 'ADMIN', 'ADMINISTRADOR', NULL, '1235', 1);
 INSERT INTO lineas_talle(descripcion)
 VALUES
@@ -274,6 +290,7 @@ INSERT INTO condiciones_iva (id, descripcion) VALUES
 (13, 'Monotributista Social'),
 (15, 'IVA No Alcanzado');
 
+<<<<<<< HEAD
 INSERT INTO condiciones_pago (id, descripcion) VALUES
 (1, 'CONTADO'),
 (2, 'CUENTA CORRIENTE'),
@@ -284,4 +301,6 @@ INSERT INTO tipos_documento(id, descripcion) VALUES
 (80, 'CUIT'),
 (86, 'CUIL'),
 (96, 'DNI');
+=======
+>>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 
