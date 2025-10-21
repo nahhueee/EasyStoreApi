@@ -51,39 +51,41 @@ import servidorRuta from './routes/servidorRoute';
 import cuentasRuta from './routes/cuentasCorsRoute';
 import etiquetasRuta from './routes/etiquetasRoute';
 import miscRuta from './routes/miscRoute';
+import direccionesRuta from './routes/direccionesRoute';
 
-app.use('/easysales/update', actualizacionRuta)
-app.use('/easysales/usuarios', usuariosRuta);
-app.use('/easysales/clientes', clientesRuta);
-app.use('/easysales/rubros', rubrosRuta);
-app.use('/easysales/productos', productosRuta);
-app.use('/easysales/ventas', ventasRuta);
-app.use('/easysales/movimientos', movimientosRuta);
-app.use('/easysales/cajas', cajasRuta); 
-app.use('/easysales/estadisticas', estadisticasRuta);
-app.use('/easysales/parametros', parametrosRuta);
-app.use('/easysales/logs', logsRuta);
-app.use('/easysales/server', servidorRuta);
-app.use('/easysales/cuentas', cuentasRuta);
-app.use('/easysales/etiquetas', etiquetasRuta);
-app.use('/easysales/misc', miscRuta);
+app.use('/easystore/update', actualizacionRuta)
+app.use('/easystore/usuarios', usuariosRuta);
+app.use('/easystore/clientes', clientesRuta);
+app.use('/easystore/rubros', rubrosRuta);
+app.use('/easystore/productos', productosRuta);
+app.use('/easystore/ventas', ventasRuta);
+app.use('/easystore/movimientos', movimientosRuta);
+app.use('/easystore/cajas', cajasRuta); 
+app.use('/easystore/estadisticas', estadisticasRuta);
+app.use('/easystore/parametros', parametrosRuta);
+app.use('/easystore/logs', logsRuta);
+app.use('/easystore/server', servidorRuta);
+app.use('/easystore/cuentas', cuentasRuta);
+app.use('/easystore/etiquetas', etiquetasRuta);
+app.use('/easystore/misc', miscRuta);
+app.use('/easystore/direcciones', direccionesRuta);
 
 //AdminServer Route
 import adminServerRuta from './routes/adminRoute';
-app.use('/easysales/adminserver', adminServerRuta);
+app.use('/easystore/adminserver', adminServerRuta);
 
 //Upload images Route
 import imagenesRuta from './routes/imagenesRoute';
-app.use('/easysales/imagenes', imagenesRuta);
+app.use('/easystore/imagenes', imagenesRuta);
 
 //Files Route
 import filesRoute from './routes/filesRoute';
-app.use('/easysales/files', filesRoute);
+app.use('/easystore/files', filesRoute);
 //#endregion
 
 //#region backups 
 import backupRoute from './routes/backupRoute';
-app.use('/easysales/backup', backupRoute);
+app.use('/easystore/backup', backupRoute);
 
 import {BackupsServ} from './services/backupService';
 if(!config.web)
@@ -95,8 +97,8 @@ if(!config.web)
     ServidorServ.IniciarModoServidor();
 
 //Index Route
-app.get('/easysales', (req, res) => {
-    res.status(200).send('Servidor de EasySales funcionando en este puerto.');
+app.get('/easystore', (req, res) => {
+    res.status(200).send('Servidor de EasyStore funcionando en este puerto.');
 });
  
 //404

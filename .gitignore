@@ -3,9 +3,13 @@
 /src/log/general.json
 /src/log/update.json
 /src/log/backup.json
+/src/log/facturacion.json
 /src/upload/*
 !/src/upload/
 /update
 /ssl/server/*
-
+/src/json/*
+/src/json/calles.json
+/src/json/localidades.json
+/src/json/provincias.json
 

@@ -15,12 +15,12 @@ router.post('/obtener', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/obtener-uno/:codigo', async (req:Request, res:Response) => {
+router.get('/obtener-uno/:id', async (req:Request, res:Response) => {
     try{ 
-        res.json(await ProductosRepo.ObtenerUno({codigo: req.params.codigo}));
+        res.json(await ProductosRepo.ObtenerUno({id: req.params.id}));
 
     } catch(error:any){
-        let msg = "Error intentando obtener el pedido con codigo: " + req.params.codigo;
+        let msg = "Error intentando obtener el pedido con id: " + req.params.id;
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

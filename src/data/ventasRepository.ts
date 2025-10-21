@@ -45,7 +45,7 @@ class VentasRepository{
                         return accum + detalle.total!;
                     }, 0);
 
-                    venta.cliente = new Cliente({id: row['idCliente'], nombre: row['cliente']});
+                    //venta.cliente = new Cliente({id: row['idCliente'], nombre: row['cliente']});
                     venta.pago = new pagoVenta({
                         efectivo: parseFloat(row['efectivo']), 
                         digital: parseFloat(row['digital']), 

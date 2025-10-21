@@ -1,4 +1,3 @@
-import { Console } from 'console';
 import db from '../db';
 
 class UsuariosRepository{
@@ -93,12 +92,12 @@ class UsuariosRepository{
         const connection = await db.getConnection();
         
         try {
-            let existe = await ValidarExistencia(connection, data, false);
-            if(existe)//Verificamos si ya existe un usuario con el mismo nombre o correo
-                return "Ya existe un usuario con el mismo nombre o correo.";
+            // let existe = await ValidarExistencia(connection, data, false);
+            // if(existe)//Verificamos si ya existe un usuario con el mismo nombre o correo
+            //     return "Ya existe un usuario con el mismo nombre o correo.";
             
-            const consulta = "INSERT INTO usuarios(nombre, email, pass, idCargo) VALUES (?, ?, ?, ?)";
-            const parametros = [data.nombre.toUpperCase(), data.email, data.pass, data.cargo.id];
+            const consulta = "INSERT INTO usuarios(usuario, nombre, email, pass, idCargo) VALUES (?, ?, ?, ?, ?)";
+            const parametros = [data.usuario, data.nombre.toUpperCase(), data.email, data.pass, data.cargo.id];
             
             await connection.query(consulta, parametros);
             return "OK";
@@ -113,19 +112,21 @@ class UsuariosRepository{
     async Modificar(data:any): Promise<string>{
         const connection = await db.getConnection();
         try {
-            let existe = await ValidarExistencia(connection, data, true);
+            // let existe = await ValidarExistencia(connection, data, true);
 
-            if(existe)//Verificamos si ya existe un usuario con el mismo nombre o correo
-                return "Ya existe un usuario con el mismo nombre o correo.";
+            // if(existe)//Verificamos si ya existe un usuario con el mismo nombre o correo
+            //     return "Ya existe un usuario con el mismo nombre o correo.";
             
             const consulta = `UPDATE usuarios 
-                              SET nombre = ?,
+                              SET 
+                              usuario = ?,
+                              nombre = ?,
                               email = ?,
                               pass = ?,
                               idCargo = ?
                               WHERE id = ? `;
 
-            const parametros = [data.nombre.toUpperCase(), data.email, data.pass, data.cargo.id, data.id];
+            const parametros = [data.usuario, data.nombre.toUpperCase(), data.email, data.pass, data.cargo.id, data.id];
             await connection.query(consulta, parametros);
             return "OK";
 
@@ -163,7 +164,6 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         let endCount:string = "";
         //#endregion
 
-         console.log(filtros)
         // #region FILTROS
         if (filtros.busqueda != null && filtros.busqueda != "") 
             filtro += " AND u.nombre LIKE '%"+ filtros.busqueda + "%' ";

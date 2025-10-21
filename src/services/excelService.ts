@@ -83,3 +83,118 @@ export async function procesarExcel(filePath: string, tipoPrecio:string): Promis
 
   return { errores, datosValidos };
 }
+export async function crearExcelResultados(data: any[]) {
+  // 1. Configurar el libro y la hoja de trabajo
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet([]);
+
+  // 2. Encabezados de tallas (filas 1-4, columnas I-R)
+  const encabezadosTallas = [
+    ["XXP", "PE", "ME", "GR", "XXG", "", "", "", "", ""],
+    [4, 6, 8, 10, 12, 14, 16, 18, "", ""],
+    [28, 30, 32, 34, 36, 38, 40, 42, 44, 46],
+  ];
+
+  // Añadir encabezados de tallas empezando en I1
+  encabezadosTallas.forEach((fila, index) => {
+    XLSX.utils.sheet_add_aoa(worksheet, [fila], { origin: { r: index, c: 8 } });
+  });
+
+  // 3. Encabezados informativos (fila 4, columnas A-H)
+  const columnasInfo = ["Proceso", "Codigo", "Nombre", "Producto", "Tipo", "Genero", "Material", "Color"];
+  XLSX.utils.sheet_add_aoa(worksheet, [columnasInfo], { origin: { r: 3, c: 0 } });
+
+  // 4. Encabezados de tallas y total (fila 5, columnas I-S)
+  const columnasTallas = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL", "6XL"];
+  const columnasTotales = ["Total"];
+  XLSX.utils.sheet_add_aoa(worksheet, [columnasTallas], { origin: { r: 3, c: 8 } });
+  XLSX.utils.sheet_add_aoa(worksheet, [columnasTotales], { origin: { r: 3, c: 18 } });
+
+  // 5. Aplicar formato negrita a todos los encabezados
+  aplicarNegritaEncabezados(worksheet);
+
+  // 6. Añadir datos de productos (filas 6 en adelante)
+  data.forEach((p, index) => {
+    const fila = [
+      p.Proceso || "",
+      p.Codigo || "",
+      p.Nombre || "",
+      p.Producto || "",
+      p.Tipo || "",
+      p.Genero || "",
+      p.Material || "",
+      p.Color || "",
+      p.XS || 0,
+      p.S || 0,
+      p.M || 0,
+      p.L || 0,
+      p.XL || 0,
+      p.XXL || 0,
+      p["3XL"] || 0,
+      p["4XL"] || 0,
+      p["5XL"] || 0,
+      p["6XL"] || 0,
+      p.Total || 0
+    ];
+    XLSX.utils.sheet_add_aoa(worksheet, [fila], { origin: { r: 4 + index, c: 0 } });
+  });
+
+  // 7. Finalizar el libro
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Resultados");
+
+  // Convertir a buffer CON la opción cellStyles habilitada
+  const buffer = XLSX.write(workbook, { 
+    type: 'buffer', 
+    bookType: 'xlsx',
+    cellStyles: true // Esta opción es crucial para que funcionen los estilos
+  });
+  return buffer;
+}
+
+// Función auxiliar para aplicar negrita a los encabezados
+function aplicarNegritaEncabezados(worksheet: XLSX.WorkSheet) {
+  // Definir el estilo de negrita
+  const estiloNegrita = { font: { bold: true } };
+
+  // Aplicar negrita a encabezados de tallas (filas 0-2, columnas I-R)
+  for (let fila = 0; fila < 3; fila++) {
+    for (let columna = 8; columna < 18; columna++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: fila, c: columna });
+      if (!worksheet[cellAddress]) {
+        // Si la celda no existe, la creamos con el valor vacío y estilo
+        worksheet[cellAddress] = { v: "", t: "s", s: estiloNegrita };
+      } else {
+        // Si la celda existe, le añadimos el estilo
+        worksheet[cellAddress].s = estiloNegrita;
+      }
+    }
+  }
+
+  // Aplicar negrita a encabezados informativos (fila 3, columnas A-H)
+  for (let columna = 0; columna < 8; columna++) {
+    const cellAddress = XLSX.utils.encode_cell({ r: 3, c: columna });
+    if (!worksheet[cellAddress]) {
+      worksheet[cellAddress] = { v: "", t: "s", s: estiloNegrita };
+    } else {
+      worksheet[cellAddress].s = estiloNegrita;
+    }
+  }
+
+  // Aplicar negrita a encabezados de tallas (fila 3, columnas I-R)
+  for (let columna = 8; columna < 18; columna++) {
+    const cellAddress = XLSX.utils.encode_cell({ r: 3, c: columna });
+    if (!worksheet[cellAddress]) {
+      worksheet[cellAddress] = { v: "", t: "s", s: estiloNegrita };
+    } else {
+      worksheet[cellAddress].s = estiloNegrita;
+    }
+  }
+
+  // Aplicar negrita a encabezado de Total (fila 3, columna S)
+  const totalCellAddress = XLSX.utils.encode_cell({ r: 3, c: 18 });
+  if (!worksheet[totalCellAddress]) {
+    worksheet[totalCellAddress] = { v: "Total", t: "s", s: estiloNegrita };
+  } else {
+    worksheet[totalCellAddress].s = estiloNegrita;
+  }
+}

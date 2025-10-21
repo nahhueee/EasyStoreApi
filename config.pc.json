@@ -2,13 +2,13 @@
   "adminUrl": "https://creationserver.com/adminserver/",
   "produccion": false,
   "esServer": false,
-  "port": 7500,
+  "port": 9000,
   "idApp": 1,
   "web": false,
   "db": {
     "host": "127.0.0.1",
     "user": "root",
-    "password": "1235",
+    "password": "",
     "database": "dbeasystore"
   }
 }

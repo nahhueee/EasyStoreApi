@@ -15,17 +15,6 @@ router.get('/materiales', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/colores', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await MiscRepo.ColoresSelector());
-
-    } catch(error:any){
-        let msg = "Error al obtener el listado de colores.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
 router.get('/procesos', async (req:Request, res:Response) => {
     try{ 
         res.json(await MiscRepo.ProcesosSelector());
@@ -70,12 +59,45 @@ router.get('/generos', async (req:Request, res:Response) => {
     }
 });
 
+router.get('/colores', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.ColoresSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de colores.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/temporadas', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.TemporadasSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de temporadas.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.get('/lineas-talle', async (req:Request, res:Response) => {
     try{ 
         res.json(await MiscRepo.ObtenerLineasTalle());
 
     } catch(error:any){
         let msg = "Error al obtener el listado de lineas de talle.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/condiciones-iva', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.CondicionesIvaSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de condiciones de IVA.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

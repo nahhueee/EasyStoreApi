@@ -11,7 +11,8 @@ async function setup() {
       "out/src/upload",
       "out/src/db/seeds",
       "out/src/db/tasks",
-      "out/src/certs"
+      "out/src/certs",
+      "out/src/json"
     ];
 
     // Crear todas las carpetas
@@ -31,6 +32,9 @@ async function setup() {
       "knexfile.js",
       "src/db/script.sql",
       "src/db/script.sql",
+      "src/json/calles.json",
+      "src/json/localidades.json",
+      "src/json/provincias.json"
     ];
 
     //Archivo de configuracion dependiendo el entorno
