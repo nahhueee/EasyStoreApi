@@ -68,10 +68,7 @@ app.use('/easystore/server', servidorRuta);
 app.use('/easystore/cuentas', cuentasRuta);
 app.use('/easystore/etiquetas', etiquetasRuta);
 app.use('/easystore/misc', miscRuta);
-<<<<<<< HEAD
 app.use('/easystore/direcciones', direccionesRuta);
-=======
->>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 
 //AdminServer Route
 import adminServerRuta from './routes/adminRoute';

@@ -1,7 +1,6 @@
 import { RowDataPacket } from 'mysql2';
 import db from '../db';
-import { Material } from '../models/Material';
-import { Color } from '../models/Color';
+import { Color, Material } from '../models/Producto';
 
 class MiscRepository{
 

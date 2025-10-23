@@ -1,7 +1,6 @@
 export class Cliente {
     id?:number;
     nombre?:string;
-<<<<<<< HEAD
     razonSocial?:string;
     telefono?:string;
     celular?:string;
@@ -29,17 +28,4 @@ export class DireccionesCliente {
     localidad?:string;
     provincia?:string;
     observaciones?:string;
-=======
-    email?:string;
-    telefono?:string
-
-    constructor(data?: any) {
-        if (data) {
-          this.id = data.id;
-          this.nombre = data.nombre;
-          this.email = data.email;
-          this.telefono = data.telefono;
-        }
-    }
->>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 }

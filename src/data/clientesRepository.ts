@@ -107,14 +107,9 @@ class ClientesRepository{
             if(existe)//Verificamos si ya existe un cliente con el mismo nombre 
                 return "Ya existe un cliente con el mismo nombre.";
             
-<<<<<<< HEAD
             const consulta = "INSERT INTO clientes(nombre,razonSocial,telefono,celular,contacto,email,idCondIva,idTipoDocumento,documento,idCondicionPago,idCategoria,fechaAlta) " + 
                              "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             const parametros = [cliente.nombre.toUpperCase(), cliente.razonSocial, cliente.telefono, cliente.celular, cliente.contacto, cliente.email, cliente.idCondicionIva, cliente.idTipoDocumento, cliente.documento, cliente.idCondicionPago, cliente.idCategoria, moment().format('YYYY-MM-DD HH:mm:ss')];
-=======
-            const consulta = "INSERT INTO clientes(nombre,email,telefono,direccion,idCondIva,documento) VALUES (?,?,?,?,?,?)";
-            const parametros = [data.nombre.toUpperCase(), data.email, data.telefono, data.direccion, data.condIva, data.documento];
->>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
             
             await connection.query(consulta, parametros);
 
@@ -145,7 +140,6 @@ class ClientesRepository{
             if(existe)//Verificamos si ya existe un cliente con el mismo nombre 
                 return "Ya existe un cliente con el mismo nombre.";
             
-<<<<<<< HEAD
             //Iniciamos una transaccion
             await connection.beginTransaction();
 
@@ -166,18 +160,6 @@ class ClientesRepository{
                 WHERE id = ? `;
 
             const parametros = [data.nombre.toUpperCase(), data.razonSocial, data.telefono, data.celular, data.contacto, data.email, data.idCondicionIva, data.idTipoDocumento, data.documento, data.idCondicionPago, data.idCategoria, moment().format('YYYY-MM-DD HH:mm:ss'), data.id];
-=======
-                const consulta = `UPDATE clientes 
-                SET nombre = ?,
-                    email = ?,
-                    telefono = ?,
-                    direccion = ?,
-                    idCondIva = ?,
-                    documento = ?
-                WHERE id = ? `;
-
-            const parametros = [data.nombre.toUpperCase(), data.email, data.telefono, data.direccion, data.condIva, data.documento, data.id];
->>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
             await connection.query(consulta, parametros);
                
             //Borramos las direcciones del cliente
@@ -265,19 +247,12 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
-<<<<<<< HEAD
             " SELECT c.*, ci.descripcion condicion, td.descripcion tipoDocumento, cp.descripcion condicionPago " +
             " FROM clientes c" +
             " LEFT JOIN condiciones_iva ci on ci.id = c.idCondIva " +
             " LEFT JOIN tipos_documento td on td.id = c.idTipoDocumento " +
             " LEFT JOIN condiciones_pago cp on cp.id = c.idCondicionPago " +
             " WHERE c.id <> 1 AND fechaBaja IS NULL " +
-=======
-            " SELECT c.*, ci.descripcion condicion " +
-            " FROM clientes c" +
-            " LEFT JOIN condiciones_iva ci on ci.id = c.idCondIva" +
-            " WHERE c.id <> 1 " +
->>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
             filtro +
             " ORDER BY c.id DESC" +
             paginado +

@@ -1,6 +1,5 @@
 import db from '../db';
-import { ExcelProducto, Producto, TablaProducto } from '../models/Producto';
-import { TallesProducto } from '../models/TallesProducto';
+import { Color, ExcelProducto, Genero, Material, Producto, SubtipoProducto, TablaProducto, TallesProducto, Temporada, TipoProducto } from '../models/Producto';
 
 class ProductosRepository{
 
@@ -17,50 +16,25 @@ class ProductosRepository{
             const [rows] = await connection.query(queryRegistros);
             const resultado = await connection.query(queryTotal);
 
-            const productos:TablaProducto[] = [];
-           
-            if (Array.isArray(rows)) {
-                for (let i = 0; i < rows.length; i++) { 
-                    const row = rows[i];
-
-                    let tablaProducto: TablaProducto = new TablaProducto();
-                    tablaProducto.id = row['id'],
-                    tablaProducto.codigo = row['codigo'],
-                    tablaProducto.nombre = row['nombre'],
-                    tablaProducto.moldeleria = row['moldeleria'],
-                    tablaProducto.imagen = row['imagen'],
-                    tablaProducto.proceso = row['proceso'];
-                    tablaProducto.abrevProceso = row['abrevProceso'];
-                    tablaProducto.temporada = row['temporada'];
-                    tablaProducto.abrevTemporada = row['abrevTemporada'];
-                    tablaProducto.material = row['material'];
-                    tablaProducto.abrevGenero = row['abrevGenero'];
-                    tablaProducto.genero = row['genero'];
-                    tablaProducto.color = row['color'];
-                    tablaProducto.hexa = row['hexa'];
-                    tablaProducto.tipo = row['tipo'];
-                    tablaProducto.subtipo = row['subtipo'];
-
-                    const factor = tablaProducto.proceso === "PEDIDOS APROBADOS" ? -1 : 1;
-
-                    tablaProducto.t1 = parseInt(row['t1'])  * factor;
-                    tablaProducto.t2 = parseInt(row['t2'])  * factor;
-                    tablaProducto.t3 = parseInt(row['t3'])  * factor;
-                    tablaProducto.t4 = parseInt(row['t4'])  * factor;
-                    tablaProducto.t5 = parseInt(row['t5'])  * factor;
-                    tablaProducto.t6 = parseInt(row['t6'])  * factor;
-                    tablaProducto.t7 = parseInt(row['t7']) * factor;
-                    tablaProducto.t8 = parseInt(row['t8']) * factor;
-                    tablaProducto.t9 = parseInt(row['t9']) * factor;
-                    tablaProducto.t10 = parseInt(row['t10']) * factor;
-
-                    const columnas = ['t1','t2','t3','t4','t5','t6','t7','t8','t9','t10'];
-                    tablaProducto.total = columnas.reduce((acc, col) => acc + parseInt(row[col] || '0') * factor, 0);
-                    productos.push(tablaProducto);
+            if (filtros.desdeFacturacion) {
+                const productos: Producto[] = [];
+                if (Array.isArray(rows)) {
+                    for (const row of rows) {
+                        const prod = await this.CompletarObjeto(row);
+                        productos.push(prod);
+                    }
                 }
+                return { total: resultado[0][0].total, registros: productos };
+            } else {
+                const productos: TablaProducto[] = [];
+                if (Array.isArray(rows)) {
+                    for (const row of rows) {
+                        const prod = new TablaProducto(row);
+                        productos.push(prod);
+                    }
+                }
+                return { total: resultado[0][0].total, registros: productos };
             }
-
-            return {total:resultado[0][0].total, registros:productos};
 
         } catch (error:any) {
             throw error;
@@ -156,15 +130,37 @@ class ProductosRepository{
         producto.nombre = row['nombre'],
         producto.empresa = row['empresa'],
         producto.cliente = row['idCliente'],
-        producto.temporada = row['idTemporada'],
-        producto.proceso = row['idProceso'],
-        producto.tipo = row['idTipo'],
-        producto.subtipo = row['idSubTipo'],
-        producto.genero = row['idGenero'],
-        producto.material = row['idMaterial'],
-        producto.color = row['idColor'],
-        producto.moldeleria = row['moldeleria'],
-        producto.imagen = row['imagen'],
+        producto.proceso = row['idProceso'];
+        producto.moldeleria = row['moldeleria'];
+        producto.imagen = row['imagen'];
+
+        producto.tipo = new TipoProducto({
+            id: row['idTipo'],
+            descripcion: row['tipo']
+        });
+        producto.subtipo = new SubtipoProducto({
+            id: row['idSubtipo'],
+            descripcion: row['subtipo']
+        })
+        producto.genero = new Genero({
+            id: row['idGenero'],
+            descripcion: row['genero']
+        })
+        producto.temporada = new Temporada({
+            id: row['idTemporada'],
+            descripcion: row['temporada'],
+            abreviatura: row['abrevTemporada']
+        })
+        producto.material = new Material({
+            id: row['idMaterial'],
+            descripcion: row['material']
+        })
+        producto.color = new Color({
+            id: row['idColor'],
+            descripcion: row['color'],
+            hexa: row['hexa']
+        })
+
         producto.talles = await ObtenerTallesProducto(producto.id);
 
         return producto;
@@ -571,8 +567,8 @@ async function ObtenerTallesProducto(idProducto:number):Promise<any>{
                 const row = rows[i];
                 tallesProducto.push(new TallesProducto({
                     cantidad: row['cantidad'],
-                    costo: row['costo'],
-                    precio: row['precio'],
+                    costo:  parseInt(row['costo']),
+                    precio: parseInt(row['precio']),
                     talle: row['talle'],
                     ubicacion: row['ubicacion'],
                     idLineaTalle: row['idLineaTalle']

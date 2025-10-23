@@ -1,4 +1,3 @@
-import { TallesProducto } from "./TallesProducto";
 export class Producto {
     id : number = 0;
     codigo? : string;
@@ -6,17 +5,35 @@ export class Producto {
     empresa?: string;
     cliente?: number;
     proceso?: number;
-    tipo?: number;
-    subtipo?: number;
-    genero?: number;
-    temporada?: number;
-    material?: number;
-    color?: number;
+    tipo?: TipoProducto;
+    subtipo?: SubtipoProducto;
+    genero?: Genero;
+    temporada?: Temporada;
+    material?: Material;
+    color?: Color;
     moldeleria?: number;
     imagen: string = "";
     talles?: TallesProducto[];
-}
 
+    constructor(data?: any) {
+        if (data) {
+          this.id = data.id;
+          this.codigo = data.codigo;
+          this.nombre = data.nombre;
+          this.empresa = data.empresa;
+          this.cliente = data.cliente;
+          this.proceso = data.proceso;
+          this.tipo = data.tipo;
+          this.subtipo = data.subtipo;
+          this.genero = data.genero;
+          this.material = data.material;
+          this.color = data.color;
+          this.moldeleria = data.moldeleria;
+          this.temporada = data.temporada;
+          this.talles = Array.isArray(data.talles) ? data.talles.map((talleData: any) => new TallesProducto(talleData)) : [];
+        } 
+    }
+}
 export class TablaProducto {
     id : number = 0;
     codigo? : string;
@@ -34,6 +51,39 @@ export class TablaProducto {
     hexa?:string;
     moldeleria?: number;
     imagen?: string;
+
+    constructor(data?: any) {
+        if (data) {
+            this.id = data.id;
+            this.codigo = data.codigo;
+            this.nombre = data.nombre;
+            this.proceso = data.proceso;
+            this.abrevProceso = data.abrevProceso;
+            this.tipo = data.tipo;
+            this.subtipo = data.subtipo;
+            this.genero = data.genero;
+            this.abrevGenero = data.abrevGenero;
+            this.temporada = data.temporada;
+            this.abrevTemporada = data.abrevTemporada;
+            this.material = data.material;
+            this.color = data.color;
+            this.hexa = data.hexa;
+            this.moldeleria = data.moldeleria;
+            this.imagen = data.imagen;
+
+            const factor = this.proceso === "PEDIDOS APROBADOS" ? -1 : 1;
+            const columnasTalles = ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 't10'];
+            
+            columnasTalles.forEach((talle, index) => {
+                this[`t${index + 1}`] = parseInt(data[talle] || '0') * factor;
+            });
+
+            this.total = columnasTalles.reduce((acc, col) => {
+                const valor = parseInt(data[col] || '0');
+                return acc + (valor * factor);
+            }, 0);
+        }
+    }
 
     t1:number = 0;
     t2:number = 0;
@@ -71,4 +121,115 @@ export class ExcelProducto {
     ["6XL"]:number = 0;
 
     Total:number = 0;
+}
+
+export class TipoProducto {
+    id?:number;
+    descripcion?:string;
+    abreviatura?:string;
+
+    constructor(data?: any) {
+        if (data) {
+          this.id = data.id;
+          this.descripcion = data.descripcion;
+          this.abreviatura = data.abreviatura;
+        }
+    }
+}
+export class SubtipoProducto {
+    id?:number;
+    descripcion?:string;
+    abreviatura?:string;
+
+    constructor(data?: any) {
+        if (data) {
+          this.id = data.id;
+          this.descripcion = data.descripcion;
+          this.abreviatura = data.abreviatura;
+        }
+    }
+}
+export class Genero {
+    id?:number;
+    descripcion?:string;
+    abreviatura?:string;
+
+    constructor(data?: any) {
+        if (data) {
+          this.id = data.id;
+          this.descripcion = data.descripcion;
+          this.abreviatura = data.abreviatura;
+        }
+    }
+}
+export class Temporada {
+    id?:number;
+    descripcion?:string;
+    abreviatura?:string;
+
+    constructor(data?: any) {
+        if (data) {
+          this.id = data.id;
+          this.descripcion = data.descripcion;
+          this.abreviatura = data.abreviatura;
+        }
+    }
+}
+export class LineasTalle {
+    id?:number;
+    talles?:string[] = [];
+
+    constructor(data?: any) {
+        if (data) {
+          this.id = data.id;
+          this.talles = data.talles;
+        }
+    }
+}
+export class Material {
+    id?:number;
+    descripcion?:string;
+    colores?:Color[] = []
+
+    constructor(data?: any) {
+        if (data) {
+          this.id = data.id;
+          this.descripcion = data.descripcion;
+        }
+    }
+}
+export class Color {
+    id?:number;
+    descripcion?:string;
+    hexa?:string;
+
+    constructor(data?: any) {
+        if (data) {
+          this.id = data.id;
+          this.descripcion = data.descripcion;
+          this.hexa = data.hexa;
+        }
+    }
+}
+
+export class TallesProducto {
+    id:number = 0;
+    idProducto:number = 0;
+    ubicacion?:number;
+    talle?:string;
+    idLineaTalle?:number;
+    cantidad?:number;
+    precio?:number;
+
+    constructor(data?: any) {
+        if (data) {
+          this.id = data.id;
+          this.idProducto = data.idProducto;
+          this.ubicacion = data.ubicacion;
+          this.talle = data.talle;
+          this.cantidad = data.cantidad;
+          this.precio = data.precio;
+          this.idLineaTalle = data.idLineaTalle;
+        }
+    }
 }
