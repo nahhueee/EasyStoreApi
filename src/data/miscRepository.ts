@@ -137,6 +137,25 @@ class MiscRepository{
         }
     }
 
+     async ObtenerLineaDeTalle(idLinea){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.execute<RowDataPacket[]>('SELECT * FROM lineas_talle WHERE id = ?', [idLinea]);
+            const result = rows.map(row => ({
+                id: row.id,
+                talles: row.descripcion.split("-")
+            }));
+
+           return result[0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     async CondicionesIvaSelector(){
         const connection = await db.getConnection();
         

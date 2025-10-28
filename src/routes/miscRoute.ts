@@ -92,6 +92,17 @@ router.get('/lineas-talle', async (req:Request, res:Response) => {
     }
 });
 
+router.get('/linea-talle/:idLinea', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.ObtenerLineaDeTalle(req.params.idLinea));
+
+    } catch(error:any){
+        let msg = "Error al obtener la lineas de talle.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.get('/condiciones-iva', async (req:Request, res:Response) => {
     try{ 
         res.json(await MiscRepo.CondicionesIvaSelector());

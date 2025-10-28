@@ -43,6 +43,35 @@ class ProductosRepository{
         }
     }
 
+    //Busca los productos segun lo que digite el usuario
+    //en la ventana de nueva venta
+    async BuscarProductos(filtro:string){
+        const connection = await db.getConnection();
+
+        try {
+            let consulta = await ObtenerQuery({busqueda: filtro},false);
+            const [rows] = await connection.query(consulta);
+
+            const productos:Producto[] = [];
+           
+            if (Array.isArray(rows)) {
+                for (let i = 0; i < rows.length; i++) { 
+                    const row = rows[i];
+                    let producto:Producto = new Producto();
+                    producto = await this.CompletarObjeto(row);
+                    productos.push(producto);
+                  }
+            }
+
+            return productos;
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     async ObtenerUno(filtros:any){
         const connection = await db.getConnection();
 
@@ -164,43 +193,6 @@ class ProductosRepository{
         producto.talles = await ObtenerTallesProducto(producto.id);
 
         return producto;
-    }
-
-    //Busca los productos segun lo que digite el usuario
-    //en la ventana de nueva venta
-    async BuscarProductos(filtro:any){
-        const connection = await db.getConnection();
-
-        try {
-            let consulta = 'SELECT id, codigo, nombre, costo, precio, unidad FROM productos WHERE id <> 1 AND soloPrecio = 0 ';
-
-            if (filtro.metodo == 'codigo')
-                consulta += " AND codigo = '" + filtro.valor + "'";
-
-            if (filtro.metodo == 'nombre')
-                consulta += " AND LOWER(nombre) LIKE '%" + filtro.valor + "%'";
-
-            const [rows] = await connection.query(consulta);
-
-            const productos:Producto[] = [];
-           
-            if (Array.isArray(rows)) {
-                for (let i = 0; i < rows.length; i++) { 
-                    const row = rows[i];
-
-                    let producto:Producto = new Producto();
-                    
-                    productos.push(producto);
-                  }
-            }
-
-            return productos;
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
     }
     //#endregion
 

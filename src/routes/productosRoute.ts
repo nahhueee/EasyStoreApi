@@ -26,9 +26,9 @@ router.get('/obtener-uno/:id', async (req:Request, res:Response) => {
     }
 });
 
-router.post('/buscar-productos', async (req:Request, res:Response) => {
+router.get('/buscar-productos/:filtro', async (req:Request, res:Response) => {
     try{ 
-        res.json(await ProductosRepo.BuscarProductos(req.body));
+        res.json(await ProductosRepo.BuscarProductos(req.params.filtro));
 
     } catch(error:any){
         let msg = "Error intentando buscar productos.";
