@@ -44,7 +44,6 @@ DROP TABLE IF EXISTS clientes;
 CREATE TABLE clientes (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(100),
-<<<<<<< HEAD
     razonSocial VARCHAR(100),
     telefono VARCHAR(20),
     celular VARCHAR(20),
@@ -73,16 +72,6 @@ CREATE TABLE direcciones_cliente (
     observaciones VARCHAR(300)
 )
 ENGINE=InnoDB;
-
-
-=======
-    email VARCHAR(100),
-    telefono VARCHAR(20),
-    direccion VARCHAR(250),
-    idCondIva INT,
-    documento BIGINT
-);
->>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 
 DROP TABLE IF EXISTS tipos_pago;
 CREATE TABLE tipos_pago (
@@ -240,9 +229,12 @@ CREATE TABLE condiciones_pago (
     descripcion VARCHAR(50)
 );
 
-
-=======
->>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
+DROP TABLE IF EXISTS servicios;
+CREATE TABLE servicios (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    codigo VARCHAR(30),
+    descripcion VARCHAR(50)
+);
 
 INSERT INTO parametros(clave, valor) 
 VALUES 
