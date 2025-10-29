@@ -113,6 +113,17 @@ router.get('/condiciones-iva', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
+
+router.get('/servicios', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.ServiciosSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de servicios.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 //#endregion
 
 // Export the router

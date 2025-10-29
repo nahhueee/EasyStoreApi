@@ -169,6 +169,20 @@ class MiscRepository{
             connection.release();
         }
     }
+
+    async ServiciosSelector(){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.query('SELECT * FROM servicios');
+            return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
     //#endregion
 }
 
