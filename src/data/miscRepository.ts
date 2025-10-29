@@ -170,6 +170,21 @@ class MiscRepository{
         }
     }
 
+    async ComprobantesCondicionSelector(condicionIva){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.query('SELECT idComprobante id, desComprobante descripcion FROM comprobantes_condicion WHERE idCondicion = ?', [condicionIva]);
+            return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+
     async ServiciosSelector(){
         const connection = await db.getConnection();
         

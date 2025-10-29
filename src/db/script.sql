@@ -223,6 +223,14 @@ CREATE TABLE condiciones_iva (
     descripcion VARCHAR(50)
 );
 
+DROP TABLE IF EXISTS comprobantes_condicion;
+CREATE TABLE comprobantes_condicion (
+    id INT  UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idCondicion INT,
+    idComprobante INT,
+    desComprobante VARCHAR(10)
+);
+
 DROP TABLE IF EXISTS condiciones_pago;
 CREATE TABLE condiciones_pago (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -273,6 +281,16 @@ INSERT INTO condiciones_iva (id, descripcion) VALUES
 (13, 'Monotributista Social'),
 (15, 'IVA No Alcanzado');
 
+INSERT INTO comprobantes_condicion (idCondicion, idComprobante, desComprobante) VALUES
+(5, 0, 'COTIZACION'),
+(1, 1, 'FACTURA A'),
+(1, 11, 'FACTURA B'),
+(1, 0, 'COTIZACION'),
+(6, 11,'FACTURA C'),
+(6, 0, 'COTIZACION'),
+(13, 11,'FACTURA C'),
+(13, 0, 'COTIZACION')
+
 INSERT INTO condiciones_pago (id, descripcion) VALUES
 (1, 'CONTADO'),
 (2, 'CUENTA CORRIENTE'),
@@ -283,6 +301,3 @@ INSERT INTO tipos_documento(id, descripcion) VALUES
 (80, 'CUIT'),
 (86, 'CUIL'),
 (96, 'DNI');
-=======
->>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
-
