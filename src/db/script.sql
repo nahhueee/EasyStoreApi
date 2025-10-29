@@ -44,6 +44,7 @@ DROP TABLE IF EXISTS clientes;
 CREATE TABLE clientes (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(100),
+<<<<<<< HEAD
     razonSocial VARCHAR(100),
     telefono VARCHAR(20),
     celular VARCHAR(20),
@@ -58,7 +59,6 @@ CREATE TABLE clientes (
     fechaBaja DATE
 )
 ENGINE=InnoDB;
-
 
 DROP TABLE IF EXISTS direcciones_cliente;
 CREATE TABLE direcciones_cliente (
@@ -75,6 +75,14 @@ CREATE TABLE direcciones_cliente (
 ENGINE=InnoDB;
 
 
+=======
+    email VARCHAR(100),
+    telefono VARCHAR(20),
+    direccion VARCHAR(250),
+    idCondIva INT,
+    documento BIGINT
+);
+>>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 
 DROP TABLE IF EXISTS tipos_pago;
 CREATE TABLE tipos_pago (
@@ -86,7 +94,7 @@ DROP TABLE IF EXISTS tipos_documento;
 CREATE TABLE tipos_documento(
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     descripcion VARCHAR(50)
-)
+);
 
 DROP TABLE IF EXISTS ventas_entrega;
 CREATE TABLE ventas_entrega (
@@ -128,9 +136,6 @@ CREATE TABLE etiquetas (
     precioAlineacion VARCHAR(10),
     precioColor VARCHAR(10)
 );
-
-
-
 
 DROP TABLE IF EXISTS productos;
 CREATE TABLE productos (
@@ -235,12 +240,9 @@ CREATE TABLE condiciones_pago (
     descripcion VARCHAR(50)
 );
 
-DROP TABLE IF EXISTS servicios;
-CREATE TABLE servicios (
-    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    codigo VARCHAR(30),
-    descripcion VARCHAR(50)
-);
+
+=======
+>>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 
 INSERT INTO parametros(clave, valor) 
 VALUES 
@@ -263,7 +265,7 @@ VALUES
 
 INSERT INTO tipos_pago(id, nombre) VALUES (NULL,'EFECTIVO'), (NULL,'TARJETA'), (NULL,'TRANSFERENCIA'), (NULL,'COMBINADO');
 INSERT INTO cargos(id, nombre) VALUES (NULL,'ADMINISTRADOR'), (NULL,'EMPLEADO');
-INSERT INTO `clientes` (`id`, `nombre`, `razonSocial`, `telefono`, `celular`, `contacto`, `email`, `idCondIva`, `idTipoDocumento`, `documento`, `condicionPago`, `idCategoria`, `fechaAlta`, `fechaBaja`) VALUES (NULL, 'CONSUMIDOR FINAL', 'CONSUMIDOR FINAL', '0', '0', 'CONSUMIDOR FINAL', NULL, '0', '0', '0', '0', '0', CURRENT_TIMESTAMP, NULL);
+INSERT INTO `clientes` (`id`, `nombre`, `razonSocial`, `telefono`, `celular`, `contacto`, `email`, `idCondIva`, `idTipoDocumento`, `documento`, `idCondicionPago`, `idCategoria`, `fechaAlta`, `fechaBaja`) VALUES (NULL, 'CONSUMIDOR FINAL', 'CONSUMIDOR FINAL', '0', '0', 'CONSUMIDOR FINAL', NULL, '0', '0', '0', '0', '0', CURRENT_TIMESTAMP, NULL);
 INSERT INTO usuarios(id, usuario, nombre, email, pass, idCargo) VALUES (NULL, 'ADMIN', 'ADMINISTRADOR', NULL, '1235', 1);
 INSERT INTO lineas_talle(descripcion)
 VALUES
@@ -289,4 +291,6 @@ INSERT INTO tipos_documento(id, descripcion) VALUES
 (80, 'CUIT'),
 (86, 'CUIL'),
 (96, 'DNI');
+=======
+>>>>>>> 7fa8955031b96a6a37f42603020dbffc90e5b23e
 
