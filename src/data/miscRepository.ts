@@ -170,6 +170,20 @@ class MiscRepository{
         }
     }
 
+    async MetodosPagoSelector(){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.query('SELECT * FROM metodos_pago');
+            return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     async ComprobantesCondicionSelector(condicionIva){
         const connection = await db.getConnection();
         
@@ -198,6 +212,22 @@ class MiscRepository{
             connection.release();
         }
     }
+
+    
+    async ProcesosVentaSelector(){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.query('SELECT * FROM procesos_venta');
+            return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     //#endregion
 }
 

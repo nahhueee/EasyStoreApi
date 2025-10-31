@@ -85,23 +85,70 @@ CREATE TABLE tipos_documento(
     descripcion VARCHAR(50)
 );
 
-DROP TABLE IF EXISTS ventas_entrega;
-CREATE TABLE ventas_entrega (
-    id INT PRIMARY KEY,
+
+DROP TABLE IF EXISTS ventas;
+CREATE TABLE ventas (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idProceso INT NOT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    hora VARCHAR(10),
     idCliente INT NOT NULL,
-    monto DECIMAL(10,2) NOT NULL,
-    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    idLista INT NOT NULL,
+    nroNota INT,
+    idEmpresa INT NOT NULL,
+    idTComprobante INT NOT NULL,
+    idTDescuento INT,
+    descuento DECIMAL(5,2),
+    codPromocion INT,
+    redondeo DECIMAL(10,2),
+    total DECIMAL(10,2),
+    fechaBaja DATETIME
 )
 ENGINE=InnoDB;
 
-DROP TABLE IF EXISTS ventas_entrega_detalle;
-CREATE TABLE ventas_entrega_detalle (
+DROP TABLE IF EXISTS ventas_productos;
+CREATE TABLE ventas_productos (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    idEntrega INT NOT NULL,
     idVenta INT NOT NULL,
-    montoAplicado DECIMAL(10,2) NOT NULL
+    idProducto INT NOT NULL,
+    cantidad INT NOT NULL,
+    precio DECIMAL(10,2) NOT NULL,
+    total DECIMAL(10,2) NOT NULL,
+    t1 INT,
+    t2 INT,
+    t3 INT,
+    t4 INT,
+    t5 INT,
+    t6 INT,
+    t7 INT,
+    t8 INT,
+    t9 INT,
+    t10 INT,
+    talles VARCHAR(100)
 )
 ENGINE=InnoDB;
+
+DROP TABLE IF EXISTS ventas_servicios;
+CREATE TABLE ventas_servicios (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idVenta INT NOT NULL,
+    idServicio INT NOT NULL,
+    cantidad INT NOT NULL,
+    precio DECIMAL(10,2) NOT NULL,
+    total DECIMAL(10,2) NOT NULL
+)
+ENGINE=InnoDB;
+
+DROP TABLE IF EXISTS ventas_pagos;
+CREATE TABLE ventas_pagos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idVenta INT NOT NULL,
+    idMetodo INT NOT NULL,
+    monto DECIMAL(10,2) NOT NULL
+)
+ENGINE=InnoDB;
+
+
 
 DROP TABLE IF EXISTS etiquetas;
 CREATE TABLE etiquetas (
@@ -152,6 +199,13 @@ CREATE TABLE procesos (
     abreviatura VARCHAR(10)
 );
 
+DROP TABLE IF EXISTS procesos_venta;
+CREATE TABLE procesos_venta (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
+
+
 DROP TABLE IF EXISTS tipos_producto;
 CREATE TABLE tipos_producto (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -201,6 +255,12 @@ CREATE TABLE materiales_colores (
 
 DROP TABLE IF EXISTS lineas_talle;
 CREATE TABLE lineas_talle (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
+
+DROP TABLE IF EXISTS metodos_pago;
+CREATE TABLE metodos_pago (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     descripcion VARCHAR(50)
 );
@@ -301,3 +361,19 @@ INSERT INTO tipos_documento(id, descripcion) VALUES
 (80, 'CUIT'),
 (86, 'CUIL'),
 (96, 'DNI');
+
+INSERT INTO metodos_pago(id, descripcion) VALUES
+(1, 'CONTADO'),
+(2, 'TARJETA CREDITO'),
+(3, 'TARJETA DEBITO'),
+(4, 'MERCADO PAGO');
+
+
+INSERT INTO procesos_venta(id, descripcion) VALUES
+(1, 'FACTURA'),
+(2, 'COTIZACION'),
+(3, 'SHOWROOM'),
+(4, 'DIFUSION'),
+(5, 'CON NOTA EMPAQUE');
+
+

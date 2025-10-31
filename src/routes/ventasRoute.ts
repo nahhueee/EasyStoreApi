@@ -16,34 +16,12 @@ router.post('/obtener', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/selector-tpagos', async (req:Request, res:Response) => {
+router.get('/obtener-una/:idVenta', async (req:Request, res:Response) => {
     try{ 
-        res.json(await VentasRepo.TiposPagoSelector());
+        res.json(await VentasRepo.ObtenerVenta(req.params.idVenta));
 
     } catch(error:any){
-        let msg = "Error al obtener el selector de tipos de pago.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
-router.get('/totales-tipo-pago/:id', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await VentasRepo.TotalesXTipoPago(req.params.id));
-
-    } catch(error:any){
-        let msg = "Error al obtener los totales por tipo de pago para el resumen.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
-router.get('/totales-pagas-impagas/:id', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await VentasRepo.TotalesPagasImpagas(req.params.id));
-
-    } catch(error:any){
-        let msg = "Error al obtener los totales de ventas paga e impagas para el resumen.";
+        let msg = "Error al obtener la venta.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }
@@ -57,6 +35,17 @@ router.post('/agregar', async (req:Request, res:Response) => {
 
     } catch(error:any){
         let msg = "Error al intentar agregar la venta.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.put('/modificar', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await VentasRepo.Modificar(req.body));
+
+    } catch(error:any){
+        let msg = "Error al intentar modificar la venta.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

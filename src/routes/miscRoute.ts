@@ -135,6 +135,28 @@ router.get('/servicios', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
+
+router.get('/metodos-pago', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.MetodosPagoSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de metodos de pago.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/procesos-venta', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.ProcesosVentaSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de procesos de venta.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 //#endregion
 
 // Export the router

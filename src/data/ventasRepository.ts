@@ -1,13 +1,7 @@
 import db from '../db';
-import { Venta } from '../models/Venta';
-import { Cliente } from '../models/Cliente';
-import { pagoVenta } from '../models/PagoVenta';
-import { DetalleVenta } from '../models/DetalleVenta';
-import { Producto } from '../models/Producto';
-import { FacturaVenta } from '../models/FacturaVenta';
+import { PagosVenta, ProductosVenta, ServiciosVenta, Venta } from '../models/Venta';
 import { ObjQR } from '../models/ObjQR';
-import { ObjTicketFactura } from '../models/ObjTicketFactura';
-import { ParametrosRepo } from './parametrosRepository';
+import { pagoVenta } from '../models/PagoVenta';
 const moment = require('moment');
 
 class VentasRepository{
@@ -30,57 +24,7 @@ class VentasRepository{
             if (Array.isArray(rows)) {
                 for (let i = 0; i < rows.length; i++) { 
                     const row = rows[i];
-
-                    let venta:Venta = new Venta();
-                    venta.id = row['id'];
-                    venta.idCaja = row['idCaja'];
-                    venta.fecha = row['fecha'];
-                    venta.hora = row['hora'];
-                    
-                    //Obtiene la lista de detalles de la venta
-                    venta.detalles = await ObtenerDetalleVenta(connection, row['id']); 
-
-                    //Obtenemos la suma total de las ventas
-                    venta.total = venta.detalles.reduce((accum, detalle) => {
-                        return accum + detalle.total!;
-                    }, 0);
-
-                    //venta.cliente = new Cliente({id: row['idCliente'], nombre: row['cliente']});
-                    venta.pago = new pagoVenta({
-                        efectivo: parseFloat(row['efectivo']), 
-                        digital: parseFloat(row['digital']), 
-                        recargo: parseFloat(row['recargo']), 
-                        descuento: parseFloat(row['descuento']), 
-                        entrega: parseFloat(row['entrega']), //Dinero entregado a la venta
-                        tipoPago: row['tipoPago'],
-                        realizado: row['realizado'],
-                    });
-
-                    venta.factura = new FacturaVenta({
-                        cae: row['cae'], 
-                        caeVto: row['caeVto'], 
-                        ticket: row['ticket'], 
-                        tipoFactura: row['tipoFactura'], 
-                        neto: parseFloat(row['neto']), 
-                        iva: parseFloat(row['iva']), 
-                        dni: row['dni'],
-                        tipoDni: row['tipoDni'],
-                        ptoVenta: row['ptoVenta'],
-                        condReceptor: row['condReceptor'],
-                    });
-
-
-                    //Aplicamos descuentos
-                    if(venta.pago.descuento > 0)
-                        venta.total = venta.total - (venta.total * (venta.pago.descuento / 100));
-
-                    //Aplicamos recargos
-                    if(venta.pago.recargo > 0)
-                        venta.total = venta.total + (venta.total * (venta.pago.recargo / 100));
-
-                    venta.pago.restante = venta.total - venta.pago.entrega!, //Restante a pagar
-
-                    ventas.push(venta);
+                    ventas.push(await this.CompletarObjeto(connection, row));
                   }
             }
 
@@ -93,13 +37,16 @@ class VentasRepository{
         }
     }
 
-    async TiposPagoSelector(){
+    async ObtenerVenta(idVenta){
         const connection = await db.getConnection();
-        
-        try {
-            const [rows] = await connection.query('SELECT * FROM tipos_pago');
-            return [rows][0];
 
+        try {
+            let queryRegistros = await ObtenerQuery({idVenta},false);
+
+            //Obtengo la lista de registros y el total
+            const rows = await connection.query(queryRegistros);
+
+            return await this.CompletarObjeto(connection, rows[0][0]);
         } catch (error:any) {
             throw error;
         } finally{
@@ -107,66 +54,39 @@ class VentasRepository{
         }
     }
 
-    async TotalesXTipoPago(idCaja){
-        const connection = await db.getConnection();
-        
-        try {
-            const consultaEfectivo = " SELECT COALESCE(SUM(efectivo), 0) AS efectivo FROM ventas_pago vpag " +
-                                     " INNER JOIN ventas v ON v.id = vpag.idVenta " +
-                                     " WHERE v.idCaja = ? AND vpag.realizado = 1 ";
+    async CompletarObjeto(connection, row){
+        let venta:Venta = new Venta();
+        venta.id = row['id'];
+        venta.idProceso = row['idProceso'];
+        venta.proceso = row['proceso'];
+        venta.nroNota = row['ticket'];
+        venta.fecha = moment(row['fecha']).toDate();
+        venta.hora = row['hora'];
+        venta.idCliente = row['idCliente'];
+        venta.cliente = row['cliente'];
+        venta.idListaPrecio = row['idLista'];
+        // venta.listaPrecio = row['listaPrecio'];
+        venta.idEmpresa = row['idEmpresa'];
+        // venta.empresa = row['empresa'];
+        venta.idTipoComprobante = row['idTComprobante'];
+        // venta.tipoComprobante = row['tipoComprobante'];
+        venta.idTipoDescuento = row['idTDescuento'];
+        // venta.tipoDescuento = row['tipoDescuento'];
+        venta.descuento = parseInt(row['descuento']);
+        venta.codPromocion = row['codPromocion'];
+        venta.redondeo = parseFloat(row['redondeo']);
+        venta.total = parseFloat(row['total']);
 
-            const [resultEfectivo] = await connection.query(consultaEfectivo, [idCaja]);
+        venta.pagos = await ObtenerPagosVenta(connection, venta.id!);
+        venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
+        venta.productos = await ObtenerProductosVenta(connection, venta.id!);
 
-            const consultaDigital =  " SELECT COALESCE(SUM(CASE WHEN vpag.idPago = 2 THEN digital ELSE 0 END), 0) AS tarjetas, " +
-                                     " COALESCE(SUM(CASE WHEN vpag.idPago = 3 THEN digital ELSE 0 END), 0) AS transferencias, " +
-                                     " COALESCE(SUM(CASE WHEN vpag.idPago = 4 THEN digital ELSE 0 END), 0) AS otros FROM ventas_pago vpag " +
-                                     " INNER JOIN ventas v ON v.id = vpag.idVenta " +
-                                     " WHERE v.idCaja = ? ";
-
-            const [resultDigital] = await connection.query(consultaDigital, [idCaja]);
-
-            return {
-                efectivo: parseFloat(resultEfectivo[0].efectivo),
-                tarjetas: parseFloat(resultDigital[0].tarjetas),
-                transferencias: parseFloat(resultDigital[0].transferencias),
-                otros: parseFloat(resultDigital[0].otros)
-            };
-
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
-
-    async TotalesPagasImpagas(idCaja){
-        const connection = await db.getConnection();
-        
-        try {
-            const consulta =  " SELECT  COUNT(CASE WHEN vpag.realizado = 1 THEN 1 END) AS pagas, " +
-                              " COUNT(CASE WHEN vpag.realizado = 0 THEN 1 END) AS impagas FROM ventas_pago vpag " +
-                              " INNER JOIN ventas v ON v.id = vpag.idVenta " +
-                              " WHERE v.idCaja = ? ";
-
-            const [resultado] = await connection.query(consulta, [idCaja]);
-
-            return {
-                pagas: parseInt(resultado[0].pagas),
-                impagas: parseInt(resultado[0].impagas)
-            };
-
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
+        return venta;
     }
     //#endregion
 
     //#region ABM
-    async Agregar(venta:any): Promise<string>{
+    async Agregar(venta:Venta): Promise<string>{
         const connection = await db.getConnection();
         
         try {
@@ -180,28 +100,32 @@ class VentasRepository{
             await InsertVenta(connection,venta);
 
             //insertamos los datos del pago de la venta
-            venta.pago.idVenta = venta.id;
-            await InsertPagoVenta(connection, venta.pago);
-
-            //insertamos los datos de la factura de la venta
-            if(venta.factura){
-                venta.factura.idVenta = venta.id;
-                await InsertFacturaVenta(connection, venta.factura);
+            if(venta.pagos){
+                for (const element of venta.pagos) {
+                    element.idVenta = venta.id;
+                    await InsertPagoVenta(connection, element);
+                }
             }
-             
-            //Insertamos los detalles de la venta
-            for (const element of  venta.detalles) {
-                element.idVenta = venta.id;
-                InsertDetalleVenta(connection, element);
-                ActualizarInventario(connection, element, "-")
-            };
-
-            //Actualizamos el total de ventas caja
-            await connection.query("UPDATE cajas SET ventas = ventas + ? WHERE id = ?", [venta.total, venta.idCaja]);
+           
+            //insertamos los productos de la venta
+            if(venta.productos){
+                for (const element of venta.productos) {
+                    element.idVenta = venta.id;
+                    await InsertProductoVenta(connection, element);
+                }
+            }
+         
+            //insertamos los servicios de la venta
+            if(venta.servicios){
+                for (const element of venta.servicios) {
+                    element.idVenta = venta.id;
+                    await InsertServicioVenta(connection, element);
+                }
+            }
             
             //Mandamos la transaccion
             await connection.commit();
-            return venta.id;
+            return venta.id.toString();
 
         } catch (error:any) {
             //Si ocurre un error volvemos todo para atras
@@ -212,15 +136,51 @@ class VentasRepository{
         }
     }
 
-    async GuardarFactura(data:any){
+    async Modificar(venta:Venta): Promise<string>{
         const connection = await db.getConnection();
         
         try {
-            data.factura.idVenta = data.idVenta;
-            await InsertFacturaVenta(connection, data.factura);
-            return("OK");
+           
+            //Iniciamos una transaccion
+            await connection.beginTransaction();
+
+            //Insertamos la venta
+            await UpdateVenta(connection,venta);
+
+            await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
+            //insertamos los datos del pago de la venta
+            if(venta.pagos){
+                for (const element of venta.pagos) {
+                    element.idVenta = venta.id;
+                    await InsertPagoVenta(connection, element);
+                }
+            }
+           
+            await connection.query("DELETE FROM ventas_productos WHERE idVenta = ?", [venta.id]);
+            //insertamos los productos de la venta
+            if(venta.productos){
+                for (const element of venta.productos) {
+                    element.idVenta = venta.id;
+                    await InsertProductoVenta(connection, element);
+                }
+            }
+         
+            await connection.query("DELETE FROM ventas_servicios WHERE idVenta = ?", [venta.id]);
+            //insertamos los servicios de la venta
+            if(venta.servicios){
+                for (const element of venta.servicios) {
+                    element.idVenta = venta.id;
+                    await InsertServicioVenta(connection, element);
+                }
+            }
+            
+            //Mandamos la transaccion
+            await connection.commit();
+            return "OK"
 
         } catch (error:any) {
+            //Si ocurre un error volvemos todo para atras
+            await connection.rollback();
             throw error;
         } finally{
             connection.release();
@@ -234,26 +194,8 @@ class VentasRepository{
             //Iniciamos una transaccion
             await connection.beginTransaction();
 
-            //Eliminamos el pago relacionado
-            await connection.query("DELETE FROM ventas_pago WHERE idVenta = ?", [venta.id]);
-
-             //Eliminamos la factura relacionada
-             await connection.query("DELETE FROM ventas_factura WHERE idVenta = ?", [venta.id]);
-
-            //Eliminamos los detalles de la venta
-            await connection.query("DELETE FROM ventas_detalle WHERE idVenta = ?", [venta.id]);
-
-            //Borramos la venta
-            await connection.query("DELETE FROM ventas WHERE id = ?", [venta.id]);
-
-            //Actualizamos el total de ventas caja
-            await connection.query("UPDATE cajas SET ventas = ventas - ? WHERE id = ?", [venta.total, venta.idCaja]);
-            
-            //EActualizamos el inventario
-            venta.detalles.forEach(element => {
-                ActualizarInventario(connection, element, "+")
-            });
-
+            await connection.query("UPDATE ventas SET fechaBaja = ? WHERE id = ?", [moment().format('YYYY-MM-DD HH:mm'), venta.id]);
+                        
             //Mandamos la transaccion
             await connection.commit();
             return "OK";
@@ -261,6 +203,22 @@ class VentasRepository{
         } catch (error:any) {
             //Si ocurre un error volvemos todo para atras
             await connection.rollback();
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    
+    async GuardarFactura(data:any){
+        const connection = await db.getConnection();
+        
+        try {
+            data.factura.idVenta = data.idVenta;
+            await InsertFacturaVenta(connection, data.factura);
+            return("OK");
+
+        } catch (error:any) {
             throw error;
         } finally{
             connection.release();
@@ -319,17 +277,11 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         //#endregion
 
         // #region FILTROS
-        if (filtros.caja != 0)
-            filtro += " AND v.idCaja = " + filtros.caja;
-        
-        if (filtros.cliente != 0)
+        if (filtros.cliente && filtros.cliente != 0)
             filtro += " AND v.idCliente = " + filtros.cliente;
-        
-        
-        if (filtros.estado == "Pagas")
-            filtro += " AND vpag.realizado = 1";
-        if (filtros.estado == "Impagas")
-            filtro += " AND vpag.realizado = 0";
+
+        if (filtros.idVenta && filtros.idVenta != 0)
+            filtro += " AND v.id = " + filtros.idVenta;
         // #endregion
 
         if (esTotal)
@@ -345,24 +297,122 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
-                " SELECT v.*, " + 
-                " vpag.idPago, vpag.efectivo, vpag.digital, vpag.recargo, vpag.descuento, vpag.entrega, vpag.realizado, " + //Pago
-                " vfac.cae, vfac.caeVto, vfac.ticket, vfac.tipoFactura, vfac.neto, vfac.iva, vfac.dni, vfac.tipoDni, vfac.ptoVenta, vfac.condReceptor, " + //Factura
-                " COALESCE(cli.nombre, 'ELIMINADO') cliente, " +
-                " COALESCE(tp.nombre, 'ELIMINADO') tipoPago " +
-                " FROM ventas v " +
-                " INNER JOIN ventas_pago vpag ON vpag.idVenta = v.id " +
-                " LEFT JOIN ventas_factura vfac ON vfac.idVenta = v.id " +
-                " LEFT JOIN tipos_pago tp ON tp.id = vpag.idPago " +
-                " LEFT JOIN clientes cli ON cli.id = v.idCliente " +
+                " SELECT v.*, c.nombre AS cliente, pv.descripcion AS proceso FROM ventas v " + 
+                " LEFT JOIN clientes c ON c.id = v.idCliente " +
+                " LEFT JOIN procesos_venta pv ON pv.id = v.idProceso " +
                 " WHERE 1 = 1 " +
                 filtro +
-                " ORDER BY v.id DESC" +
+                " ORDER BY v.id DESC " +
                 paginado +
                 endCount;
         
         return query;
             
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function ObtenerPagosVenta(connection, idVenta:number){
+    try {
+        const consulta = "SELECT vp.*, mp.descripcion FROM ventas_pagos vp " + 
+                         "LEFT JOIN metodos_pago mp ON mp.id = vp.idMetodo "
+                         "WHERE vp.idVenta = ?"
+
+        const [rows] = await connection.query(consulta, [idVenta]);
+        const pagos:PagosVenta[] = [];
+
+        if (Array.isArray(rows)) {
+            for (let i = 0; i < rows.length; i++) { 
+                const row = rows[i];
+                
+                let pago:PagosVenta = new PagosVenta();
+                pago.idVenta = row['idVenta'];
+                pago.idMetodo = row['idMetodo'];
+                pago.metodo = row['descripcion'];
+                pago.monto = parseFloat(row['monto']);
+                pagos.push(pago);
+              }
+        }
+
+        return pagos;
+
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function ObtenerServiciosVenta(connection, idVenta:number){
+    try {
+        const consulta = "SELECT vs.*, s.descripcion, s.codigo FROM ventas_servicios vs " + 
+                         "LEFT JOIN servicios s ON s.id = vs.idServicio "
+                         "WHERE vs.idVenta = ? "
+
+        const [rows] = await connection.query(consulta, [idVenta]);
+
+        const servicios:ServiciosVenta[] = [];
+
+        if (Array.isArray(rows)) {
+            for (let i = 0; i < rows.length; i++) { 
+                const row = rows[i];
+                
+                let servicio:ServiciosVenta = new ServiciosVenta();
+                servicio.idVenta = row['idVenta'];
+                servicio.idServicio = row['idServicio'];
+                servicio.codServicio = row['codigo'];
+                servicio.nomServicio = row['descripcion'];
+                servicio.cantidad = parseInt(row['cantidad']);
+                servicio.unitario = parseFloat(row['precio']);
+                servicio.total = parseFloat(row['total']);
+                servicios.push(servicio);
+              }
+        }
+
+        return servicios;
+
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function ObtenerProductosVenta(connection, idVenta:number){
+    try {
+        const consulta = "SELECT vp.*, p.codigo, p.nombre FROM ventas_productos vp " + 
+                         "INNER JOIN productos p ON p.id = vp.idProducto WHERE vp.idVenta = ? "
+
+        const [rows] = await connection.query(consulta, [idVenta]);
+
+        const productos:ProductosVenta[] = [];
+
+        if (Array.isArray(rows)) {
+            for (let i = 0; i < rows.length; i++) { 
+                const row = rows[i];
+                
+                let producto:ProductosVenta = new ProductosVenta();
+                producto.idVenta = row['idVenta'];
+                producto.idProducto = row['idProducto'];
+                producto.codProducto = row['codigo'];
+                producto.nomProducto = row['nombre'];
+                producto.cantidad = row['cantidad'];
+                producto.t1 = parseInt(row['t1']);
+                producto.t2 = parseInt(row['t2']);
+                producto.t3 = parseInt(row['t3']);
+                producto.t4 = parseInt(row['t4']);
+                producto.t5 = parseInt(row['t5']);
+                producto.t6 = parseInt(row['t6']);
+                producto.t7 = parseInt(row['t7']);
+                producto.t8 = parseInt(row['t8']);
+                producto.t9 = parseInt(row['t9']);
+                producto.t10 = parseInt(row['t10']);
+                producto.unitario = parseFloat(row['precio']);
+                producto.total = parseFloat(row['total']);
+                producto.tallesSeleccionados = row['talles'];
+                productos.push(producto);
+              }
+        }
+
+        return productos;
+
     } catch (error) {
         throw error; 
     }
@@ -389,10 +439,62 @@ async function ObtenerUltimaVenta(connection):Promise<number>{
 
 async function InsertVenta(connection, venta):Promise<void>{
     try {
-        const consulta = " INSERT INTO ventas(id, idCaja, idCliente, fecha, hora) " +
+        const consulta = " INSERT INTO ventas(id,idProceso,nroNota,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
+
+        const parametros = [venta.id, venta.idProceso, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total];
+        await connection.query(consulta, parametros);
+        
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function UpdateVenta(connection, venta):Promise<void>{
+    try {
+        const consulta = "UPDATE ventas SET " +
+                         " idProceso = ?, " +
+                         " nroNota = ?, " +
+                         " fecha = ?, " +
+                         " hora = ?, " +
+                         " idCliente = ?, " +
+                         " idLista = ?, " +
+                         " idEmpresa = ?, " +
+                         " idTComprobante = ?, " +
+                         " idTDescuento = ?, " +
+                         " descuento = ?, " +
+                         " codPromocion = ?, " +
+                         " redondeo = ?, " +
+                         " total = ? " +
+                         " WHERE id = ? ";
+
+        const parametros = [venta.id, venta.idProceso, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total];
+        await connection.query(consulta, parametros);
+        
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function InsertProductoVenta(connection, producto):Promise<void>{
+    try {
+        const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, cantidad, precio, total, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+        const parametros = [producto.idVenta, producto.idProducto, producto.cantidad, producto.unitario, producto.total, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
+        await connection.query(consulta, parametros);
+        
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function InsertServicioVenta(connection, pago):Promise<void>{
+    try {
+        const consulta = " INSERT INTO ventas_servicios(idVenta, idServicio, cantidad, precio, total) " +
                          " VALUES(?, ?, ?, ?, ?) ";
 
-        const parametros = [venta.id, venta.idCaja, venta.cliente.id, moment(venta.fecha).format('YYYY-MM-DD'), venta.hora];
+        const parametros = [pago.idVenta, pago.idServicio, pago.cantidad, pago.unitario, pago.total];
         await connection.query(consulta, parametros);
         
     } catch (error) {
@@ -402,10 +504,10 @@ async function InsertVenta(connection, venta):Promise<void>{
 
 async function InsertPagoVenta(connection, pago):Promise<void>{
     try {
-        const consulta = " INSERT INTO ventas_pago(idVenta, idPago, efectivo, digital, recargo, descuento, entrega, realizado) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?) ";
+        const consulta = " INSERT INTO ventas_pagos(idVenta, idMetodo, monto) " +
+                         " VALUES(?, ?, ?) ";
 
-        const parametros = [pago.idVenta, pago.idTipoPago, pago.efectivo, pago.digital, pago.recargo, pago.descuento, pago.entrega, pago.realizado];
+        const parametros = [pago.idVenta, pago.idMetodo, pago.monto];
         await connection.query(consulta, parametros);
         
     } catch (error) {
@@ -426,76 +528,5 @@ async function InsertFacturaVenta(connection, factura):Promise<void>{
     }
 }
 //#endregion
-
-//#region DETALLE VENTA
-async function ObtenerDetalleVenta(connection, idVenta:number){
-    try {
-        const consulta = " SELECT dv.*, p.precio precioProducto, COALESCE(p.nombre, 'ELIMINADO') producto, p.soloPrecio FROM ventas_detalle dv " +
-                         " LEFT JOIN productos p on p.id = dv.idProducto " +
-                         " WHERE dv.idVenta = ?" +
-                         " ORDER BY dv.id DESC ";
-
-        const [rows] = await connection.query(consulta, [idVenta]);
-
-        const detalles:DetalleVenta[] = [];
-
-        if (Array.isArray(rows)) {
-            for (let i = 0; i < rows.length; i++) { 
-                const row = rows[i];
-                
-                let detalle:DetalleVenta = new DetalleVenta();
-                detalle.id = row['id'];
-                detalle.cantidad = row['cantidad'];
-                detalle.precio = parseFloat(row['precio']);
-                detalle.costo = parseFloat(row['costo']);
-                detalle.total = detalle.precio! * detalle.cantidad!;
-                // detalle.producto = new Producto({
-                //     id: row['idProducto'], 
-                //     nombre: row['producto'], 
-                //     soloPrecio: row['soloPrecio'] == 1 ? true : false, 
-                //     precio: parseFloat(row['precioProducto'])
-                // });
-
-
-                detalles.push(detalle)
-              }
-        }
-
-        return detalles;
-
-    } catch (error) {
-        throw error; 
-    }
-}
-
-async function InsertDetalleVenta(connection, detalle):Promise<void>{
-    try {
-        const consulta = " INSERT INTO ventas_detalle(idVenta, idProducto, cantidad, costo, precio) " +
-                         " VALUES(?, ?, ?, ?, ?) ";
-
-        const parametros = [detalle.idVenta, detalle.producto.id, detalle.cantidad, detalle.costo, detalle.precio];
-        await connection.query(consulta, parametros);
-        
-    } catch (error) {
-        throw error; 
-    }
-}
-
-async function ActualizarInventario(connection, detalle, operacion):Promise<void>{
-    try {
-        if(detalle.producto.id === 1 || detalle.producto.soloPrecio) return; //No actualizamos el producto vario o productos que no trabajan cantidad
-
-        const consulta = `UPDATE productos SET cantidad = cantidad ${operacion} ? 
-                          WHERE id = ?`;
-
-        const parametros = [detalle.cantidad, detalle.producto.id];
-        await connection.query(consulta, parametros);
-        
-    } catch (error) {
-        throw error; 
-    }
-}
-//#endregion
-
 
 export const VentasRepo = new VentasRepository();
