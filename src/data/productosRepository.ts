@@ -156,7 +156,7 @@ class ProductosRepository{
         let producto:Producto = new Producto();
         producto.id = row['id'],
         producto.codigo = row['codigo'],
-        producto.nombre = row['nombre'],
+        producto.nombre = row['nombre'] + " " + row['color'],
         producto.empresa = row['empresa'],
         producto.cliente = row['idCliente'],
         producto.proceso = row['idProceso'];

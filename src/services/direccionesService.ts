@@ -39,7 +39,7 @@ class DireccionesService{
         if (!provincia) {
             throw new Error('Falta el parámetro provincia');
         }
-
+        
         //Filtramos por provincia
         let filtradas = this.localidades
         .filter(l => l.provincia.nombre.toLowerCase() === provincia.toLowerCase());
