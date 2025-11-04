@@ -349,7 +349,7 @@ INSERT INTO comprobantes_condicion (idCondicion, idComprobante, desComprobante) 
 (6, 11,'FACTURA C'),
 (6, 0, 'COTIZACION'),
 (13, 11,'FACTURA C'),
-(13, 0, 'COTIZACION')
+(13, 0, 'COTIZACION');
 
 INSERT INTO condiciones_pago (id, descripcion) VALUES
 (1, 'CONTADO'),

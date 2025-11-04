@@ -468,7 +468,7 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " total = ? " +
                          " WHERE id = ? ";
 
-        const parametros = [venta.id, venta.idProceso, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total];
+        const parametros = [venta.idProceso, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {
