@@ -11,6 +11,8 @@ import moment from "moment";
 import { EmpresasRepo } from "../data/empresasRepository";
 const QRCode = require('qrcode');
 
+const afipInstances: Record<string, any> = {};
+
 class FacturacionService{
     async Facturar(objFactura:ObjFacturar){
 
@@ -171,6 +173,12 @@ async function getAfipInstance(cuilTitular): Promise<Afip> {
     //Verificamos que existan los archivos de clave y certificado
     const cert = fs.readFileSync(path.resolve(__dirname, '../certs/', "cert"), "utf8");
     const key = fs.readFileSync(path.resolve(__dirname, '../certs/', "key"), "utf8");
+
+    const ticketPath = path.resolve(__dirname, `../tokens/TA-${cuilTitular}.json`);
+    fs.mkdirSync(path.dirname(ticketPath), { recursive: true });
+
+    // Reutiliza instancia si ya existe
+    if (afipInstances[cuilTitular]) return afipInstances[cuilTitular];
     
     if(key.trim().length === 0) throw new Error(`No se encontró archivo key.`);
     if(cert.trim().length === 0) throw new Error(`No se encontró archivo cert.`);
@@ -179,8 +187,11 @@ async function getAfipInstance(cuilTitular): Promise<Afip> {
         key: key,
         cert: cert,
         cuit: cuilTitular,
-        production: config.produccion
+        production: config.produccion,
+        ticketPath
     });
+
+    afipInstances[cuilTitular] = afip;
 
     return afip;
 }
