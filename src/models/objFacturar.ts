@@ -4,6 +4,7 @@ export class ObjFacturar {
     docNro?:number;
     docTipo?:number;
     condReceptor?:number;
+    idEmpresa?:number;
 
     constructor(data?: any) {
         if (data) {
@@ -12,6 +13,7 @@ export class ObjFacturar {
           this.docNro = data.docNro;
           this.docTipo = data.docTipo;
           this.condReceptor = data.condReceptor;
+          this.idEmpresa = data.idEmpresa;
         }
     }
 }

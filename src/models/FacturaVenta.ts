@@ -1,4 +1,5 @@
 export class FacturaVenta{
+    idVenta?:number;
     cae?: string;
     caeVto?: Date;
     ticket? : number;

@@ -1,7 +1,8 @@
 import db from '../db';
 import { PagosVenta, ProductosVenta, ServiciosVenta, Venta } from '../models/Venta';
 import { ObjQR } from '../models/ObjQR';
-import { pagoVenta } from '../models/PagoVenta';
+import { FacturaVenta } from '../models/FacturaVenta';
+import { MiscRepo } from './miscRepository';
 const moment = require('moment');
 
 class VentasRepository{
@@ -11,7 +12,7 @@ class VentasRepository{
         const connection = await db.getConnection();
 
         try {
-             //Obtengo la query segun los filtros
+            //Obtengo la query segun los filtros
             let queryRegistros = await ObtenerQuery(filtros,false);
             let queryTotal = await ObtenerQuery(filtros,true);
 
@@ -65,13 +66,9 @@ class VentasRepository{
         venta.idCliente = row['idCliente'];
         venta.cliente = row['cliente'];
         venta.idListaPrecio = row['idLista'];
-        // venta.listaPrecio = row['listaPrecio'];
         venta.idEmpresa = row['idEmpresa'];
-        // venta.empresa = row['empresa'];
         venta.idTipoComprobante = row['idTComprobante'];
-        // venta.tipoComprobante = row['tipoComprobante'];
         venta.idTipoDescuento = row['idTDescuento'];
-        // venta.tipoDescuento = row['tipoDescuento'];
         venta.descuento = parseInt(row['descuento']);
         venta.codPromocion = row['codPromocion'];
         venta.redondeo = parseFloat(row['redondeo']);
@@ -80,6 +77,7 @@ class VentasRepository{
         venta.pagos = await ObtenerPagosVenta(connection, venta.id!);
         venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
         venta.productos = await ObtenerProductosVenta(connection, venta.id!);
+        venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
 
         return venta;
     }
@@ -112,6 +110,8 @@ class VentasRepository{
                 for (const element of venta.productos) {
                     element.idVenta = venta.id;
                     await InsertProductoVenta(connection, element);
+                    if(venta.factura)
+                        await ActualizarInventario(connection, element, "-")
                 }
             }
          
@@ -121,6 +121,12 @@ class VentasRepository{
                     element.idVenta = venta.id;
                     await InsertServicioVenta(connection, element);
                 }
+            }
+
+            //insertamos los datos de la factura de la venta
+            if(venta.factura){
+                venta.factura.idVenta = venta.id;
+                await InsertFacturaVenta(connection, venta.factura);
             }
             
             //Mandamos la transaccion
@@ -140,7 +146,7 @@ class VentasRepository{
         const connection = await db.getConnection();
         
         try {
-           
+        
             //Iniciamos una transaccion
             await connection.beginTransaction();
 
@@ -162,6 +168,9 @@ class VentasRepository{
                 for (const element of venta.productos) {
                     element.idVenta = venta.id;
                     await InsertProductoVenta(connection, element);
+
+                    if(venta.factura)
+                        await ActualizarInventario(connection, element, "-")
                 }
             }
          
@@ -172,6 +181,12 @@ class VentasRepository{
                     element.idVenta = venta.id;
                     await InsertServicioVenta(connection, element);
                 }
+            }
+
+            //insertamos los datos de la factura de la venta
+            if(venta.factura){
+                venta.factura.idVenta = venta.id;
+                await InsertFacturaVenta(connection, venta.factura);
             }
             
             //Mandamos la transaccion
@@ -316,7 +331,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 async function ObtenerPagosVenta(connection, idVenta:number){
     try {
         const consulta = "SELECT vp.*, mp.descripcion FROM ventas_pagos vp " + 
-                         "LEFT JOIN metodos_pago mp ON mp.id = vp.idMetodo "
+                         "LEFT JOIN metodos_pago mp ON mp.id = vp.idMetodo " +
                          "WHERE vp.idVenta = ?"
 
         const [rows] = await connection.query(consulta, [idVenta]);
@@ -394,6 +409,7 @@ async function ObtenerProductosVenta(connection, idVenta:number){
                 producto.codProducto = row['codigo'];
                 producto.nomProducto = row['nombre'];
                 producto.cantidad = row['cantidad'];
+                producto.idLineaTalle = row['idLineaTalle'];
                 producto.t1 = parseInt(row['t1']);
                 producto.t2 = parseInt(row['t2']);
                 producto.t3 = parseInt(row['t3']);
@@ -412,6 +428,37 @@ async function ObtenerProductosVenta(connection, idVenta:number){
         }
 
         return productos;
+
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function ObtenerFacturaVenta(connection, idVenta:number){
+    try {
+        const consulta = "SELECT * FROM ventas_factura " + 
+                         "WHERE idVenta = ?"
+
+        const [rows] = await connection.query(consulta, [idVenta]);
+        if(rows.length==0) return undefined;
+
+        const row = rows[0];
+        const factura:FacturaVenta = new FacturaVenta(
+            {
+                cae: row['cae'], 
+                caeVto: row['caeVto'], 
+                ticket: row['ticket'], 
+                tipoFactura: row['tipoFactura'], 
+                neto: parseFloat(row['neto']), 
+                iva: parseFloat(row['iva']), 
+                dni: row['dni'],
+                tipoDni: row['tipoDni'],
+                ptoVenta: row['ptoVenta'],
+                condReceptor: row['condReceptor'],
+            }
+        );
+        
+        return factura;
 
     } catch (error) {
         throw error; 
@@ -478,12 +525,11 @@ async function UpdateVenta(connection, venta):Promise<void>{
 
 async function InsertProductoVenta(connection, producto):Promise<void>{
     try {
-        const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, cantidad, precio, total, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, idLineaTalle, cantidad, precio, total, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-        const parametros = [producto.idVenta, producto.idProducto, producto.cantidad, producto.unitario, producto.total, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
+        const parametros = [producto.idVenta, producto.idProducto, producto.idLineaTalle, producto.cantidad, producto.unitario, producto.total, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
         await connection.query(consulta, parametros);
-        
     } catch (error) {
         throw error; 
     }
@@ -528,5 +574,29 @@ async function InsertFacturaVenta(connection, factura):Promise<void>{
     }
 }
 //#endregion
+
+
+async function ActualizarInventario(connection, detalle, operacion):Promise<void>{
+    try {
+        const seleccionados = detalle.tallesSeleccionados.split(",").map(t => t.trim());
+        const lineaTalle = await MiscRepo.ObtenerLineaDeTalle(detalle.idLineaTalle);
+
+        for (const talle of seleccionados) {
+            const index = lineaTalle.talles.indexOf(talle);
+            if (index === -1) continue;
+
+            const campoTx = `t${index + 1}`;
+            const cantDescontar = detalle[campoTx];
+            
+            const consulta = `UPDATE talles_producto SET cantidad = cantidad ${operacion} ? 
+                              WHERE talle = ? AND idProducto = ?`;
+
+            const parametros = [cantDescontar, talle, detalle.idProducto];
+            await connection.query(consulta, parametros);
+        } 
+    } catch (error) {
+        throw error; 
+    }
+}
 
 export const VentasRepo = new VentasRepository();

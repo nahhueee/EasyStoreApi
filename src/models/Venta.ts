@@ -1,3 +1,5 @@
+import { FacturaVenta } from "./FacturaVenta";
+
   
   export class Venta{
     id?:number;
@@ -23,6 +25,7 @@
     productos?:ProductosVenta[];
     servicios?:ServiciosVenta[];
     pagos?:PagosVenta[];
+    factura?:FacturaVenta;
   }
 
   export class ProductosVenta{
@@ -31,6 +34,7 @@
     codProducto?: string;
     nomProducto?: string;
     cantidad?: number;
+    idLineaTalle?:number;
     t1?: number;
     t2?: number;
     t3?: number;
@@ -50,6 +54,7 @@
         this.idProducto = data.idProducto;
         this.codProducto = data.codProducto;
         this.cantidad = data.cantidad;
+        this.idLineaTalle = data.idLineaTalle;
         this.t1 = data.t1;
         this.t2 = data.t2;
         this.t3 = data.t3;

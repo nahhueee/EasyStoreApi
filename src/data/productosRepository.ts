@@ -168,7 +168,7 @@ class ProductosRepository{
             descripcion: row['tipo']
         });
         producto.subtipo = new SubtipoProducto({
-            id: row['idSubtipo'],
+            id: row['idSubTipo'],
             descripcion: row['subtipo']
         })
         producto.genero = new Genero({
@@ -227,7 +227,7 @@ class ProductosRepository{
                                 producto.genero,
                                 producto.temporada,
                                 producto.material,
-                                producto.color,
+                                producto.color?.id!,
                                 producto.moldeleria
                             ];
             
@@ -290,7 +290,7 @@ class ProductosRepository{
                                 producto.subtipo,
                                 producto.genero,
                                 producto.material,
-                                producto.color,
+                                producto.color?.id,
                                 producto.moldeleria,
                                 producto.id
                             ];
@@ -303,7 +303,6 @@ class ProductosRepository{
 
             //Insertamos los detalles de la venta
             for (const element of  producto.talles!) {
-                console.log(element)
                 element.idProducto = producto.id;
                 InsertTalleProducto(connection, element);
             };
@@ -560,7 +559,7 @@ async function ObtenerTallesProducto(idProducto:number):Promise<any>{
                 tallesProducto.push(new TallesProducto({
                     cantidad: row['cantidad'],
                     costo:  parseInt(row['costo']),
-                    precio: parseInt(row['precio']),
+                    precio: parseFloat(row['precio']),
                     talle: row['talle'],
                     ubicacion: row['ubicacion'],
                     idLineaTalle: row['idLineaTalle']

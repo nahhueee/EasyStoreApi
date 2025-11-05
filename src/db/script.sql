@@ -111,6 +111,7 @@ CREATE TABLE ventas_productos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     idVenta INT NOT NULL,
     idProducto INT NOT NULL,
+    idLineaTalle INT,
     cantidad INT NOT NULL,
     precio DECIMAL(10,2) NOT NULL,
     total DECIMAL(10,2) NOT NULL,
@@ -148,6 +149,21 @@ CREATE TABLE ventas_pagos (
 )
 ENGINE=InnoDB;
 
+DROP TABLE IF EXISTS ventas_factura;
+CREATE TABLE ventas_factura (
+    idVenta INT PRIMARY KEY,
+    cae BIGINT,
+    caeVto DATE,
+    ticket INT,
+    tipoFactura INT,
+    neto DECIMAL(10,2),
+    iva DECIMAL(10,2),
+    dni BIGINT,
+    tipoDni INT,
+    ptoVenta INT,
+    condReceptor INT DEFAULT 0
+)
+ENGINE=InnoDB;
 
 
 DROP TABLE IF EXISTS etiquetas;
@@ -304,6 +320,16 @@ CREATE TABLE servicios (
     descripcion VARCHAR(50)
 );
 
+DROP TABLE IF EXISTS empresas;
+CREATE TABLE empresas (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    razonSocial VARCHAR(100),
+    condicion VARCHAR(50),
+    puntoVta INT,
+    cuil BIGINT,
+    direccion VARCHAR(250)
+);
+
 INSERT INTO parametros(clave, valor) 
 VALUES 
 ('version','1.1.2'),
@@ -314,9 +340,6 @@ VALUES
 ('hora', '20:30'), 
 ('avisoNvaVersion', 'true'),
 ('actualizado', 'false');
-
-INSERT INTO parametros_facturacion(condicion, puntoVta, cuil, razon, direccion) 
-VALUES ('monotributista', 0, 0, '', '');
 
 INSERT INTO productos 
 (codigo, nombre, idProceso, idTipo, idSubTipo, idGenero, idMaterial, idColor, idTemporada, moldeleria, imagen, fechaBaja) 
@@ -368,12 +391,17 @@ INSERT INTO metodos_pago(id, descripcion) VALUES
 (3, 'TARJETA DEBITO'),
 (4, 'MERCADO PAGO');
 
-
 INSERT INTO procesos_venta(id, descripcion) VALUES
 (1, 'FACTURA'),
 (2, 'COTIZACION'),
 (3, 'SHOWROOM'),
 (4, 'DIFUSION'),
 (5, 'CON NOTA EMPAQUE');
+
+INSERT INTO empresas(id, razonSocial, condicion, puntoVta, cuil, direccion) VALUES
+(1, 'SUCEDE SRL', 'Responsable Inscripto', 1, 27411750723, 'Mi direccion 285'),
+(2, 'GABEL MARIELA', 'Monotributista', 1, 27411750723, 'Mi direccion 285'),
+(3, 'OMAR CHAZA', 'Monotributista', 1, 27411750723, 'Mi direccion 285');
+
 
 

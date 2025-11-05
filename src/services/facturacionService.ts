@@ -2,20 +2,20 @@ import logger from "../log/loggerGeneral";
 import loggerFacturacion from "../log/loggerFacturacion";
 import {ParametrosRepo} from '../data/parametrosRepository';
 import { Afip } from "afip.ts";
-import { AdminServ } from "./adminService";
 import fs from "fs";
 import path from "path";
 import { ObjFacturar } from "../models/objFacturar";
 import config from '../conf/app.config';
 import { VentasRepo } from '../data/ventasRepository';
 import moment from "moment";
+import { EmpresasRepo } from "../data/empresasRepository";
 const QRCode = require('qrcode');
 
 class FacturacionService{
     async Facturar(objFactura:ObjFacturar){
 
         try {
-            const datosFacturacion = await ParametrosRepo.ObtenerParametrosFacturacion();
+            const datosFacturacion = await EmpresasRepo.ObtenerEmpresa(objFactura.idEmpresa!);
             const afip = await getAfipInstance(datosFacturacion.cuil);
 
            
@@ -89,7 +89,7 @@ class FacturacionService{
                 //Resultado general
                 const resultado = detalle?.Resultado;
                 if (resultado === "A") {
-                    const lastVoucher = await afip.electronicBillingService.getLastVoucher(datosFacturacion.puntoVta, objFactura.tipoFactura!); //Obtenemos el nro del ultimo comprobante creado
+                    const lastVoucher = await afip.electronicBillingService.getLastVoucher(datosFacturacion.puntoVta!, objFactura.tipoFactura!); //Obtenemos el nro del ultimo comprobante creado
 
                     return {
                         estado: "Aprobado",
@@ -159,11 +159,11 @@ class FacturacionService{
 
 
 async function getAfipInstance(cuilTitular): Promise<Afip> {
-    const dniCliente = await ParametrosRepo.ObtenerParametros('dni');
+    // const dniCliente = await ParametrosRepo.ObtenerParametros('dni');
 
     //verificamos que el usuario este habilitado para facturar
-    const habilitado = await AdminServ.ObtenerHabilitacion(dniCliente);
-    if (!habilitado) throw new Error(`Cliente inexistente o inhabilitado para generar facturas.`);
+    // const habilitado = await AdminServ.ObtenerHabilitacion(dniCliente);
+    // if (!habilitado) throw new Error(`Cliente inexistente o inhabilitado para generar facturas.`);
 
     //Verificamos el cuit del titular
     if(!cuilTitular || cuilTitular=="") throw new Error(`No se encontró en la base de datos CUIL válido.`);

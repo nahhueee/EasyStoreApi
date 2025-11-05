@@ -8,5 +8,15 @@
     "message": "Observación 10243: El campo Condicion IVA receptor no es valido para la clase de comprobante informado. Consular metodo FEParamGetCondicionIvaReceptor",
     "level": "error",
     "timestamp": "20-06-25 10:59"
+  },
+  {
+    "message": "Observación 10013: Campo  DocTipo  Para comprobantes clase A y M el campo  DocTipo debe ser igual a 80 (CUIT)",
+    "level": "error",
+    "timestamp": "05-11-25 12:22"
+  },
+  {
+    "message": "Observación 10015: El campo  DocNro es invalido.",
+    "level": "error",
+    "timestamp": "05-11-25 12:22"
   }
 ]

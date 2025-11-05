@@ -128,7 +128,7 @@ class MiscRepository{
                 talles: row.descripcion.split("-")
             }));
 
-           return result;
+            return result;
 
         } catch (error:any) {
             throw error;
