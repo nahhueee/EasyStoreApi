@@ -90,6 +90,7 @@ DROP TABLE IF EXISTS ventas;
 CREATE TABLE ventas (
     id INT AUTO_INCREMENT PRIMARY KEY,
     idProceso INT NOT NULL,
+    idPunto INT NOT NULL,
     fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     hora VARCHAR(10),
     idCliente INT NOT NULL,
@@ -208,6 +209,14 @@ CREATE TABLE productos (
     fechaBaja DATE
 );
 
+DROP TABLE IF EXISTS productos_presupuesto;
+CREATE TABLE productos_presupuesto (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    codigo VARCHAR(30) DEFAULT '',
+    nombre VARCHAR(100),
+    sugerido DECIMAL(10,2) DEFAULT 0,
+);
+
 DROP TABLE IF EXISTS procesos;
 CREATE TABLE procesos (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -221,6 +230,17 @@ CREATE TABLE procesos_venta (
     descripcion VARCHAR(50)
 );
 
+DROP TABLE IF EXISTS puntos_venta;
+CREATE TABLE puntos_venta (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
+
+DROP TABLE IF EXISTS tipos_descuento;
+CREATE TABLE tipos_descuento (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50)
+);
 
 DROP TABLE IF EXISTS tipos_producto;
 CREATE TABLE tipos_producto (
@@ -317,7 +337,9 @@ DROP TABLE IF EXISTS servicios;
 CREATE TABLE servicios (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     codigo VARCHAR(30),
-    descripcion VARCHAR(50)
+    descripcion VARCHAR(50),
+    sugerido DECIMAL(10,2) DEFAULT 0,
+    topeDescuento DECIMAL(5,2) DEFAULT 0
 );
 
 DROP TABLE IF EXISTS empresas;
@@ -394,9 +416,20 @@ INSERT INTO metodos_pago(id, descripcion) VALUES
 INSERT INTO procesos_venta(id, descripcion) VALUES
 (1, 'FACTURA'),
 (2, 'COTIZACION'),
+(3, 'NOTA DE CREDITO'),
+(4, 'NOTA DE DEBITO');
+
+INSERT INTO tipos_descuento(id, descripcion) VALUES
+(1, 'PORCENTAJE'),
+(2, 'VOUCHER'),
+(3, 'PROMOCION');
+
+INSERT INTO puntos_venta(id, descripcion) VALUES
+(1, 'ECOMMERCE'),
+(2, 'DIFUSION'),
 (3, 'SHOWROOM'),
-(4, 'DIFUSION'),
-(5, 'CON NOTA EMPAQUE');
+(4, 'MAYORISTA'),
+(5, 'CON NOTA DE EMPAQUE');
 
 INSERT INTO empresas(id, razonSocial, condicion, puntoVta, cuil, direccion) VALUES
 (1, 'SUCEDE SRL', 'Responsable Inscripto', 1, 27411750723, 'Mi direccion 285'),

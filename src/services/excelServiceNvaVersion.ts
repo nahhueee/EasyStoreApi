@@ -125,8 +125,8 @@ export async function crearExcelResultados(data: any[]) {
       cell.value = valor;
       
       // Formatear números para las cantidades (columnas I-S)
-      if (colIndex >= 8 && colIndex <= 18 && typeof valor === 'number') {
-        cell.numFmt = '#,##0';
+      if (colIndex >= 8 && colIndex <= 18) {
+        cell.numFmt = '_-* #,##0_-;_-* #,##0_-;_-* "–"_-;_-@_-';
         cell.alignment = { horizontal: 'center' };
       }
     });

@@ -197,13 +197,12 @@ class MiscRepository{
             connection.release();
         }
     }
-
-
-    async ServiciosSelector(){
+    
+    async ProcesosVentaSelector(){
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM servicios');
+            const [rows] = await connection.query('SELECT * FROM procesos_venta');
             return [rows][0];
 
         } catch (error:any) {
@@ -213,12 +212,25 @@ class MiscRepository{
         }
     }
 
-    
-    async ProcesosVentaSelector(){
+    async PuntosVentaSelector(){
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM procesos_venta');
+            const [rows] = await connection.query('SELECT * FROM puntos_venta');
+            return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async TiposDescuentoSelector(){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.query('SELECT * FROM tipos_descuento');
             return [rows][0];
 
         } catch (error:any) {

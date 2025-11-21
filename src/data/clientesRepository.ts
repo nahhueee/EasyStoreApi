@@ -1,6 +1,6 @@
 import moment from 'moment';
 import db from '../db';
-import { Cliente, DireccionesCliente } from '../models/Cliente';
+import { Cliente, DireccionesCliente, UltimoDescuentoCliente } from '../models/Cliente';
 
 class ClientesRepository{
 
@@ -71,6 +71,7 @@ class ClientesRepository{
         cliente.idCategoria = row['idCategoria'];
         cliente.fechaAlta = row['fechaAlta'];
         cliente.direcciones = await ObtenerDireccionesCliente(connection, row['id']);
+        cliente.ultimoDescuento = await ObtenerUltimoDescuento(connection, row['id']);
 
         return cliente;
     }
@@ -309,6 +310,30 @@ async function ObtenerDireccionesCliente(connection, idCliente:number){
         }
 
         return direcciones;
+
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function ObtenerUltimoDescuento(connection, idCliente:number){
+    try {
+        const consulta = " SELECT descuento, idTDescuento, td.descripcion FROM ventas v " + 
+                         " LEFT JOIN tipos_descuento td ON td.id = v.idTDescuento " +
+                         " WHERE v.idCliente = ? AND v.descuento IS NOT NULL AND v.fechaBaja IS NULL " +
+                         " ORDER BY v.fecha DESC LIMIT 1";
+
+        const rows = await connection.query(consulta, [idCliente]);
+
+        const ultimoDescuento:UltimoDescuentoCliente = new UltimoDescuentoCliente();
+        const row = rows[0][0];
+        console.log(row);
+
+        ultimoDescuento.descuento = row["descuento"];
+        ultimoDescuento.idTipoDescuento = row["idTDescuento"];
+        ultimoDescuento.tipoDescuento = row["descripcion"];
+
+        return ultimoDescuento;
 
     } catch (error) {
         throw error; 

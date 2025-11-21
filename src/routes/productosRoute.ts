@@ -37,6 +37,17 @@ router.get('/buscar-productos/:filtro', async (req:Request, res:Response) => {
     }
 });
 
+router.post('/obtener-prod-presupuesto', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await ProductosRepo.ObtenerProductosPresupuesto(req.body));
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de productos presupuesto.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 //#endregion
 
 //#region ABM
@@ -95,6 +106,42 @@ router.delete('/eliminar/:id', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
+
+//#region Productos Presupuesto
+router.post('/agregar-prod-presupuesto', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await ProductosRepo.AgregarProductoPresupuesto(req.body));
+
+    } catch(error:any){
+        let msg = "Error al intentar agregar el producto presupuesto.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.put('/modificar-prod-presupuesto', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await ProductosRepo.ModificarProductoPresupuesto(req.body));
+
+    } catch(error:any){
+        let msg = "Error al intentar modificar el producto presupuesto.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.delete('/eliminar-prod-presupuesto/:id', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await ProductosRepo.EliminarProductoPresupuesto(req.params.id));
+
+    } catch(error:any){
+        let msg = "Error al intentar eliminar el producto presupuesto.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+//#endregion
+
 //#endregion
 
 //#region ACTUALIZAR PRECIOS

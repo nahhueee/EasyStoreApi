@@ -125,17 +125,6 @@ router.get('/comprobantes/:condicionIva', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/servicios', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await MiscRepo.ServiciosSelector());
-
-    } catch(error:any){
-        let msg = "Error al obtener el listado de servicios.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
 router.get('/metodos-pago', async (req:Request, res:Response) => {
     try{ 
         res.json(await MiscRepo.MetodosPagoSelector());
@@ -153,6 +142,28 @@ router.get('/procesos-venta', async (req:Request, res:Response) => {
 
     } catch(error:any){
         let msg = "Error al obtener el listado de procesos de venta.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/puntos-venta', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.PuntosVentaSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de puntos de venta.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/tipos-descuento', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.TiposDescuentoSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de tipos de descuento.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

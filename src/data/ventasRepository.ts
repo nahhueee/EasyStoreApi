@@ -60,6 +60,8 @@ class VentasRepository{
         venta.id = row['id'];
         venta.idProceso = row['idProceso'];
         venta.proceso = row['proceso'];
+        venta.idPunto = row['idPunto'];
+        venta.punto = row['punto'];
         venta.nroNota = row['ticket'];
         venta.fecha = moment(row['fecha']).toDate();
         venta.hora = row['hora'];
@@ -486,10 +488,10 @@ async function ObtenerUltimaVenta(connection):Promise<number>{
 
 async function InsertVenta(connection, venta):Promise<void>{
     try {
-        const consulta = " INSERT INTO ventas(id,idProceso,nroNota,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
+        const consulta = " INSERT INTO ventas(id,idProceso,idPunto,nroNota,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
 
-        const parametros = [venta.id, venta.idProceso, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total];
+        const parametros = [venta.id, venta.idProceso, venta.idPunto, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total];
         await connection.query(consulta, parametros);
         
     } catch (error) {
@@ -501,6 +503,7 @@ async function UpdateVenta(connection, venta):Promise<void>{
     try {
         const consulta = "UPDATE ventas SET " +
                          " idProceso = ?, " +
+                         " idPunto = ?, " +
                          " nroNota = ?, " +
                          " fecha = ?, " +
                          " hora = ?, " +
@@ -515,7 +518,7 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " total = ? " +
                          " WHERE id = ? ";
 
-        const parametros = [venta.idProceso, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.id];
+        const parametros = [venta.idProceso, venta.idPunto, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {

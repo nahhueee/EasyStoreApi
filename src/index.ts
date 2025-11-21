@@ -52,6 +52,7 @@ import cuentasRuta from './routes/cuentasCorsRoute';
 import etiquetasRuta from './routes/etiquetasRoute';
 import miscRuta from './routes/miscRoute';
 import direccionesRuta from './routes/direccionesRoute';
+import serviciosRuta from './routes/serviciosRoute';
 
 app.use('/easystore/update', actualizacionRuta)
 app.use('/easystore/usuarios', usuariosRuta);
@@ -69,6 +70,7 @@ app.use('/easystore/cuentas', cuentasRuta);
 app.use('/easystore/etiquetas', etiquetasRuta);
 app.use('/easystore/misc', miscRuta);
 app.use('/easystore/direcciones', direccionesRuta);
+app.use('/easystore/servicios', serviciosRuta);
 
 //AdminServer Route
 import adminServerRuta from './routes/adminRoute';

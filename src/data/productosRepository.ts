@@ -194,6 +194,27 @@ class ProductosRepository{
 
         return producto;
     }
+
+    async ObtenerProductosPresupuesto(filtros:any){
+        const connection = await db.getConnection();
+        
+        try {
+             //Obtengo la query segun los filtros
+            let queryRegistros = await ObtenerQueryProdPresupuesto(filtros,false);
+            let queryTotal = await ObtenerQueryProdPresupuesto(filtros,true);
+
+            //Obtengo la lista de registros y el total
+            const [rows] = await connection.query(queryRegistros);
+            const resultado = await connection.query(queryTotal);
+
+            return {total:resultado[0][0].total, registros:[rows][0]};
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
     //#endregion
 
     //#region ABM
@@ -377,6 +398,68 @@ class ProductosRepository{
         }
     }
 
+    //#region productos presupuesto
+    async AgregarProductoPresupuesto(data:any): Promise<string>{
+        const connection = await db.getConnection();
+
+        try {
+            let existe = await ValidarExistencia(connection, data, false);
+            if(existe)//Verificamos si ya existe 
+                return "Ya existe un producto con el mismo nombre.";
+            
+            const consulta = "INSERT INTO productos_presupuesto(codigo, nombre, sugerido) VALUES (?,?,?)";
+            const parametros = [data.codigo.toUpperCase(), data.nombre.toUpperCase(), data.sugerido];
+            
+            await connection.query(consulta, parametros);
+            return "OK";
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async ModificarProductoPresupuesto(data:any): Promise<string>{
+        const connection = await db.getConnection();
+        
+        try {
+            let existe = await ValidarExistencia(connection, data, true);
+            if(existe)//Verificamos si ya existe
+                return "Ya existe un producto con el mismo nombre.";
+            
+            const consulta = `UPDATE productos_presupuesto SET 
+            codigo = ?,
+            nombre = ?,
+            sugerido = ?
+            WHERE id = ? `;
+
+            const parametros = [data.codigo.toUpperCase(), data.nombre.toUpperCase(), data.sugerido, data.id];
+            await connection.query(consulta, parametros);
+            return "OK";
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async EliminarProductoPresupuesto(id:string): Promise<string>{
+        const connection = await db.getConnection();
+        
+        try {
+            await connection.query("DELETE FROM productos_presupuesto WHERE id = ?", [id]);
+            return "OK";
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+    //#endregion
+
     //#endregion
 
     //#region ACTUALIZAR PRECIOS
@@ -542,6 +625,42 @@ async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false)
     }
 }
 
+async function ObtenerQueryProdPresupuesto(filtros:any,esTotal:boolean):Promise<string>{
+    try {
+        //#region VARIABLES
+        let query:string;
+        let filtro:string = "";
+        let paginado:string = "";
+    
+        let count:string = "";
+        let endCount:string = "";
+        //#endregion
+
+        if (esTotal)
+        {//Si esTotal agregamos para obtener un total de la consulta
+            count = "SELECT COUNT(*) AS total FROM ( ";
+            endCount = " ) as subquery";
+        }
+        else
+        {//De lo contrario paginamos
+            if (filtros.tamanioPagina != null)
+                paginado = " LIMIT " + filtros.tamanioPagina + " OFFSET " + ((filtros.pagina - 1) * filtros.tamanioPagina);
+        }
+            
+        //Arma la Query con el paginado y los filtros correspondientes
+        query = count +
+            " SELECT * FROM productos_presupuesto " +
+            " ORDER BY id DESC" +
+            paginado +
+            endCount;
+
+        return query;
+            
+    } catch (error) {
+        throw error; 
+    }
+}
+
 async function ObtenerTallesProducto(idProducto:number):Promise<any>{
     const connection = await db.getConnection();
     try {
@@ -582,6 +701,22 @@ async function ValidarExistencia(connection, data:any, modificando:boolean):Prom
         let consulta = " SELECT id FROM productos WHERE fechaBaja IS NOT NULL AND codigo = ? ";
         if(modificando) consulta += " AND id <> ? ";
         const parametros = [data.codigo.toUpperCase(), data.id];
+        const rows = await connection.query(consulta,parametros);
+
+        if(rows[0].length > 0) return true;
+        
+        return false;
+        
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function ValidarExistenciaProductoPresupuesto(connection, data:any, modificando:boolean):Promise<any>{
+    try {
+        let consulta = " SELECT id FROM productos_presupuesto WHERE nombre = ? ";
+        if(modificando) consulta += " AND id <> ? ";
+        const parametros = [data.nombre.toUpperCase(), data.id];
         const rows = await connection.query(consulta,parametros);
 
         if(rows[0].length > 0) return true;
