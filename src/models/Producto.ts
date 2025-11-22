@@ -14,6 +14,7 @@ export class Producto {
     moldeleria?: number;
     imagen: string = "";
     talles?: TallesProducto[];
+    colores?: Color[];
 
     constructor(data?: any) {
         if (data) {
@@ -31,6 +32,7 @@ export class Producto {
           this.moldeleria = data.moldeleria;
           this.temporada = data.temporada;
           this.talles = Array.isArray(data.talles) ? data.talles.map((talleData: any) => new TallesProducto(talleData)) : [];
+          this.colores = Array.isArray(data.colores) ? data.colores.map((colorData: any) => new Color(colorData)) : [];
         } 
     }
 }

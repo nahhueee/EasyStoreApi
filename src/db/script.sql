@@ -301,6 +301,13 @@ CREATE TABLE metodos_pago (
     descripcion VARCHAR(50)
 );
 
+DROP TABLE IF EXISTS colores_producto;
+CREATE TABLE colores_producto (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idProducto INT,
+    idColor INT
+);
+
 DROP TABLE IF EXISTS talles_producto;
 CREATE TABLE talles_producto (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
