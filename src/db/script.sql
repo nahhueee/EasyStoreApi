@@ -94,14 +94,14 @@ CREATE TABLE ventas (
     fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     hora VARCHAR(10),
     idCliente INT NOT NULL,
-    idLista INT NOT NULL,
+    idLista INT,
     nroNota INT,
-    idEmpresa INT NOT NULL,
-    idTComprobante INT NOT NULL,
+    idEmpresa INT,
+    idTComprobante INT,
     idTDescuento INT,
     descuento DECIMAL(5,2),
     codPromocion INT,
-    redondeo DECIMAL(10,2),
+    redondeo DECIMAL(10,2) DEFAULT 0,
     total DECIMAL(10,2),
     fechaBaja DATETIME
 )
@@ -112,7 +112,7 @@ CREATE TABLE ventas_productos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     idVenta INT NOT NULL,
     idProducto INT NOT NULL,
-    idLineaTalle INT,
+    idLineaTalle INT NULL,
     cantidad INT NOT NULL,
     precio DECIMAL(10,2) NOT NULL,
     total DECIMAL(10,2) NOT NULL,
@@ -227,7 +227,8 @@ CREATE TABLE procesos (
 DROP TABLE IF EXISTS procesos_venta;
 CREATE TABLE procesos_venta (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    descripcion VARCHAR(50)
+    descripcion VARCHAR(50),
+    tipo VARCHAR(20)
 );
 
 DROP TABLE IF EXISTS puntos_venta;
@@ -420,11 +421,15 @@ INSERT INTO metodos_pago(id, descripcion) VALUES
 (3, 'TARJETA DEBITO'),
 (4, 'MERCADO PAGO');
 
-INSERT INTO procesos_venta(id, descripcion) VALUES
-(1, 'FACTURA'),
-(2, 'COTIZACION'),
-(3, 'NOTA DE CREDITO'),
-(4, 'NOTA DE DEBITO');
+INSERT INTO procesos_venta(id, descripcion, tipo) VALUES
+(1, 'FACTURA', 'factura'),
+(2, 'COTIZACION', 'factura'),
+(3, 'NOTA DE CREDITO', 'factura'),
+(4, 'NOTA DE DEBITO', 'factura'),
+(5, 'PRESUPUESTO', 'pre'),
+(6, 'PEDIDO', 'pre'),
+(7, 'NOTA DE EMPAQUE', 'pre');
+
 
 INSERT INTO tipos_descuento(id, descripcion) VALUES
 (1, 'PORCENTAJE'),

@@ -198,11 +198,11 @@ class MiscRepository{
         }
     }
     
-    async ProcesosVentaSelector(){
+    async ProcesosVentaSelector(tipo:string){
         const connection = await db.getConnection();
-        
+        console.log("tipo", tipo);
         try {
-            const [rows] = await connection.query('SELECT * FROM procesos_venta');
+            const [rows] = await connection.query('SELECT * FROM procesos_venta WHERE tipo = ?', [tipo]);
             return [rows][0];
 
         } catch (error:any) {

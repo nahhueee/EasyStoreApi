@@ -46,7 +46,6 @@ class VentasRepository{
 
             //Obtengo la lista de registros y el total
             const rows = await connection.query(queryRegistros);
-
             return await this.CompletarObjeto(connection, rows[0][0]);
         } catch (error:any) {
             throw error;
@@ -299,6 +298,13 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 
         if (filtros.idVenta && filtros.idVenta != 0)
             filtro += " AND v.id = " + filtros.idVenta;
+
+        if (filtros.tipo){
+            if (filtros.tipo == 'factura')
+                filtro += " AND v.idProceso IN (1,2,3,4) ";
+            if (filtros.tipo == 'pre')
+                filtro += " AND v.idProceso IN (5,6,7) ";
+        }
         // #endregion
 
         if (esTotal)
@@ -362,7 +368,7 @@ async function ObtenerPagosVenta(connection, idVenta:number){
 async function ObtenerServiciosVenta(connection, idVenta:number){
     try {
         const consulta = "SELECT vs.*, s.descripcion, s.codigo FROM ventas_servicios vs " + 
-                         "LEFT JOIN servicios s ON s.id = vs.idServicio "
+                         "LEFT JOIN servicios s ON s.id = vs.idServicio " +
                          "WHERE vs.idVenta = ? "
 
         const [rows] = await connection.query(consulta, [idVenta]);

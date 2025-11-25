@@ -327,6 +327,8 @@ async function ObtenerUltimoDescuento(connection, idCliente:number){
 
         const ultimoDescuento:UltimoDescuentoCliente = new UltimoDescuentoCliente();
         const row = rows[0][0];
+        
+        if (!row || row == undefined) return ultimoDescuento;
 
         ultimoDescuento.descuento = row["descuento"];
         ultimoDescuento.idTipoDescuento = row["idTDescuento"];

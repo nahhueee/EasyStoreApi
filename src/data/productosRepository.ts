@@ -1,5 +1,7 @@
 import db from '../db';
 import { Color, ExcelProducto, Genero, Material, Producto, SubtipoProducto, TablaProducto, TallesProducto, Temporada, TipoProducto } from '../models/Producto';
+import { ProductoPresupuesto } from '../models/ProductoPresupuesto';
+import { MiscRepo } from './miscRepository';
 
 class ProductosRepository{
 
@@ -60,7 +62,7 @@ class ProductosRepository{
                     let producto:Producto = new Producto();
                     producto = await this.CompletarObjeto(row);
                     productos.push(producto);
-                  }
+                }
             }
 
             return productos;
@@ -156,7 +158,7 @@ class ProductosRepository{
         let producto:Producto = new Producto();
         producto.id = row['id'],
         producto.codigo = row['codigo'],
-        producto.nombre = row['nombre'] + " " + row['color'],
+        producto.nombre = row['nombre'],
         producto.empresa = row['empresa'],
         producto.cliente = row['idCliente'],
         producto.proceso = row['idProceso'];
@@ -200,7 +202,7 @@ class ProductosRepository{
         const connection = await db.getConnection();
         
         try {
-             //Obtengo la query segun los filtros
+            //Obtengo la query segun los filtros
             let queryRegistros = await ObtenerQueryProdPresupuesto(filtros,false);
             let queryTotal = await ObtenerQueryProdPresupuesto(filtros,true);
 
@@ -215,6 +217,83 @@ class ProductosRepository{
         } finally{
             connection.release();
         }
+    }
+
+    async BuscarProductosPresupuesto(filtro:string){
+        const connection = await db.getConnection();
+
+        try {
+            let consulta = await ObtenerQueryProdPresupuesto(filtro,false);
+            const [rows] = await connection.query(consulta);
+
+            const productos:ProductoPresupuesto[] = [];
+           
+            if (Array.isArray(rows)) {
+                for (let i = 0; i < rows.length; i++) { 
+                    const row = rows[i];
+                    let producto:ProductoPresupuesto = new ProductoPresupuesto();
+                    producto.id = row['id'];
+                    producto.codigo = row['codigo'];
+                    producto.nombre = row['nombre'];
+                    producto.sugerido = row['sugerido'];
+                    
+                    productos.push(producto);
+                  }
+            }
+
+            return productos;
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async ObtenerStockDisponiblePorProducto(idProducto) {
+        const tallesProducto = await ObtenerTallesProducto(idProducto);
+
+        // Traer todas las ventas del producto
+        const [ventas] = await db.query(
+            `SELECT t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 
+            FROM ventas_productos vp
+            INNER JOIN ventas v ON vp.idVenta = v.id
+            WHERE vp.idProducto = ? AND v.idProceso = 6`,
+            [idProducto]
+        );
+
+        const lineaTalle = await MiscRepo.ObtenerLineaDeTalle(tallesProducto[0].idLineaTalle);
+        
+        const vendido: Record<string, number> = {};
+        // Inicializar todos los talles de la línea en 0
+        lineaTalle.talles.forEach((t: string) => vendido[t] = 0);
+
+        // Recorrer cada venta (t1..t10)
+        if (Array.isArray(ventas)) {
+            for (const v of ventas) {
+                for (let i = 0; i < lineaTalle.talles.length; i++) {
+                    const talleReal = lineaTalle.talles[i];
+                    const col = `t${i + 1}`;
+                    const valor = Number(v[col] ?? 0);
+                    vendido[talleReal] += valor;
+                }
+            }
+        }
+
+        // Actualizar los tallesProducto usando lo vendido
+        const salida = tallesProducto.map(tp => {
+            const talle = tp.talle;
+            const cantVendida = vendido[talle] ?? 0;
+            const disponible = tp.cantidad - cantVendida;
+
+            return {
+                ...tp,
+                vendido: cantVendida,
+                disponible: disponible < 0 ? 0 : disponible
+            };
+        });
+
+        return salida;
     }
     //#endregion
 
@@ -579,7 +658,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false)
             orden += " ORDER BY "+ filtros.orden + " " + filtros.direccion;
         }
         else{
-            orden += " ORDER BY p.id DESC";
+            orden += " ORDER BY p.nombre DESC";
         }    
         // #endregion
 
@@ -622,7 +701,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false)
                 " LEFT JOIN materiales m ON m.id = p.idMaterial " +
                 " LEFT JOIN talles_producto pt ON pt.idProducto = p.id " +
                 " LEFT JOIN temporadas t ON t.id = p.idTemporada " +
-                " WHERE p.fechaBaja IS NULL AND p.id <> 1 " +
+                " WHERE p.fechaBaja IS NULL " +
                 filtro +
                 " GROUP BY p.id, p.nombre, p.codigo, p.idProceso, p.idTipo, " +
                 " p.idSubtipo, p.idGenero, p.idColor, p.idMaterial, " +
@@ -817,6 +896,5 @@ async function InsertColorProducto(connection, idColor, idProducto):Promise<void
         throw error; 
     }
 }
-
 
 export const ProductosRepo = new ProductosRepository();

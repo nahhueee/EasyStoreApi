@@ -48,6 +48,28 @@ router.post('/obtener-prod-presupuesto', async (req:Request, res:Response) => {
     }
 });
 
+router.get('/buscar-prod-presupuesto/:filtro', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await ProductosRepo.BuscarProductosPresupuesto(req.params.filtro));
+
+    } catch(error:any){
+        let msg = "Error intentando buscar productos.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/obtener-stock-disponible/:id', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await ProductosRepo.ObtenerStockDisponiblePorProducto(req.params.id));
+
+    } catch(error:any){
+        let msg = "Error intentando obtener el stock disponible del producto.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 //#endregion
 
 //#region ABM

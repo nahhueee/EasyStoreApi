@@ -136,9 +136,9 @@ router.get('/metodos-pago', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/procesos-venta', async (req:Request, res:Response) => {
+router.get('/procesos-venta/:tipo', async (req:Request, res:Response) => {
     try{ 
-        res.json(await MiscRepo.ProcesosVentaSelector());
+        res.json(await MiscRepo.ProcesosVentaSelector(req.params.tipo));
 
     } catch(error:any){
         let msg = "Error al obtener el listado de procesos de venta.";
