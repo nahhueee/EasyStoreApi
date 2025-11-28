@@ -14,7 +14,7 @@ export class Producto {
     moldeleria?: number;
     imagen: string = "";
     talles?: TallesProducto[];
-    colores?: Color[];
+    relacionados?: Relacionado[];
 
     constructor(data?: any) {
         if (data) {
@@ -32,7 +32,7 @@ export class Producto {
           this.moldeleria = data.moldeleria;
           this.temporada = data.temporada;
           this.talles = Array.isArray(data.talles) ? data.talles.map((talleData: any) => new TallesProducto(talleData)) : [];
-          this.colores = Array.isArray(data.colores) ? data.colores.map((colorData: any) => new Color(colorData)) : [];
+          this.relacionados = Array.isArray(data.relacionados) ? data.relacionados.map((relacionadoData: any) => new Relacionado(relacionadoData)) : [];
         } 
     }
 }
@@ -232,6 +232,18 @@ export class TallesProducto {
           this.cantidad = data.cantidad;
           this.precio = data.precio;
           this.idLineaTalle = data.idLineaTalle;
+        }
+    }
+}
+
+export class Relacionado {
+    idProducto?:number;
+    color?:Color;
+    
+    constructor(data?: any) {
+        if (data) {
+          this.idProducto = data.idProducto;
+          this.color = data.color;
         }
     }
 }

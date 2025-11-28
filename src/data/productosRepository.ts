@@ -1,5 +1,6 @@
+import { ResultSetHeader } from 'mysql2';
 import db from '../db';
-import { Color, ExcelProducto, Genero, Material, Producto, SubtipoProducto, TablaProducto, TallesProducto, Temporada, TipoProducto } from '../models/Producto';
+import { Color, ExcelProducto, Genero, Material, Producto, Relacionado, SubtipoProducto, TablaProducto, TallesProducto, Temporada, TipoProducto } from '../models/Producto';
 import { ProductoPresupuesto } from '../models/ProductoPresupuesto';
 import { MiscRepo } from './miscRepository';
 
@@ -193,7 +194,7 @@ class ProductosRepository{
         })
 
         producto.talles = await ObtenerTallesProducto(producto.id);
-        producto.colores = await ObtenerColoresProducto(producto.id);
+        producto.relacionados = await ObtenerRelacionados(producto.codigo!, producto.id);
 
         return producto;
     }
@@ -300,14 +301,13 @@ class ProductosRepository{
     //#region ABM
     async Agregar(producto:Producto): Promise<string>{
         const connection = await db.getConnection();
-
         try {
             let existe = await ValidarExistencia(connection, producto, false);
             if(existe)//Verificamos si ya existe un producto con el mismo codigo
                 return "Ya existe un producto con el mismo código.";
 
             //Obtenemos el proximo nro de producto a insertar
-            producto.id = await ObtenerUltimoProducto(connection);
+            //producto.id = await ObtenerUltimoProducto(connection);
 
             //Iniciamos una transaccion
             await connection.beginTransaction();
@@ -332,18 +332,14 @@ class ProductosRepository{
                                 producto.moldeleria
                             ];
             
-            await connection.query(consulta, parametros);
+            const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
+            producto.id = resultado.insertId;
             //#endregion
 
             //Insertamos los talles del producto
             for (const element of  producto.talles!) {
                 element.idProducto = producto.id;
                 InsertTalleProducto(connection, element);
-            };
-
-            //Insertamos los colores del producto
-            for (const element of  producto.colores!) {
-                InsertColorProducto(connection, element.id!, producto.id);
             };
             
             //Mandamos la transaccion
@@ -381,8 +377,6 @@ class ProductosRepository{
                                 idTipo = ?,
                                 idSubtipo = ?,
                                 idGenero = ?,
-                                idMaterial = ?,
-                                idColor = ?,
                                 moldeleria = ?
                                 WHERE id = ?`;
 
@@ -395,8 +389,6 @@ class ProductosRepository{
                                 producto.tipo,
                                 producto.subtipo,
                                 producto.genero,
-                                producto.material,
-                                producto.color?.id,
                                 producto.moldeleria,
                                 producto.id
                             ];
@@ -416,11 +408,6 @@ class ProductosRepository{
             //Borramos colores anteriores
             await connection.query("DELETE FROM colores_producto WHERE idProducto = ?", [producto.id]);
 
-            //Insertamos los colores del producto
-            for (const element of  producto.colores!) {
-                InsertColorProducto(connection, element.id!, producto.id);
-            };
-            
             //Mandamos la transaccion
             await connection.commit();
             return "OK";
@@ -677,14 +664,14 @@ async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false)
             
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
-                " SELECT p.*, pro.descripcion proceso, pro.abreviatura abrevProceso, tp.descripcion tipo, stp.descripcion subtipo, " +
+                " SELECT p.*, pro.descripcion proceso, pro.abreviatura abrevProceso, tp.descripcion tipo, stp.descripcion subtipo, c.descripcion color, c.hexa, " +
                 " g.descripcion genero, g.abreviatura abrevGenero, m.descripcion material, t.descripcion temporada, t.abreviatura abrevTemporada, " +
                 
                 // PIVOT de talles
                 "SUM(CASE WHEN pt.ubicacion = 0 THEN pt.cantidad ELSE 0 END) AS t1," +
-                "SUM(CASE WHEN pt.ubicacion = 1  THEN pt.cantidad ELSE 0 END) AS t2," +
-                "SUM(CASE WHEN pt.ubicacion = 2  THEN pt.cantidad ELSE 0 END) AS t3," +
-                "SUM(CASE WHEN pt.ubicacion = 3  THEN pt.cantidad ELSE 0 END) AS t4," +
+                "SUM(CASE WHEN pt.ubicacion = 1 THEN pt.cantidad ELSE 0 END) AS t2," +
+                "SUM(CASE WHEN pt.ubicacion = 2 THEN pt.cantidad ELSE 0 END) AS t3," +
+                "SUM(CASE WHEN pt.ubicacion = 3 THEN pt.cantidad ELSE 0 END) AS t4," +
                 "SUM(CASE WHEN pt.ubicacion = 4 THEN pt.cantidad ELSE 0 END) AS t5," +
                 "SUM(CASE WHEN pt.ubicacion = 5 THEN pt.cantidad ELSE 0 END) AS t6," +
                 "SUM(CASE WHEN pt.ubicacion = 6 THEN pt.cantidad ELSE 0 END) AS t7," +
@@ -697,7 +684,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false)
                 " LEFT JOIN tipos_producto tp ON tp.id = p.idTipo " +
                 " LEFT JOIN subtipos_producto stp ON stp.id = p.idSubtipo " +
                 " LEFT JOIN generos g ON g.id = p.idGenero " +
-                //" LEFT JOIN colores c ON c.id = p.idColor " +
+                " LEFT JOIN colores c ON c.id = p.idColor " +
                 " LEFT JOIN materiales m ON m.id = p.idMaterial " +
                 " LEFT JOIN talles_producto pt ON pt.idProducto = p.id " +
                 " LEFT JOIN temporadas t ON t.id = p.idTemporada " +
@@ -789,29 +776,34 @@ async function ObtenerTallesProducto(idProducto:number):Promise<any>{
     
 }
 
-async function ObtenerColoresProducto(idProducto:number):Promise<any>{
+async function ObtenerRelacionados(codigo:string, idProducto:number):Promise<any>{
     const connection = await db.getConnection();
     try {
-        const consulta = " SELECT cp.idColor, c.descripcion, c.hexa " +
-                         " FROM colores_producto cp " +
-                         " JOIN colores c ON c.id = cp.idColor " +
-                         " WHERE cp.idProducto = ? ";
+        const consulta = " SELECT p.id, p.idColor, c.descripcion, c.hexa " +
+                         " FROM productos p " +
+                         " JOIN colores c ON c.id = p.idColor " +
+                         " WHERE p.codigo = ? AND p.id <> ? AND p.fechaBaja IS NULL ";
 
-        const [rows] = await connection.query(consulta,[idProducto]);
-        const coloresProducto:Color[] = [];
+        const [rows] = await connection.query(consulta,[codigo, idProducto]);
+        const relacionados:Relacionado[] = [];
            
         if (Array.isArray(rows)) {
             for (let i = 0; i < rows.length; i++) { 
                 const row = rows[i];
-                coloresProducto.push(new Color({
+
+                const relacionado:Relacionado = new Relacionado();
+                relacionado.idProducto = row['id'];
+                relacionado.color = new Color({
                     id: row['idColor'],
                     descripcion: row['descripcion'],
                     hexa: row['hexa']
-                }));
+                })
+
+                relacionados.push(relacionado);
             }
         }
 
-        return coloresProducto;
+        return relacionados;
 
     } catch (error) {
         throw error; 
