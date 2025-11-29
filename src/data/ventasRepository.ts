@@ -3,6 +3,8 @@ import { PagosVenta, ProductosVenta, ServiciosVenta, Venta } from '../models/Ven
 import { ObjQR } from '../models/ObjQR';
 import { FacturaVenta } from '../models/FacturaVenta';
 import { MiscRepo } from './miscRepository';
+import { Color } from '../models/Producto';
+import { ProductosRepo } from './productosRepository';
 const moment = require('moment');
 
 class VentasRepository{
@@ -81,6 +83,18 @@ class VentasRepository{
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
 
         return venta;
+    }
+
+    async ObtenerProximoNroVenta(){
+        const connection = await db.getConnection();
+
+        try {
+            return ObtenerUltimaVenta(connection);
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
     }
     //#endregion
 
@@ -400,8 +414,10 @@ async function ObtenerServiciosVenta(connection, idVenta:number){
 
 async function ObtenerProductosVenta(connection, idVenta:number){
     try {
-        const consulta = "SELECT vp.*, p.codigo, p.nombre FROM ventas_productos vp " + 
-                         "INNER JOIN productos p ON p.id = vp.idProducto WHERE vp.idVenta = ? "
+        const consulta = "SELECT vp.*, p.codigo, p.nombre, c.id idColor, c.descripcion color, c.hexa FROM ventas_productos vp " + 
+                         "INNER JOIN productos p ON p.id = vp.idProducto " + 
+                         "INNER JOIN colores c ON c.id = p.idColor " +
+                         "WHERE vp.idVenta = ? "
 
         const [rows] = await connection.query(consulta, [idVenta]);
 
@@ -431,6 +447,10 @@ async function ObtenerProductosVenta(connection, idVenta:number){
                 producto.unitario = parseFloat(row['precio']);
                 producto.total = parseFloat(row['total']);
                 producto.tallesSeleccionados = row['talles'];
+                producto.color = row['color'];
+                producto.hexa = row['hexa'];
+                producto.talles = await ProductosRepo.ObtenerTallesProducto(producto.idProducto!);
+
                 productos.push(producto);
               }
         }

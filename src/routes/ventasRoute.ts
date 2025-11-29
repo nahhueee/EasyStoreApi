@@ -26,6 +26,17 @@ router.get('/obtener-una/:idVenta', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
+
+router.get('/obtener-proxima', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await VentasRepo.ObtenerProximoNroVenta());
+
+    } catch(error:any){
+        let msg = "Error al obtener el proximo nro de venta.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 //#endregion
 
 //#region ABM

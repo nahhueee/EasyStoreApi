@@ -239,13 +239,11 @@ export class TallesProducto {
 export class Relacionado {
     idProducto?:number;
     color?:Color;
-    talles?:TallesProducto[] = []
     
     constructor(data?: any) {
         if (data) {
           this.idProducto = data.idProducto;
           this.color = data.color;
-          this.talles = data.talles;
         }
     }
 }

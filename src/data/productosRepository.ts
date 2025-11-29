@@ -3,6 +3,7 @@ import db from '../db';
 import { Color, ExcelProducto, Genero, Material, Producto, Relacionado, SubtipoProducto, TablaProducto, TallesProducto, Temporada, TipoProducto } from '../models/Producto';
 import { ProductoPresupuesto } from '../models/ProductoPresupuesto';
 import { MiscRepo } from './miscRepository';
+import { Console } from 'console';
 
 class ProductosRepository{
 
@@ -11,33 +12,60 @@ class ProductosRepository{
         const connection = await db.getConnection();
         
         try {
-             //Obtengo la query segun los filtros
-            let queryRegistros = await ObtenerQuery(filtros,false);
-            let queryTotal = await ObtenerQuery(filtros,true);
+            const ejecutarPrimero =
+                filtros.proceso === null ||
+                filtros.proceso === 0 ||
+                filtros.proceso === 1;
 
-            //Obtengo la lista de registros y el total
-            const [rows] = await connection.query(queryRegistros);
-            const resultado = await connection.query(queryTotal);
+            const ejecutarSegundo =
+                filtros.proceso === null ||
+                filtros.proceso === 0 ||
+                filtros.proceso === 3;
 
-            if (filtros.desdeFacturacion) {
-                const productos: Producto[] = [];
-                if (Array.isArray(rows)) {
-                    for (const row of rows) {
-                        const prod = await this.CompletarObjeto(row);
-                        productos.push(prod);
+            const productos: TablaProducto[] = [];
+            let totalGeneral = 0;
+
+            // PRIMERA QUERY PRODUCTOS STOCK
+            if (ejecutarPrimero) {
+
+                let queryRegistros1 = await ObtenerQuery(filtros, false);
+                let queryTotal1 = await ObtenerQuery(filtros, true);
+
+                const [rows1] = await connection.query(queryRegistros1);
+                const total1 = (await connection.query(queryTotal1))[0][0].total;
+
+                totalGeneral += total1;
+
+                if (filtros.desdeFacturacion) {
+                    const list: Producto[] = [];
+                    if (Array.isArray(rows1)) {
+                        for (const row of rows1) list.push(await this.CompletarObjeto(row));
                     }
+                    return { total: totalGeneral, registros: list };
                 }
-                return { total: resultado[0][0].total, registros: productos };
-            } else {
-                const productos: TablaProducto[] = [];
-                if (Array.isArray(rows)) {
-                    for (const row of rows) {
-                        const prod = new TablaProducto(row);
-                        productos.push(prod);
-                    }
+
+                if (Array.isArray(rows1)) {
+                    for (const row of rows1) productos.push(new TablaProducto(row));
                 }
-                return { total: resultado[0][0].total, registros: productos };
             }
+
+            // SEGUNDA QUERY PEDIDOS APROB
+            if (ejecutarSegundo) {
+
+                let queryRegistros2 = await ObtenerQuery(filtros, false, false, true);
+                let queryTotal2 = await ObtenerQuery(filtros, true, false, true);
+
+                const [rows2] = await connection.query(queryRegistros2);
+                const total2 = (await connection.query(queryTotal2))[0][0].total;
+
+                totalGeneral += total2;
+
+                if (Array.isArray(rows2)) {
+                    for (const row of rows2) productos.push(new TablaProducto(row));
+                }
+            }
+
+            return { total: totalGeneral, registros: productos };
 
         } catch (error:any) {
             throw error;
@@ -86,7 +114,7 @@ class ProductosRepository{
                 let resultado:Producto = new Producto();
 
                 const row = rows[0][0];
-                resultado = await this.CompletarObjeto(row);
+                resultado = await this.CompletarObjeto(row, true);
                 return resultado;
             }
 
@@ -155,7 +183,7 @@ class ProductosRepository{
         }  
     }
 
-    async CompletarObjeto(row){
+    async CompletarObjeto(row, unico:boolean =false){
         let producto:Producto = new Producto();
         producto.id = row['id'],
         producto.codigo = row['codigo'],
@@ -193,8 +221,9 @@ class ProductosRepository{
             hexa: row['hexa']
         })
 
-        producto.talles = await ObtenerTallesProducto(producto.id);
-        producto.relacionados = await ObtenerRelacionados(producto.codigo!, producto.id);
+        producto.talles = await this.ObtenerTallesProducto(producto.id);
+        if(unico)
+            producto.relacionados = await ObtenerRelacionados(producto.codigo!, producto.id);
 
         return producto;
     }
@@ -252,7 +281,7 @@ class ProductosRepository{
     }
 
     async ObtenerStockDisponiblePorProducto(idProducto) {
-        const tallesProducto = await ObtenerTallesProducto(idProducto);
+        const tallesProducto = await this.ObtenerTallesProducto(idProducto);
 
         // Traer todas las ventas del producto
         const [ventas] = await db.query(
@@ -290,11 +319,46 @@ class ProductosRepository{
             return {
                 ...tp,
                 vendido: cantVendida,
-                disponible: disponible < 0 ? 0 : disponible
+                disponible: disponible
             };
         });
 
         return salida;
+    }
+
+    async ObtenerTallesProducto(idProducto:number):Promise<any>{
+        const connection = await db.getConnection();
+        try {
+            const consulta = " SELECT tp.cantidad, tp.costo, tp.precio, tp.talle, tp.idLineaTalle  " +
+                            " FROM talles_producto tp " +
+                            " WHERE tp.idProducto = ? " +
+                            " ORDER BY tp.ubicacion ASC";
+
+            const [rows] = await connection.query(consulta,[idProducto]);
+            const tallesProducto:TallesProducto[] = [];
+            
+            if (Array.isArray(rows)) {
+                for (let i = 0; i < rows.length; i++) { 
+                    const row = rows[i];
+                    tallesProducto.push(new TallesProducto({
+                        cantidad: row['cantidad'],
+                        costo:  parseInt(row['costo']),
+                        precio: parseFloat(row['precio']),
+                        talle: row['talle'],
+                        ubicacion: row['ubicacion'],
+                        idLineaTalle: row['idLineaTalle']
+                    }));
+                }
+            }
+
+            return tallesProducto;
+
+        } catch (error) {
+            throw error; 
+        } finally{
+            connection.release();
+        }
+        
     }
     //#endregion
 
@@ -302,9 +366,9 @@ class ProductosRepository{
     async Agregar(producto:Producto): Promise<string>{
         const connection = await db.getConnection();
         try {
-            let existe = await ValidarExistencia(connection, producto, false);
-            if(existe)//Verificamos si ya existe un producto con el mismo codigo
-                return "Ya existe un producto con el mismo código.";
+            // let existe = await ValidarExistencia(connection, producto, false);
+            // if(existe)//Verificamos si ya existe un producto con el mismo codigo
+            //     return "Ya existe un producto con el mismo código.";
 
             //Obtenemos el proximo nro de producto a insertar
             //producto.id = await ObtenerUltimoProducto(connection);
@@ -359,9 +423,9 @@ class ProductosRepository{
         const connection = await db.getConnection();
 
         try {
-            let existe = await ValidarExistencia(connection, producto, true);
-            if(existe)//Verificamos si ya existe un producto con el mismo codigo
-                return "Ya existe un producto con el mismo código.";
+            //let existe = await ValidarExistencia(connection, producto, true);
+            // if(existe)//Verificamos si ya existe un producto con el mismo codigo
+            //     return "Ya existe un producto con el mismo código.";
 
             //Iniciamos una transaccion
             await connection.beginTransaction();
@@ -599,7 +663,7 @@ class ProductosRepository{
     //#endregion
 }
 
-async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false):Promise<string>{
+async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false, pedidos:boolean = false):Promise<string>{
     try {
         //#region VARIABLES
         let query:string;
@@ -614,9 +678,6 @@ async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false)
         // #region FILTROS
         if (filtros.busqueda != null && filtros.busqueda != "") {
             filtro += " AND (p.nombre LIKE '%"+ filtros.busqueda + "%' OR p.codigo LIKE '%" + filtros.busqueda + "%')";
-        }
-        if(filtros.proceso != null && filtros.proceso != 0){
-            filtro += " AND p.idProceso = " + filtros.proceso + " ";
         }
         if(filtros.tipo != null && filtros.tipo != 0){
             filtro += " AND p.idTipo = " + filtros.tipo + " ";
@@ -662,37 +723,60 @@ async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false)
             }
         }
             
-        //Arma la Query con el paginado y los filtros correspondientes
+        let condicionAdicional = pedidos == true ? "vp.idProducto," : "";
         query = count +
-                " SELECT p.*, pro.descripcion proceso, pro.abreviatura abrevProceso, tp.descripcion tipo, stp.descripcion subtipo, c.descripcion color, c.hexa, " +
-                " g.descripcion genero, g.abreviatura abrevGenero, m.descripcion material, t.descripcion temporada, t.abreviatura abrevTemporada, " +
+                " SELECT p.*, tp.descripcion tipo, stp.descripcion subtipo, c.descripcion color, c.hexa, " +
+                " g.descripcion genero, g.abreviatura abrevGenero, m.descripcion material, t.descripcion temporada, t.abreviatura abrevTemporada, ";
                 
-                // PIVOT de talles
-                "SUM(CASE WHEN pt.ubicacion = 0 THEN pt.cantidad ELSE 0 END) AS t1," +
-                "SUM(CASE WHEN pt.ubicacion = 1 THEN pt.cantidad ELSE 0 END) AS t2," +
-                "SUM(CASE WHEN pt.ubicacion = 2 THEN pt.cantidad ELSE 0 END) AS t3," +
-                "SUM(CASE WHEN pt.ubicacion = 3 THEN pt.cantidad ELSE 0 END) AS t4," +
-                "SUM(CASE WHEN pt.ubicacion = 4 THEN pt.cantidad ELSE 0 END) AS t5," +
-                "SUM(CASE WHEN pt.ubicacion = 5 THEN pt.cantidad ELSE 0 END) AS t6," +
-                "SUM(CASE WHEN pt.ubicacion = 6 THEN pt.cantidad ELSE 0 END) AS t7," +
-                "SUM(CASE WHEN pt.ubicacion = 7 THEN pt.cantidad ELSE 0 END) AS t8," +
-                "SUM(CASE WHEN pt.ubicacion = 8 THEN pt.cantidad ELSE 0 END) AS t9," +
-                "SUM(CASE WHEN pt.ubicacion = 9 THEN pt.cantidad ELSE 0 END) AS t10" +
+                if(pedidos == false){
+                    query += 
+                    "pro.descripcion proceso, pro.abreviatura abrevProceso," +
+                    "SUM(CASE WHEN pt.ubicacion = 0 THEN pt.cantidad ELSE 0 END) AS t1," +
+                    "SUM(CASE WHEN pt.ubicacion = 1 THEN pt.cantidad ELSE 0 END) AS t2," +
+                    "SUM(CASE WHEN pt.ubicacion = 2 THEN pt.cantidad ELSE 0 END) AS t3," +
+                    "SUM(CASE WHEN pt.ubicacion = 3 THEN pt.cantidad ELSE 0 END) AS t4," +
+                    "SUM(CASE WHEN pt.ubicacion = 4 THEN pt.cantidad ELSE 0 END) AS t5," +
+                    "SUM(CASE WHEN pt.ubicacion = 5 THEN pt.cantidad ELSE 0 END) AS t6," +
+                    "SUM(CASE WHEN pt.ubicacion = 6 THEN pt.cantidad ELSE 0 END) AS t7," +
+                    "SUM(CASE WHEN pt.ubicacion = 7 THEN pt.cantidad ELSE 0 END) AS t8," +
+                    "SUM(CASE WHEN pt.ubicacion = 8 THEN pt.cantidad ELSE 0 END) AS t9," +
+                    "SUM(CASE WHEN pt.ubicacion = 9 THEN pt.cantidad ELSE 0 END) AS t10" +
+                    " FROM productos p " +
+                    " LEFT JOIN talles_producto pt ON pt.idProducto = p.id " 
 
-                " FROM productos p " +
+                }else{
+                    query += 
+                    `
+                   'PEDIDOS APROBADOS' AS proceso, 'APROB' AS abrevProceso,
+                    SUM(t1) AS t1,
+                        SUM(t2) AS t2,
+                        SUM(t3) AS t3,
+                        SUM(t4) AS t4,
+                        SUM(t5) AS t5,
+                        SUM(t6) AS t6,
+                        SUM(t7) AS t7,
+                        SUM(t8) AS t8,
+                        SUM(t9) AS t9,
+                        SUM(t10) AS t10
+                    FROM ventas_productos vp
+                    INNER JOIN productos p ON p.id = vp.idProducto
+                    `
+                }
+
+                query +=
                 " LEFT JOIN procesos pro ON pro.id = p.idProceso " +
                 " LEFT JOIN tipos_producto tp ON tp.id = p.idTipo " +
                 " LEFT JOIN subtipos_producto stp ON stp.id = p.idSubtipo " +
                 " LEFT JOIN generos g ON g.id = p.idGenero " +
                 " LEFT JOIN colores c ON c.id = p.idColor " +
                 " LEFT JOIN materiales m ON m.id = p.idMaterial " +
-                " LEFT JOIN talles_producto pt ON pt.idProducto = p.id " +
                 " LEFT JOIN temporadas t ON t.id = p.idTemporada " +
                 " WHERE p.fechaBaja IS NULL " +
                 filtro +
                 " GROUP BY p.id, p.nombre, p.codigo, p.idProceso, p.idTipo, " +
                 " p.idSubtipo, p.idGenero, p.idMaterial, " +
                 " pro.descripcion, tp.descripcion, stp.descripcion, " +
+                condicionAdicional +
                 " g.descripcion, g.abreviatura, m.descripcion, t.descripcion, t.abreviatura " +
                 orden +
                 paginado +
@@ -741,41 +825,6 @@ async function ObtenerQueryProdPresupuesto(filtros:any,esTotal:boolean):Promise<
     }
 }
 
-async function ObtenerTallesProducto(idProducto:number):Promise<any>{
-    const connection = await db.getConnection();
-    try {
-        const consulta = " SELECT tp.cantidad, tp.costo, tp.precio, tp.talle, tp.idLineaTalle  " +
-                         " FROM talles_producto tp " +
-                         " WHERE tp.idProducto = ? " +
-                         " ORDER BY tp.ubicacion ASC";
-
-        const [rows] = await connection.query(consulta,[idProducto]);
-        const tallesProducto:TallesProducto[] = [];
-           
-        if (Array.isArray(rows)) {
-            for (let i = 0; i < rows.length; i++) { 
-                const row = rows[i];
-                tallesProducto.push(new TallesProducto({
-                    cantidad: row['cantidad'],
-                    costo:  parseInt(row['costo']),
-                    precio: parseFloat(row['precio']),
-                    talle: row['talle'],
-                    ubicacion: row['ubicacion'],
-                    idLineaTalle: row['idLineaTalle']
-                }));
-            }
-        }
-
-        return tallesProducto;
-
-    } catch (error) {
-        throw error; 
-    } finally{
-        connection.release();
-    }
-    
-}
-
 async function ObtenerRelacionados(codigo:string, idProducto:number):Promise<any>{
     const connection = await db.getConnection();
     try {
@@ -799,7 +848,6 @@ async function ObtenerRelacionados(codigo:string, idProducto:number):Promise<any
                     hexa: row['hexa']
                 })
 
-                relacionado.talles = await ObtenerTallesProducto(relacionado.idProducto!);
                 relacionados.push(relacionado);
             }
         }
@@ -816,9 +864,13 @@ async function ObtenerRelacionados(codigo:string, idProducto:number):Promise<any
 
 async function ValidarExistencia(connection, data:any, modificando:boolean):Promise<any>{
     try {
+        console.log(modificando)
         let consulta = " SELECT id FROM productos WHERE fechaBaja IS NOT NULL AND codigo = ? ";
         if(modificando) consulta += " AND id <> ? ";
+        
         const parametros = [data.codigo.toUpperCase(), data.id];
+                console.log(parametros)
+
         const rows = await connection.query(consulta,parametros);
 
         if(rows[0].length > 0) return true;

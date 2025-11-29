@@ -1,4 +1,5 @@
 import { FacturaVenta } from "./FacturaVenta";
+import { Color, TallesProducto } from "./Producto";
 
   
   export class Venta{
@@ -35,6 +36,8 @@ import { FacturaVenta } from "./FacturaVenta";
     idProducto? : number;
     codProducto?: string;
     nomProducto?: string;
+    color?:string;
+    hexa?:string;
     cantidad?: number;
     idLineaTalle?:number;
     t1?: number;
@@ -50,6 +53,7 @@ import { FacturaVenta } from "./FacturaVenta";
     unitario?: number;
     total?: number;
     tallesSeleccionados:string = "";
+    talles:TallesProducto[] = [];
   
     constructor(data?: any) {
       if (data) {
@@ -57,6 +61,8 @@ import { FacturaVenta } from "./FacturaVenta";
         this.codProducto = data.codProducto;
         this.cantidad = data.cantidad;
         this.idLineaTalle = data.idLineaTalle;
+        this.color = data.color;
+        this.hexa = data.hexa;
         this.t1 = data.t1;
         this.t2 = data.t2;
         this.t3 = data.t3;
@@ -71,6 +77,7 @@ import { FacturaVenta } from "./FacturaVenta";
         this.nomProducto = data.nomProducto;
         this.total = data.total;
         this.tallesSeleccionados = data.tallesSeleccionados;
+        this.talles = data.talles;
       }
     }
   }
