@@ -204,7 +204,7 @@ CREATE TABLE productos (
     idMaterial INT,
     idColor INT,
     idTemporada INT,
-    moldeleria INT,
+    moldeleria INT DEFAULT 0,
     imagen VARCHAR(300),
     fechaBaja DATE
 );
@@ -214,7 +214,7 @@ CREATE TABLE productos_presupuesto (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     codigo VARCHAR(30) DEFAULT '',
     nombre VARCHAR(100),
-    sugerido DECIMAL(10,2) DEFAULT 0,
+    sugerido DECIMAL(10,2) DEFAULT 0
 );
 
 DROP TABLE IF EXISTS procesos;
@@ -316,7 +316,7 @@ CREATE TABLE talles_producto (
     idLineaTalle INT,
     talle VARCHAR(5),
     ubicacion INT,
-    cantidad INT,
+    cantidad INT DEFAULT 0,
     precio DECIMAL(10,2),
     costo DECIMAL(10,2)
 );
@@ -447,6 +447,53 @@ INSERT INTO empresas(id, razonSocial, condicion, puntoVta, cuil, direccion) VALU
 (1, 'SUCEDE SRL', 'Responsable Inscripto', 1, 27411750723, 'Mi direccion 285'),
 (2, 'GABEL MARIELA', 'Monotributista', 1, 27411750723, 'Mi direccion 285'),
 (3, 'OMAR CHAZA', 'Monotributista', 1, 27411750723, 'Mi direccion 285');
+
+INSERT INTO `generos` (`id`, `descripcion`, `abreviatura`) VALUES
+(1, 'HOMBRE', 'H'),
+(2, 'DAMA', 'D'),
+(4, 'NIÑO', 'NO'),
+(5, 'NIÑA', 'NA');
+
+INSERT INTO `materiales` (`id`, `descripcion`) VALUES
+(1, 'SET LISO'),
+(2, 'RUSTICO LISO');
+
+
+INSERT INTO `materiales_colores` (`idColor`, `idMaterial`) VALUES
+(1, 1),
+(2, 1),
+(3, 1),
+(4, 1),
+(5, 1),
+(6, 1),
+(7, 1),
+(8, 1),
+(9, 1),
+(10, 1),
+(11, 1),
+(12, 1),
+(13, 1),
+(0, 0),
+(4, 2),
+(13, 2),
+(14, 2),
+(1, 2),
+(7, 2),
+(5, 2),
+(12, 2);
+
+INSERT INTO `subtipos_producto` (`id`, `descripcion`, `abreviatura`) VALUES
+(1, 'MGA CORTA', 'MGA C'),
+(2, 'MEDIO CIERRE', 'M/C');
+
+INSERT INTO `temporadas` (`id`, `descripcion`, `abreviatura`) VALUES
+(1, 'VERANO 2025', 'VER25'),
+(2, 'INVIERNO 2025', 'INV25');
+
+INSERT INTO `tipos_producto` (`id`, `descripcion`, `abreviatura`) VALUES
+(1, 'CHOMBA', 'CHB'),
+(2, 'BUZO', 'BZO'),
+(3, 'PANTALON', 'PLON');
 
 
 

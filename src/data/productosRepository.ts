@@ -691,7 +691,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false)
                 " WHERE p.fechaBaja IS NULL " +
                 filtro +
                 " GROUP BY p.id, p.nombre, p.codigo, p.idProceso, p.idTipo, " +
-                " p.idSubtipo, p.idGenero, p.idColor, p.idMaterial, " +
+                " p.idSubtipo, p.idGenero, p.idMaterial, " +
                 " pro.descripcion, tp.descripcion, stp.descripcion, " +
                 " g.descripcion, g.abreviatura, m.descripcion, t.descripcion, t.abreviatura " +
                 orden +
@@ -799,6 +799,7 @@ async function ObtenerRelacionados(codigo:string, idProducto:number):Promise<any
                     hexa: row['hexa']
                 })
 
+                relacionado.talles = await ObtenerTallesProducto(relacionado.idProducto!);
                 relacionados.push(relacionado);
             }
         }
@@ -865,10 +866,10 @@ async function ObtenerUltimoProducto(connection):Promise<number>{
 
 async function InsertTalleProducto(connection, elemento):Promise<void>{
     try {
-        const consulta = " INSERT INTO talles_producto(idProducto, idLineaTalle, talle, ubicacion, cantidad, precio) " +
-                         " VALUES(?, ?, ?, ?, ?, ?) ";
+        const consulta = " INSERT INTO talles_producto(idProducto, idLineaTalle, talle, ubicacion, precio) " +
+                         " VALUES(?, ?, ?, ?, ?) ";
 
-        const parametros = [elemento.idProducto, elemento.idLineaTalle, elemento.talle, elemento.ubicacion, elemento.cantidad, elemento.precio];
+        const parametros = [elemento.idProducto, elemento.idLineaTalle, elemento.talle, elemento.ubicacion, elemento.precio];
         await connection.query(consulta, parametros);
         
     } catch (error) {
