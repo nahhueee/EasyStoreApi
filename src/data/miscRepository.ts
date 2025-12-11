@@ -9,7 +9,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM materiales');
+            const [rows] = await connection.query('SELECT * FROM materiales ORDER BY descripcion ASC');
             const materiales:Material[] = [];
             
             if (Array.isArray(rows)) {
@@ -37,7 +37,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM procesos');
+            const [rows] = await connection.query('SELECT * FROM procesos ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -51,7 +51,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM tipos_producto');
+            const [rows] = await connection.query('SELECT * FROM tipos_producto ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -65,7 +65,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM subtipos_producto');
+            const [rows] = await connection.query('SELECT * FROM subtipos_producto ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -79,7 +79,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM generos');
+            const [rows] = await connection.query('SELECT * FROM generos ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -93,7 +93,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM colores');
+            const [rows] = await connection.query('SELECT * FROM colores ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -107,7 +107,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM temporadas');
+            const [rows] = await connection.query('SELECT * FROM temporadas ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -160,7 +160,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM condiciones_iva');
+            const [rows] = await connection.query('SELECT * FROM condiciones_iva ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -174,7 +174,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM metodos_pago');
+            const [rows] = await connection.query('SELECT * FROM metodos_pago ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -202,7 +202,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         console.log("tipo", tipo);
         try {
-            const [rows] = await connection.query('SELECT * FROM procesos_venta WHERE tipo = ?', [tipo]);
+            const [rows] = await connection.query('SELECT * FROM procesos_venta WHERE tipo = ? ORDER BY descripcion ASC', [tipo]);
             return [rows][0];
 
         } catch (error:any) {
@@ -216,7 +216,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM puntos_venta');
+            const [rows] = await connection.query('SELECT * FROM puntos_venta ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -230,7 +230,7 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM tipos_descuento');
+            const [rows] = await connection.query('SELECT * FROM tipos_descuento ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {

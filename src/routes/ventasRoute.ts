@@ -27,16 +27,28 @@ router.get('/obtener-una/:idVenta', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/obtener-proxima', async (req:Request, res:Response) => {
+router.get('/obtener-proximo/:idProceso', async (req:Request, res:Response) => {
     try{ 
-        res.json(await VentasRepo.ObtenerProximoNroVenta());
+        res.json(await VentasRepo.ObtenerProximoNroProceso(req.params.idProceso));
 
     } catch(error:any){
-        let msg = "Error al obtener el proximo nro de venta.";
+        let msg = "Error al obtener el proximo nro de proceso.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }
 });
+
+router.post('/obtener-cliente', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await VentasRepo.ObtenerVentasCliente(req.body));
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de ventas del cliente.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 //#endregion
 
 //#region ABM

@@ -90,12 +90,12 @@ DROP TABLE IF EXISTS ventas;
 CREATE TABLE ventas (
     id INT AUTO_INCREMENT PRIMARY KEY,
     idProceso INT NOT NULL,
+    nroProceso INT NOT NULL,
     idPunto INT NOT NULL,
     fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     hora VARCHAR(10),
     idCliente INT NOT NULL,
     idLista INT,
-    nroNota INT,
     idEmpresa INT,
     idTComprobante INT,
     idTDescuento INT,
@@ -103,6 +103,9 @@ CREATE TABLE ventas (
     codPromocion INT,
     redondeo DECIMAL(10,2) DEFAULT 0,
     total DECIMAL(10,2),
+    nroRelacionado INT,
+    tipoRelacionado VARCHAR(20),
+    usado INT DEFAULT 0,
     fechaBaja DATETIME
 )
 ENGINE=InnoDB;
@@ -371,11 +374,6 @@ VALUES
 ('avisoNvaVersion', 'true'),
 ('actualizado', 'false');
 
-INSERT INTO productos 
-(codigo, nombre, idProceso, idTipo, idSubTipo, idGenero, idMaterial, idColor, idTemporada, moldeleria, imagen, fechaBaja) 
-VALUES 
-('1', 'VARIOS', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-
 INSERT INTO tipos_pago(id, nombre) VALUES (NULL,'EFECTIVO'), (NULL,'TARJETA'), (NULL,'TRANSFERENCIA'), (NULL,'COMBINADO');
 INSERT INTO cargos(id, nombre) VALUES (NULL,'ADMINISTRADOR'), (NULL,'EMPLEADO');
 INSERT INTO `clientes` (`id`, `nombre`, `razonSocial`, `telefono`, `celular`, `contacto`, `email`, `idCondIva`, `idTipoDocumento`, `documento`, `idCondicionPago`, `idCategoria`, `fechaAlta`, `fechaBaja`) VALUES (NULL, 'CONSUMIDOR FINAL', 'CONSUMIDOR FINAL', '0', '0', 'CONSUMIDOR FINAL', NULL, '0', '0', '0', '0', '0', CURRENT_TIMESTAMP, NULL);
@@ -495,5 +493,8 @@ INSERT INTO `tipos_producto` (`id`, `descripcion`, `abreviatura`) VALUES
 (2, 'BUZO', 'BZO'),
 (3, 'PANTALON', 'PLON');
 
-
+INSERT INTO `procesos` (`id`, `descripcion`, `abreviatura`) VALUES
+(1, 'STOCK', 'STK'),
+(2, 'PROJECTADO', 'PROJ'),
+(3, 'PEDIDOS APROBADOS', 'APROB');
 

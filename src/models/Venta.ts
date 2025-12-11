@@ -5,12 +5,12 @@ import { Color, TallesProducto } from "./Producto";
   export class Venta{
     id?:number;
     idProceso?:number;
+    nroProceso?:number;
     proceso?:string;
     idPunto?:number;
     punto?:string;
     fecha?:Date;
     hora?:string;
-    nroNota?:string;
     idCliente?:number;
     cliente?:string;
     idListaPrecio?:number;
@@ -29,6 +29,10 @@ import { Color, TallesProducto } from "./Producto";
     servicios?:ServiciosVenta[];
     pagos?:PagosVenta[];
     factura?:FacturaVenta;
+
+    nroRelacionado?:number;
+    tipoRelacionado?:string;
+    usado:number = 0;
   }
 
   export class ProductosVenta{

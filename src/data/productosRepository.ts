@@ -366,14 +366,11 @@ class ProductosRepository{
     async Agregar(producto:Producto): Promise<string>{
         const connection = await db.getConnection();
         try {
-            // let existe = await ValidarExistencia(connection, producto, false);
-            // if(existe)//Verificamos si ya existe un producto con el mismo codigo
-            //     return "Ya existe un producto con el mismo código.";
+            let existe = await ValidarExistencia(connection, producto, false);
+            if(existe)//Verificamos si ya existe un producto con el mismo codigo
+                return "Ya existe un producto con el mismo código y color.";
 
-            //Obtenemos el proximo nro de producto a insertar
-            //producto.id = await ObtenerUltimoProducto(connection);
-
-            //Iniciamos una transaccion
+                //Iniciamos una transaccion
             await connection.beginTransaction();
 
             //#region Insert Producto
@@ -547,7 +544,7 @@ class ProductosRepository{
         const connection = await db.getConnection();
 
         try {
-            let existe = await ValidarExistencia(connection, data, false);
+            let existe = await ValidarExistenciaProductoPresupuesto(connection, data, false);
             if(existe)//Verificamos si ya existe 
                 return "Ya existe un producto con el mismo nombre.";
             
@@ -568,7 +565,7 @@ class ProductosRepository{
         const connection = await db.getConnection();
         
         try {
-            let existe = await ValidarExistencia(connection, data, true);
+            let existe = await ValidarExistenciaProductoPresupuesto(connection, data, true);
             if(existe)//Verificamos si ya existe
                 return "Ya existe un producto con el mismo nombre.";
             
@@ -864,13 +861,10 @@ async function ObtenerRelacionados(codigo:string, idProducto:number):Promise<any
 
 async function ValidarExistencia(connection, data:any, modificando:boolean):Promise<any>{
     try {
-        console.log(modificando)
-        let consulta = " SELECT id FROM productos WHERE fechaBaja IS NOT NULL AND codigo = ? ";
+        let consulta = " SELECT id FROM productos WHERE fechaBaja IS NULL AND codigo = ? AND idColor = ? ";
         if(modificando) consulta += " AND id <> ? ";
         
-        const parametros = [data.codigo.toUpperCase(), data.id];
-                console.log(parametros)
-
+        const parametros = [data.codigo.toUpperCase(), data.color.id, data.id];
         const rows = await connection.query(consulta,parametros);
 
         if(rows[0].length > 0) return true;
@@ -884,9 +878,10 @@ async function ValidarExistencia(connection, data:any, modificando:boolean):Prom
 
 async function ValidarExistenciaProductoPresupuesto(connection, data:any, modificando:boolean):Promise<any>{
     try {
-        let consulta = " SELECT id FROM productos_presupuesto WHERE nombre = ? ";
+        console.log(data)
+        let consulta = " SELECT id FROM productos_presupuesto WHERE codigo = ? ";
         if(modificando) consulta += " AND id <> ? ";
-        const parametros = [data.nombre.toUpperCase(), data.id];
+        const parametros = [data.codigo.toUpperCase(), data.id];
         const rows = await connection.query(consulta,parametros);
 
         if(rows[0].length > 0) return true;

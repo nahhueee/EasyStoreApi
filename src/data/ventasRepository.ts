@@ -5,6 +5,7 @@ import { FacturaVenta } from '../models/FacturaVenta';
 import { MiscRepo } from './miscRepository';
 import { Color } from '../models/Producto';
 import { ProductosRepo } from './productosRepository';
+import { ResultSetHeader } from 'mysql2';
 const moment = require('moment');
 
 class VentasRepository{
@@ -56,14 +57,47 @@ class VentasRepository{
         }
     }
 
+     async ObtenerVentasCliente(data:any){
+        const connection = await db.getConnection();
+
+        try {
+            let queryRegistros = await ObtenerQuery(
+                {
+                    cliente: data.idCliente, 
+                    tipo: 'pre',
+                    nroEditando: data.nroEditando
+                }, 
+                false);
+
+            //Obtengo la lista de registros y el total
+            const [rows] = await connection.query(queryRegistros);
+
+            const ventas:Venta[] = [];
+           
+            if (Array.isArray(rows)) {
+                for (let i = 0; i < rows.length; i++) { 
+                    const row = rows[i];
+                    ventas.push(await this.CompletarObjeto(connection, row));
+                  }
+            }
+
+            return ventas;
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     async CompletarObjeto(connection, row){
         let venta:Venta = new Venta();
         venta.id = row['id'];
         venta.idProceso = row['idProceso'];
         venta.proceso = row['proceso'];
+        venta.nroProceso = row['nroProceso'];
         venta.idPunto = row['idPunto'];
         venta.punto = row['punto'];
-        venta.nroNota = row['ticket'];
         venta.fecha = moment(row['fecha']).toDate();
         venta.hora = row['hora'];
         venta.idCliente = row['idCliente'];
@@ -76,6 +110,9 @@ class VentasRepository{
         venta.codPromocion = row['codPromocion'];
         venta.redondeo = parseFloat(row['redondeo']);
         venta.total = parseFloat(row['total']);
+        venta.nroRelacionado = parseFloat(row['nroRelacionado']);
+        venta.tipoRelacionado = row['tipoRelacionado'];
+        venta.usado = row['usado'];
 
         venta.pagos = await ObtenerPagosVenta(connection, venta.id!);
         venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
@@ -85,11 +122,11 @@ class VentasRepository{
         return venta;
     }
 
-    async ObtenerProximoNroVenta(){
+    async ObtenerProximoNroProceso(idProceso){
         const connection = await db.getConnection();
 
         try {
-            return ObtenerUltimaVenta(connection);
+            return ObtenerProximoNroProceso(connection, idProceso);
         } catch (error:any) {
             throw error;
         } finally{
@@ -104,13 +141,39 @@ class VentasRepository{
         
         try {
             //Obtenemos el proximo nro de venta a insertar
-            venta.id = await ObtenerUltimaVenta(connection);
+            venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
 
             //Iniciamos una transaccion
             await connection.beginTransaction();
 
             //Insertamos la venta
-            await InsertVenta(connection,venta);
+            const consulta = " INSERT INTO ventas(idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado) " +
+                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
+
+            const parametros = [venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado];
+            const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
+            venta.id =  resultado.insertId;
+
+            //Actualizamos el estado del relacionado
+            if(venta.nroRelacionado != 0){
+                let nroProceso = 0;
+
+                switch (venta.tipoRelacionado) {
+                    case "PRESUPUESTO":
+                        nroProceso = 5;
+                        break;
+                    case "PEDIDO":
+                        nroProceso = 6;
+                        break;
+                    case "NOTA DE EMPAQUE":
+                        nroProceso = 7;
+                        break;
+                    default:
+                        break;
+                }
+
+                await connection.query("UPDATE ventas SET usado = 1 WHERE nroProceso = ? AND idProceso = ? ", [venta.nroRelacionado, nroProceso]);
+            }
 
             //insertamos los datos del pago de la venta
             if(venta.pagos){
@@ -167,6 +230,27 @@ class VentasRepository{
 
             //Insertamos la venta
             await UpdateVenta(connection,venta);
+
+            //Actualizamos el estado del relacionado
+            if(venta.nroRelacionado != 0){
+                let nroProceso = 0;
+
+                switch (venta.tipoRelacionado) {
+                    case "PRESUPUESTO":
+                        nroProceso = 5;
+                        break;
+                    case "PEDIDO":
+                        nroProceso = 6;
+                        break;
+                    case "NOTA DE EMPAQUE":
+                        nroProceso = 7;
+                        break;
+                    default:
+                        break;
+                }
+
+                await connection.query("UPDATE ventas SET usado = 1 WHERE nroProceso = ? AND idProceso = ? ", [venta.nroRelacionado, nroProceso]);
+            }
 
             await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
             //insertamos los datos del pago de la venta
@@ -308,7 +392,10 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 
         // #region FILTROS
         if (filtros.cliente && filtros.cliente != 0)
-            filtro += " AND v.idCliente = " + filtros.cliente;
+            filtro += " AND usado = 0 AND v.idCliente = " + filtros.cliente;
+
+        if(filtros.nroEditando && filtros.nroEditando != 0)
+            filtro += " AND v.id <> " + filtros.nroEditando;
 
         if (filtros.idVenta && filtros.idVenta != 0)
             filtro += " AND v.id = " + filtros.idVenta;
@@ -494,32 +581,18 @@ async function ObtenerFacturaVenta(connection, idVenta:number){
 }
 
 //#region INSERT
-async function ObtenerUltimaVenta(connection):Promise<number>{
+async function ObtenerProximoNroProceso(connection, idProceso):Promise<number>{
     try {
-        const rows = await connection.query(" SELECT id FROM ventas ORDER BY id DESC LIMIT 1 ");
+        const rows = await connection.query(" SELECT nroProceso FROM ventas WHERE idProceso = ? ORDER BY id DESC LIMIT 1 ", idProceso);
         let resultado:number = 0;
 
         if([rows][0][0].length==0){
             resultado = 1;
         }else{
-            resultado = rows[0][0].id + 1;
+            resultado = rows[0][0].nroProceso + 1;
         }
-
         return resultado;
 
-    } catch (error) {
-        throw error; 
-    }
-}
-
-async function InsertVenta(connection, venta):Promise<void>{
-    try {
-        const consulta = " INSERT INTO ventas(id,idProceso,idPunto,nroNota,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
-
-        const parametros = [venta.id, venta.idProceso, venta.idPunto, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total];
-        await connection.query(consulta, parametros);
-        
     } catch (error) {
         throw error; 
     }
@@ -530,7 +603,6 @@ async function UpdateVenta(connection, venta):Promise<void>{
         const consulta = "UPDATE ventas SET " +
                          " idProceso = ?, " +
                          " idPunto = ?, " +
-                         " nroNota = ?, " +
                          " fecha = ?, " +
                          " hora = ?, " +
                          " idCliente = ?, " +
@@ -541,10 +613,12 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " descuento = ?, " +
                          " codPromocion = ?, " +
                          " redondeo = ?, " +
-                         " total = ? " +
+                         " total = ?, " +
+                         " nroRelacionado = ?, " +
+                         " tipoRelacionado = ? " +
                          " WHERE id = ? ";
 
-        const parametros = [venta.idProceso, venta.idPunto, venta.nroNota, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.id];
+        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {
@@ -570,6 +644,19 @@ async function InsertServicioVenta(connection, pago):Promise<void>{
                          " VALUES(?, ?, ?, ?, ?) ";
 
         const parametros = [pago.idVenta, pago.idServicio, pago.cantidad, pago.unitario, pago.total];
+        await connection.query(consulta, parametros);
+        
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function InsertHistorialVenta(connection, historial):Promise<void>{
+    try {
+        const consulta = " INSERT INTO ventas_historial(idVenta, procActual, procAnterior, fecha, hora) " +
+                         " VALUES(?, ?, ?) ";
+
+        const parametros = [historial.idVenta, historial.procActual, historial.procAnterior, moment().format('YYYY-MM-DD'), moment().format('HH:mm')];
         await connection.query(consulta, parametros);
         
     } catch (error) {
