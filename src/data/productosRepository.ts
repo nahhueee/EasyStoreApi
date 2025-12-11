@@ -878,7 +878,6 @@ async function ValidarExistencia(connection, data:any, modificando:boolean):Prom
 
 async function ValidarExistenciaProductoPresupuesto(connection, data:any, modificando:boolean):Promise<any>{
     try {
-        console.log(data)
         let consulta = " SELECT id FROM productos_presupuesto WHERE codigo = ? ";
         if(modificando) consulta += " AND id <> ? ";
         const parametros = [data.codigo.toUpperCase(), data.id];
