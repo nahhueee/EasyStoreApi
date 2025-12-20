@@ -13,6 +13,7 @@ import { Color, TallesProducto } from "./Producto";
     hora?:string;
     idCliente?:number;
     cliente?:string;
+    condCliente?:string;
     idListaPrecio?:number;
     listaPrecio?:string;
     idEmpresa?:number;
@@ -32,7 +33,7 @@ import { Color, TallesProducto } from "./Producto";
 
     nroRelacionado?:number;
     tipoRelacionado?:string;
-    usado:number = 0;
+    estado:string = "";
   }
 
   export class ProductosVenta{

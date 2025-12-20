@@ -49,6 +49,16 @@ router.post('/obtener-cliente', async (req:Request, res:Response) => {
     }
 });
 
+router.get('/verificar-nota/:nroNota', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await VentasRepo.VerificarNroNotaEmpaque(req.params.nroNota));
+
+    } catch(error:any){
+        let msg = "Error al verificar el nro de nota empaque.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 //#endregion
 
 //#region ABM

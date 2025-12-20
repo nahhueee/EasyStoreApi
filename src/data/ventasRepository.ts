@@ -102,21 +102,25 @@ class VentasRepository{
         venta.hora = row['hora'];
         venta.idCliente = row['idCliente'];
         venta.cliente = row['cliente'];
+        venta.condCliente = row['condicionIva'];
         venta.idListaPrecio = row['idLista'];
         venta.idEmpresa = row['idEmpresa'];
+        venta.empresa = row['empresa'];
         venta.idTipoComprobante = row['idTComprobante'];
+        venta.tipoComprobante = row['tipoComprobante'];
         venta.idTipoDescuento = row['idTDescuento'];
+        venta.tipoDescuento = row['tipoDescuento'];
         venta.descuento = parseInt(row['descuento']);
         venta.codPromocion = row['codPromocion'];
         venta.redondeo = parseFloat(row['redondeo']);
         venta.total = parseFloat(row['total']);
         venta.nroRelacionado = parseFloat(row['nroRelacionado']);
         venta.tipoRelacionado = row['tipoRelacionado'];
-        venta.usado = row['usado'];
+        venta.estado = row['estado'];
 
         venta.pagos = await ObtenerPagosVenta(connection, venta.id!);
         venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
-        venta.productos = await ObtenerProductosVenta(connection, venta.id!);
+        venta.productos = await ObtenerProductosVenta(connection, venta.id!, venta.idProceso!);
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
 
         return venta;
@@ -133,6 +137,23 @@ class VentasRepository{
             connection.release();
         }
     }
+
+    async VerificarNroNotaEmpaque(nroNota){
+        const connection = await db.getConnection();
+
+        try {
+            const rows = await connection.query(" SELECT id FROM ventas WHERE idProceso = 7 AND nroProceso = ? ORDER BY id DESC LIMIT 1 ", nroNota);
+            if(rows[0][0] == undefined) return null;
+            connection.release();
+
+            return this.ObtenerVenta(rows[0][0].id);
+
+        } catch (error) {
+            connection.release();
+            throw error; 
+        }
+
+    }
     //#endregion
 
     //#region ABM
@@ -147,32 +168,36 @@ class VentasRepository{
             await connection.beginTransaction();
 
             //Insertamos la venta
-            const consulta = " INSERT INTO ventas(idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado) " +
-                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
+            const consulta = " INSERT INTO ventas(idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado) " +
+                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
 
-            const parametros = [venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado];
+            const parametros = [venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado];
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
             venta.id =  resultado.insertId;
 
             //Actualizamos el estado del relacionado
             if(venta.nroRelacionado != 0){
                 let nroProceso = 0;
+                let estado = "";
 
                 switch (venta.tipoRelacionado) {
                     case "PRESUPUESTO":
                         nroProceso = 5;
+                        estado = "Asociado"
                         break;
                     case "PEDIDO":
                         nroProceso = 6;
+                        estado = "Asociado"
                         break;
                     case "NOTA DE EMPAQUE":
                         nroProceso = 7;
+                        estado = "Asociada"
                         break;
                     default:
                         break;
                 }
 
-                await connection.query("UPDATE ventas SET usado = 1 WHERE nroProceso = ? AND idProceso = ? ", [venta.nroRelacionado, nroProceso]);
+                await connection.query("UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ", ["Asociado", venta.nroRelacionado, nroProceso]);
             }
 
             //insertamos los datos del pago de la venta
@@ -205,6 +230,27 @@ class VentasRepository{
             if(venta.factura){
                 venta.factura.idVenta = venta.id;
                 await InsertFacturaVenta(connection, venta.factura);
+
+                //Actualizamos el estado facturado de la venta relacionada
+                if(venta.nroRelacionado != 0){
+                    let nroProceso = 0;
+                    let estado = "";
+
+                    switch (venta.tipoRelacionado) {
+                        case "PEDIDO":
+                            nroProceso = 6;
+                            estado = "Facturado"
+                            break;
+                        case "NOTA DE EMPAQUE":
+                            nroProceso = 7;
+                            estado = "Facturada"
+                            break;
+                        default:
+                            break;
+                    }
+
+                    await connection.query("UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ", [estado, venta.nroRelacionado, nroProceso]);
+                }
             }
             
             //Mandamos la transaccion
@@ -234,22 +280,26 @@ class VentasRepository{
             //Actualizamos el estado del relacionado
             if(venta.nroRelacionado != 0){
                 let nroProceso = 0;
+                let estado = "";
 
                 switch (venta.tipoRelacionado) {
                     case "PRESUPUESTO":
                         nroProceso = 5;
+                        estado = "Asociado"
                         break;
                     case "PEDIDO":
                         nroProceso = 6;
+                        estado = "Asociado"
                         break;
                     case "NOTA DE EMPAQUE":
                         nroProceso = 7;
+                        estado = "Asociada"
                         break;
                     default:
                         break;
                 }
 
-                await connection.query("UPDATE ventas SET usado = 1 WHERE nroProceso = ? AND idProceso = ? ", [venta.nroRelacionado, nroProceso]);
+                await connection.query("UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ", ["Asociado", venta.nroRelacionado, nroProceso]);
             }
 
             await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
@@ -286,6 +336,27 @@ class VentasRepository{
             if(venta.factura){
                 venta.factura.idVenta = venta.id;
                 await InsertFacturaVenta(connection, venta.factura);
+
+                //Actualizamos el estado facturado de la venta relacionada
+                if(venta.nroRelacionado != 0){
+                    let nroProceso = 0;
+                    let estado = "";
+
+                    switch (venta.tipoRelacionado) {
+                        case "PEDIDO":
+                            nroProceso = 6;
+                            estado = "Facturado"
+                            break;
+                        case "NOTA DE EMPAQUE":
+                            nroProceso = 7;
+                            estado = "Facturada"
+                            break;
+                        default:
+                            break;
+                    }
+
+                    await connection.query("UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ", [estado, venta.nroRelacionado, nroProceso]);
+                }
             }
             
             //Mandamos la transaccion
@@ -390,9 +461,11 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         let endCount:string = "";
         //#endregion
 
+
+        console.log(filtros)
         // #region FILTROS
         if (filtros.cliente && filtros.cliente != 0)
-            filtro += " AND usado = 0 AND v.idCliente = " + filtros.cliente;
+            filtro += " AND (estado <> 'Asociado' AND estado <> 'Asociada' AND estado <> 'Facturado' AND estado <> 'Facturada') AND v.idCliente = " + filtros.cliente;
 
         if(filtros.nroEditando && filtros.nroEditando != 0)
             filtro += " AND v.id <> " + filtros.nroEditando;
@@ -405,6 +478,24 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
                 filtro += " AND v.idProceso IN (1,2,3,4) ";
             if (filtros.tipo == 'pre')
                 filtro += " AND v.idProceso IN (5,6,7) ";
+        }
+
+        if(filtros.idProceso && filtros.idProceso != 0){
+            filtro += " AND v.idProceso = " + filtros.idProceso;
+        }
+        if(filtros.nroProceso && filtros.nroProceso != 0){
+            filtro += " AND v.nroProceso = " + filtros.nroProceso;
+        }
+
+        if (filtros.fechas?.length === 2) {
+            const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+            const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
+
+            filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+        }
+
+        if(filtros.idCliente && filtros.idCliente != 0){
+            filtro += " AND v.idCliente = " + filtros.idCliente;
         }
         // #endregion
 
@@ -421,9 +512,14 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
-                " SELECT v.*, c.nombre AS cliente, pv.descripcion AS proceso FROM ventas v " + 
+                " SELECT v.*, c.nombre AS cliente, ci.descripcion AS condicionIva, pv.descripcion AS proceso, e.razonSocial AS empresa, tc.desComprobante AS tipoComprobante, td.descripcion AS tipoDescuento " + 
+                " FROM ventas v " + 
                 " LEFT JOIN clientes c ON c.id = v.idCliente " +
                 " LEFT JOIN procesos_venta pv ON pv.id = v.idProceso " +
+                " LEFT JOIN empresas e ON e.id = v.idEmpresa " +
+                " LEFT JOIN comprobantes_condicion tc ON tc.id = v.idTComprobante " +
+                " LEFT JOIN tipos_descuento td ON td.id = v.idTDescuento " +
+                " LEFT JOIN condiciones_iva ci ON ci.id = c.idCondIva " +
                 " WHERE 1 = 1 " +
                 filtro +
                 " ORDER BY v.id DESC " +
@@ -499,15 +595,22 @@ async function ObtenerServiciosVenta(connection, idVenta:number){
     }
 }
 
-async function ObtenerProductosVenta(connection, idVenta:number){
+async function ObtenerProductosVenta(connection, idVenta:number, idProceso:number){
     try {
-        const consulta = "SELECT vp.*, p.codigo, p.nombre, c.id idColor, c.descripcion color, c.hexa FROM ventas_productos vp " + 
-                         "INNER JOIN productos p ON p.id = vp.idProducto " + 
-                         "INNER JOIN colores c ON c.id = p.idColor " +
-                         "WHERE vp.idVenta = ? "
+        let consulta = "";
+
+        if(idProceso == 5){
+            consulta = "SELECT vp.*, p.codigo, p.nombre FROM ventas_productos vp " + 
+                       "INNER JOIN productos_presupuesto p ON p.id = vp.idProducto " + 
+                       "WHERE vp.idVenta = ? ";
+        }else{
+            consulta = "SELECT vp.*, p.codigo, p.nombre, c.id idColor, c.descripcion color, c.hexa FROM ventas_productos vp " + 
+                        "INNER JOIN productos p ON p.id = vp.idProducto " + 
+                        "INNER JOIN colores c ON c.id = p.idColor " +
+                        "WHERE vp.idVenta = ? ";
+        }
 
         const [rows] = await connection.query(consulta, [idVenta]);
-
         const productos:ProductosVenta[] = [];
 
         if (Array.isArray(rows)) {
@@ -615,10 +718,11 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " redondeo = ?, " +
                          " total = ?, " +
                          " nroRelacionado = ?, " +
-                         " tipoRelacionado = ? " +
+                         " tipoRelacionado = ?, " +
+                         " estado = ? "
                          " WHERE id = ? ";
 
-        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.id];
+        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {

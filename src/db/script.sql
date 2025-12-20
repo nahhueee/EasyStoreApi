@@ -105,7 +105,7 @@ CREATE TABLE ventas (
     total DECIMAL(10,2),
     nroRelacionado INT,
     tipoRelacionado VARCHAR(20),
-    usado INT DEFAULT 0,
+    estado VARCHAR (20),
     fechaBaja DATETIME
 )
 ENGINE=InnoDB;

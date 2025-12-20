@@ -18,5 +18,55 @@
     "message": "Observación 10015: El campo  DocNro es invalido.",
     "level": "error",
     "timestamp": "05-11-25 12:22"
+  },
+  {
+    "message": "Observación 10013: Para comprobantes clase 'A' y 'A con leyenda operación sujeta a retención' el campo  DocTipo debe ser igual a 80 (CUIT)",
+    "level": "error",
+    "timestamp": "20-12-25 01:41"
+  },
+  {
+    "message": "Observación 10015: El campo  DocNro es invalido.",
+    "level": "error",
+    "timestamp": "20-12-25 01:41"
+  },
+  {
+    "message": "Observación 10013: Para comprobantes clase 'A' y 'A con leyenda operación sujeta a retención' el campo  DocTipo debe ser igual a 80 (CUIT)",
+    "level": "error",
+    "timestamp": "20-12-25 02:00"
+  },
+  {
+    "message": "Observación 10015: El campo  DocNro es invalido.",
+    "level": "error",
+    "timestamp": "20-12-25 02:00"
+  },
+  {
+    "message": "Observación 10013: Para comprobantes clase 'A' y 'A con leyenda operación sujeta a retención' el campo  DocTipo debe ser igual a 80 (CUIT)",
+    "level": "error",
+    "timestamp": "20-12-25 02:02"
+  },
+  {
+    "message": "Observación 10015: El campo  DocNro es invalido.",
+    "level": "error",
+    "timestamp": "20-12-25 02:02"
+  },
+  {
+    "message": "Observación 10013: Para comprobantes clase 'A' y 'A con leyenda operación sujeta a retención' el campo  DocTipo debe ser igual a 80 (CUIT)",
+    "level": "error",
+    "timestamp": "20-12-25 02:03"
+  },
+  {
+    "message": "Observación 10015: El campo  DocNro es invalido.",
+    "level": "error",
+    "timestamp": "20-12-25 02:03"
+  },
+  {
+    "message": "Observación 10013: Para comprobantes clase 'A' y 'A con leyenda operación sujeta a retención' el campo  DocTipo debe ser igual a 80 (CUIT)",
+    "level": "error",
+    "timestamp": "20-12-25 02:04"
+  },
+  {
+    "message": "Observación 10015: El campo  DocNro es invalido.",
+    "level": "error",
+    "timestamp": "20-12-25 02:04"
   }
 ]

@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "tsc && nodemon --ignore src/log/backup.json --ignore src/log/general.json --ignore src/log/update.json src/index.ts",
+    "dev": "tsc && nodemon --ignore src/log/backup.json --ignore src/log/general.json --ignore src/log/facturacion.json --ignore src/log/update.json src/index.ts",
     "tsc": "tsc",
     "build": "tsc && node setup.js",
     "migration": "npx knex migrate:latest",
