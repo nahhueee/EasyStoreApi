@@ -54,6 +54,7 @@ CREATE TABLE clientes (
     documento BIGINT,
     idCondicionPago INT,
     idCategoria INT,
+    idListaPrecio INT,
     fechaAlta TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fechaBaja DATE
 )
@@ -208,6 +209,7 @@ CREATE TABLE productos (
     idColor INT,
     idTemporada INT,
     moldeleria INT DEFAULT 0,
+    topeDescuento DECIMAL(5,2) DEFAULT 0,
     imagen VARCHAR(300),
     fechaBaja DATE
 );
@@ -330,13 +332,45 @@ CREATE TABLE condiciones_iva (
     descripcion VARCHAR(50)
 );
 
-DROP TABLE IF EXISTS comprobantes_condicion;
-CREATE TABLE comprobantes_condicion (
+DROP TABLE IF EXISTS tipos_comprobantes;
+CREATE TABLE tipos_comprobantes (
     id INT  UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    idCondicion INT,
-    idComprobante INT,
-    desComprobante VARCHAR(10)
+    cod_arca VARCHAR(2),
+    descripcion VARCHAR(10)
 );
+
+DROP TABLE IF EXISTS reglas_comprobante;
+CREATE TABLE reglas_comprobante (
+    id INT  UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    empresa_tipo VARCHAR(4), -- 'RI' | 'MONO'
+    cliente_tipo INT, -- NULL = cualquiera
+    idTipoComprobante INT
+);
+
+-- RI → RI = Factura A
+INSERT INTO reglas_comprobante VALUES
+(1, 'RI', 1, 1);
+
+-- RI → MONO = Factura A
+INSERT INTO reglas_comprobante VALUES
+(2, 'RI', 6, 1);
+
+-- RI → MONO SOCIAL = Factura A
+INSERT INTO reglas_comprobante VALUES
+(3, 'RI', 13, 1);
+
+-- RI → cualquiera = Factura B
+INSERT INTO reglas_comprobante VALUES
+(4, 'RI', NULL, 6);
+
+-- Monotributo → cualquiera = Factura C
+INSERT INTO reglas_comprobante VALUES
+(5, 'MONO', NULL, 11);
+
+-- Cotización (todas las empresas, todos los clientes)
+INSERT INTO reglas_comprobante VALUES
+(6, 'RI', NULL, 99),
+(7, 'MONO', NULL, 99);
 
 DROP TABLE IF EXISTS condiciones_pago;
 CREATE TABLE condiciones_pago (
@@ -358,6 +392,7 @@ CREATE TABLE empresas (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     razonSocial VARCHAR(100),
     condicion VARCHAR(50),
+    abrevCondicion VARCHAR(4), 
     puntoVta INT,
     cuil BIGINT,
     direccion VARCHAR(250)
@@ -392,15 +427,11 @@ INSERT INTO condiciones_iva (id, descripcion) VALUES
 (13, 'Monotributista Social'),
 (15, 'IVA No Alcanzado');
 
-INSERT INTO comprobantes_condicion (idCondicion, idComprobante, desComprobante) VALUES
-(5, 0, 'COTIZACION'),
-(1, 1, 'FACTURA A'),
-(1, 11, 'FACTURA B'),
-(1, 0, 'COTIZACION'),
-(6, 11,'FACTURA C'),
-(6, 0, 'COTIZACION'),
-(13, 11,'FACTURA C'),
-(13, 0, 'COTIZACION');
+INSERT INTO tipos_comprobantes (id, cod_arca, descripcion) VALUES
+(1, 'A', 'FACTURA A'),
+(6, 'B', 'FACTURA B'),
+(11, 'C', 'FACTURA C'),
+(99, 'X', 'COTIZACIÓN');
 
 INSERT INTO condiciones_pago (id, descripcion) VALUES
 (1, 'CONTADO'),
@@ -441,10 +472,10 @@ INSERT INTO puntos_venta(id, descripcion) VALUES
 (4, 'MAYORISTA'),
 (5, 'CON NOTA DE EMPAQUE');
 
-INSERT INTO empresas(id, razonSocial, condicion, puntoVta, cuil, direccion) VALUES
-(1, 'SUCEDE SRL', 'Responsable Inscripto', 1, 27411750723, 'Mi direccion 285'),
-(2, 'GABEL MARIELA', 'Monotributista', 1, 27411750723, 'Mi direccion 285'),
-(3, 'OMAR CHAZA', 'Monotributista', 1, 27411750723, 'Mi direccion 285');
+INSERT INTO empresas(id, razonSocial, condicion, abrevCondicion, puntoVta, cuil, direccion) VALUES
+(1, 'SUCEDE SRL', 'Responsable Inscripto', 'RI', 1, 27411750723, 'Mi direccion 285'),
+(2, 'GABEL MARIELA', 'Monotributista', 'MONO',  1, 27411750723, 'Mi direccion 285'),
+(3, 'OMAR CHAZA', 'Monotributista', 'MONO', 1, 27411750723, 'Mi direccion 285');
 
 INSERT INTO `generos` (`id`, `descripcion`, `abreviatura`) VALUES
 (1, 'HOMBRE', 'H'),

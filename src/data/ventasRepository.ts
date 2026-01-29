@@ -6,6 +6,7 @@ import { MiscRepo } from './miscRepository';
 import { Color } from '../models/Producto';
 import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader } from 'mysql2';
+import { Cliente } from '../models/Cliente';
 const moment = require('moment');
 
 class VentasRepository{
@@ -22,7 +23,6 @@ class VentasRepository{
             //Obtengo la lista de registros y el total
             const [rows] = await connection.query(queryRegistros);
             const resultado = await connection.query(queryTotal);
-
             const ventas:Venta[] = [];
            
             if (Array.isArray(rows)) {
@@ -31,7 +31,7 @@ class VentasRepository{
                     ventas.push(await this.CompletarObjeto(connection, row));
                   }
             }
-
+            
             return {total:resultado[0][0].total, registros:ventas};
 
         } catch (error:any) {
@@ -47,7 +47,6 @@ class VentasRepository{
         try {
             let queryRegistros = await ObtenerQuery({idVenta},false);
 
-            //Obtengo la lista de registros y el total
             const rows = await connection.query(queryRegistros);
             return await this.CompletarObjeto(connection, rows[0][0]);
         } catch (error:any) {
@@ -100,9 +99,10 @@ class VentasRepository{
         venta.punto = row['punto'];
         venta.fecha = moment(row['fecha']).toDate();
         venta.hora = row['hora'];
-        venta.idCliente = row['idCliente'];
-        venta.cliente = row['cliente'];
-        venta.condCliente = row['condicionIva'];
+        // venta.idCliente = row['idCliente'];
+        // venta.cliente = row['cliente'];
+        // venta.condCliente = row['condicionIva'];
+        // venta.clienteRazonSocial = row['clienteRazonSocial'];  
         venta.idListaPrecio = row['idLista'];
         venta.idEmpresa = row['idEmpresa'];
         venta.empresa = row['empresa'];
@@ -117,6 +117,15 @@ class VentasRepository{
         venta.nroRelacionado = parseFloat(row['nroRelacionado']);
         venta.tipoRelacionado = row['tipoRelacionado'];
         venta.estado = row['estado'];
+
+        venta.cliente = new Cliente();
+        venta.cliente.id = row['idCliente'];
+        venta.cliente.nombre = row['nombre'];
+        venta.cliente.razonSocial = row['razonSocial'];
+        venta.cliente.idCondicionIva = row['idCondIva'];
+        venta.cliente.condicionIva = row['condicionIva'];
+        venta.cliente.idTipoDocumento = row['idTipoDocumento'];
+        venta.cliente.documento = row['documento'];
 
         venta.pagos = await ObtenerPagosVenta(connection, venta.id!);
         venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
@@ -171,7 +180,7 @@ class VentasRepository{
             const consulta = " INSERT INTO ventas(idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado) " +
                              " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
 
-            const parametros = [venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado];
+            const parametros = [venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado];
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
             venta.id =  resultado.insertId;
 
@@ -213,7 +222,9 @@ class VentasRepository{
                 for (const element of venta.productos) {
                     element.idVenta = venta.id;
                     await InsertProductoVenta(connection, element);
-                    if(venta.factura)
+                    const finalizandoCotizacion = venta.idProceso == 2 && venta.estado == "Finalizada";
+
+                    if(venta.factura || finalizandoCotizacion)
                         await ActualizarInventario(connection, element, "-")
                 }
             }
@@ -394,13 +405,26 @@ class VentasRepository{
         }
     }
 
-    
     async GuardarFactura(data:any){
         const connection = await db.getConnection();
         
         try {
             data.factura.idVenta = data.idVenta;
             await InsertFacturaVenta(connection, data.factura);
+            return("OK");
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async Aprobar(data:any){
+        const connection = await db.getConnection();
+        
+        try {
+            await connection.query("UPDATE ventas SET estado = 'Aprobada' WHERE id = ?", [data.idVenta]);
             return("OK");
 
         } catch (error:any) {
@@ -461,8 +485,6 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         let endCount:string = "";
         //#endregion
 
-
-        console.log(filtros)
         // #region FILTROS
         if (filtros.cliente && filtros.cliente != 0)
             filtro += " AND (estado <> 'Asociado' AND estado <> 'Asociada' AND estado <> 'Facturado' AND estado <> 'Facturada') AND v.idCliente = " + filtros.cliente;
@@ -512,12 +534,12 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
-                " SELECT v.*, c.nombre AS cliente, ci.descripcion AS condicionIva, pv.descripcion AS proceso, e.razonSocial AS empresa, tc.desComprobante AS tipoComprobante, td.descripcion AS tipoDescuento " + 
+                " SELECT v.*, c.nombre, c.razonSocial, c.idCondIva, c.idTipoDocumento, c.documento, ci.descripcion AS condicionIva, pv.descripcion AS proceso, e.razonSocial AS empresa, tc.descripcion AS tipoComprobante, td.descripcion AS tipoDescuento " + 
                 " FROM ventas v " + 
                 " LEFT JOIN clientes c ON c.id = v.idCliente " +
                 " LEFT JOIN procesos_venta pv ON pv.id = v.idProceso " +
                 " LEFT JOIN empresas e ON e.id = v.idEmpresa " +
-                " LEFT JOIN comprobantes_condicion tc ON tc.id = v.idTComprobante " +
+                " LEFT JOIN tipos_comprobantes tc ON tc.id = v.idTComprobante " +
                 " LEFT JOIN tipos_descuento td ON td.id = v.idTDescuento " +
                 " LEFT JOIN condiciones_iva ci ON ci.id = c.idCondIva " +
                 " WHERE 1 = 1 " +
@@ -525,7 +547,6 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
                 " ORDER BY v.id DESC " +
                 paginado +
                 endCount;
-        
         return query;
             
     } catch (error) {
@@ -634,6 +655,7 @@ async function ObtenerProductosVenta(connection, idVenta:number, idProceso:numbe
                 producto.t8 = parseInt(row['t8']);
                 producto.t9 = parseInt(row['t9']);
                 producto.t10 = parseInt(row['t10']);
+                producto.precio = parseFloat(row['precio']);
                 producto.unitario = parseFloat(row['precio']);
                 producto.total = parseFloat(row['total']);
                 producto.tallesSeleccionados = row['talles'];
@@ -719,7 +741,7 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " total = ?, " +
                          " nroRelacionado = ?, " +
                          " tipoRelacionado = ?, " +
-                         " estado = ? "
+                         " estado = ? " +
                          " WHERE id = ? ";
 
         const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.id];

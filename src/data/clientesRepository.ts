@@ -68,10 +68,26 @@ class ClientesRepository{
         cliente.documento = row['documento'];
         cliente.idCondicionPago = row['idCondicionPago'];
         cliente.condicionPago = row['condicionPago'];
+        cliente.idListaPrecio = row['idListaPrecio'];
         cliente.idCategoria = row['idCategoria'];
         cliente.fechaAlta = row['fechaAlta'];
         cliente.direcciones = await ObtenerDireccionesCliente(connection, row['id']);
         cliente.ultimoDescuento = await ObtenerUltimoDescuento(connection, row['id']);
+
+        switch (cliente.idListaPrecio) {
+            case 1:
+                cliente.listaPrecio = "CONSUMIDOR FINAL"
+                break;
+            case 2:
+                cliente.listaPrecio = "LISTA 3"
+                break;
+            case 3:
+                cliente.listaPrecio = "LISTA 4"
+                break;
+                case 4:
+            cliente.listaPrecio = "LISTA 5"
+                break;
+        }
 
         return cliente;
     }
@@ -80,7 +96,7 @@ class ClientesRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT id, nombre, documento FROM clientes');
+            const [rows] = await connection.query('SELECT id, nombre, documento, razonSocial FROM clientes');
             return [rows][0];
 
         } catch (error:any) {
@@ -108,9 +124,9 @@ class ClientesRepository{
             if(existe)//Verificamos si ya existe un cliente con el mismo nombre 
                 return "Ya existe un cliente con el mismo nombre.";
             
-            const consulta = "INSERT INTO clientes(nombre,razonSocial,telefono,celular,contacto,email,idCondIva,idTipoDocumento,documento,idCondicionPago,idCategoria,fechaAlta) " + 
-                             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-            const parametros = [cliente.nombre.toUpperCase(), cliente.razonSocial, cliente.telefono, cliente.celular, cliente.contacto, cliente.email, cliente.idCondicionIva, cliente.idTipoDocumento, cliente.documento, cliente.idCondicionPago, cliente.idCategoria, moment().format('YYYY-MM-DD HH:mm:ss')];
+            const consulta = "INSERT INTO clientes(nombre,razonSocial,telefono,celular,contacto,email,idCondIva,idTipoDocumento,documento,idCondicionPago,idCategoria,idListaPrecio,fechaAlta) " + 
+                             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            const parametros = [cliente.nombre.toUpperCase(), cliente.razonSocial, cliente.telefono, cliente.celular, cliente.contacto, cliente.email, cliente.idCondicionIva, cliente.idTipoDocumento, cliente.documento, cliente.idCondicionPago, cliente.idCategoria, cliente.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss')];
             
             await connection.query(consulta, parametros);
 
@@ -157,10 +173,11 @@ class ClientesRepository{
                     documento = ?,
                     idCondicionPago = ?,
                     idCategoria = ?,
+                    idListaPrecio = ?,
                     fechaAlta = ?
                 WHERE id = ? `;
 
-            const parametros = [data.nombre.toUpperCase(), data.razonSocial, data.telefono, data.celular, data.contacto, data.email, data.idCondicionIva, data.idTipoDocumento, data.documento, data.idCondicionPago, data.idCategoria, moment().format('YYYY-MM-DD HH:mm:ss'), data.id];
+            const parametros = [data.nombre.toUpperCase(), data.razonSocial, data.telefono, data.celular, data.contacto, data.email, data.idCondicionIva, data.idTipoDocumento, data.documento, data.idCondicionPago, data.idCategoria, data.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss'), data.id];
             await connection.query(consulta, parametros);
                
             //Borramos las direcciones del cliente

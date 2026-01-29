@@ -81,6 +81,18 @@ router.get('/temporadas', async (req:Request, res:Response) => {
     }
 });
 
+
+router.get('/empresas', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.EmpresasSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de empresas.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.get('/lineas-talle', async (req:Request, res:Response) => {
     try{ 
         res.json(await MiscRepo.ObtenerLineasTalle());
@@ -114,12 +126,12 @@ router.get('/condiciones-iva', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/comprobantes/:condicionIva', async (req:Request, res:Response) => {
+router.get('/comprobantes/:empresa/:condicionIva', async (req:Request, res:Response) => {
     try{ 
-        res.json(await MiscRepo.ComprobantesCondicionSelector(req.params.condicionIva));
+        res.json(await MiscRepo.ComprobanteSelector(req.params.empresa, req.params.condicionIva));
 
     } catch(error:any){
-        let msg = "Error al obtener el listado de comprobantes para la condicion de IVA.";
+        let msg = "Error al obtener el listado de comprobantes.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

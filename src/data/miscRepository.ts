@@ -103,6 +103,20 @@ class MiscRepository{
         }
     }
 
+    async EmpresasSelector(){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.query('SELECT * FROM empresas');
+            return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     async TemporadasSelector(){
         const connection = await db.getConnection();
         
@@ -184,11 +198,15 @@ class MiscRepository{
         }
     }
 
-    async ComprobantesCondicionSelector(condicionIva){
+    async ComprobanteSelector(empresa, condicionIva){
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT idComprobante id, desComprobante descripcion FROM comprobantes_condicion WHERE idCondicion = ?', [condicionIva]);
+            const query = " SELECT DISTINCT tc.* FROM reglas_comprobante rc " +
+                          " JOIN tipos_comprobantes tc ON tc.id = rc.idTipoComprobante " +
+                          " WHERE rc.empresa_tipo = ? AND (rc.cliente_tipo = ? OR rc.cliente_tipo IS NULL) ";
+
+            const [rows] = await connection.query(query, [empresa, condicionIva]);
             return [rows][0];
 
         } catch (error:any) {
@@ -200,7 +218,6 @@ class MiscRepository{
     
     async ProcesosVentaSelector(tipo:string){
         const connection = await db.getConnection();
-        console.log("tipo", tipo);
         try {
             const [rows] = await connection.query('SELECT * FROM procesos_venta WHERE tipo = ? ORDER BY descripcion ASC', [tipo]);
             return [rows][0];

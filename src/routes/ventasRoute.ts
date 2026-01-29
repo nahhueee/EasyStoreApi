@@ -18,6 +18,7 @@ router.post('/obtener', async (req:Request, res:Response) => {
 
 router.get('/obtener-una/:idVenta', async (req:Request, res:Response) => {
     try{ 
+        
         res.json(await VentasRepo.ObtenerVenta(req.params.idVenta));
 
     } catch(error:any){
@@ -101,6 +102,17 @@ router.put('/eliminar', async (req:Request, res:Response) => {
 
     } catch(error:any){
         let msg = "Error al intentar eliminar la venta.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.put('/aprobar', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await VentasRepo.Aprobar(req.body));
+
+    } catch(error:any){
+        let msg = "Error al intentar aprobar la venta.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

@@ -3,7 +3,6 @@ import db from '../db';
 import { Color, ExcelProducto, Genero, Material, Producto, Relacionado, SubtipoProducto, TablaProducto, TallesProducto, Temporada, TipoProducto } from '../models/Producto';
 import { ProductoPresupuesto } from '../models/ProductoPresupuesto';
 import { MiscRepo } from './miscRepository';
-import { Console } from 'console';
 
 class ProductosRepository{
 
@@ -23,27 +22,13 @@ class ProductosRepository{
                 filtros.proceso === 3;
 
             const productos: TablaProducto[] = [];
-            let totalGeneral = 0;
 
             // PRIMERA QUERY PRODUCTOS STOCK
             if (ejecutarPrimero) {
 
                 let queryRegistros1 = await ObtenerQuery(filtros, false);
-                let queryTotal1 = await ObtenerQuery(filtros, true);
-
                 const [rows1] = await connection.query(queryRegistros1);
-                const total1 = (await connection.query(queryTotal1))[0][0].total;
-
-                totalGeneral += total1;
-
-                if (filtros.desdeFacturacion) {
-                    const list: Producto[] = [];
-                    if (Array.isArray(rows1)) {
-                        for (const row of rows1) list.push(await this.CompletarObjeto(row));
-                    }
-                    return { total: totalGeneral, registros: list };
-                }
-
+                
                 if (Array.isArray(rows1)) {
                     for (const row of rows1) productos.push(new TablaProducto(row));
                 }
@@ -52,20 +37,22 @@ class ProductosRepository{
             // SEGUNDA QUERY PEDIDOS APROB
             if (ejecutarSegundo) {
 
-                let queryRegistros2 = await ObtenerQuery(filtros, false, false, true);
-                let queryTotal2 = await ObtenerQuery(filtros, true, false, true);
-
+                let queryRegistros2 = await ObtenerQuery(filtros, true);
                 const [rows2] = await connection.query(queryRegistros2);
-                const total2 = (await connection.query(queryTotal2))[0][0].total;
-
-                totalGeneral += total2;
-
+               
                 if (Array.isArray(rows2)) {
                     for (const row of rows2) productos.push(new TablaProducto(row));
                 }
             }
 
-            return { total: totalGeneral, registros: productos };
+            const pageSize = filtros.tamanioPagina ?? 10;
+            const page = filtros.pagina ?? 1;
+            const offset = (page - 1) * pageSize;
+
+            return {
+            total: productos.length,
+            registros: productos.slice(offset, offset + pageSize)
+            };
 
         } catch (error:any) {
             throw error;
@@ -131,50 +118,82 @@ class ProductosRepository{
        const connection = await db.getConnection();
         
         try {
-             //Obtengo la query segun los filtros
-            let queryRegistros = await ObtenerQuery(filtros,false,true);
+            const ejecutarPrimero =
+                filtros.proceso === null ||
+                filtros.proceso === 0 ||
+                filtros.proceso === 1;
 
-            //Obtengo la lista de registros y el total
-            const [rows] = await connection.query(queryRegistros);
+            const ejecutarSegundo =
+                filtros.proceso === null ||
+                filtros.proceso === 0 ||
+                filtros.proceso === 3;
 
-            const productos:ExcelProducto[] = [];
-           
-            if (Array.isArray(rows)) {
-                for (let i = 0; i < rows.length; i++) { 
-                    const row = rows[i];
-                    
+            const productosTabla: TablaProducto[] = [];
 
-                    let tablaProducto: ExcelProducto = new ExcelProducto();
-                    tablaProducto.Codigo = row['codigo'],
-                    tablaProducto.Nombre = row['nombre'],
-                    tablaProducto.Proceso = row['proceso'];
-                    tablaProducto.Material = row['material'];
-                    tablaProducto.Genero = row['genero'];
-                    tablaProducto.Color = row['color'];
-                    tablaProducto.Producto = row['tipo'];
-                    tablaProducto.Tipo = row['subtipo'];
+            // PRIMERA QUERY PRODUCTOS STOCK
+            if (ejecutarPrimero) {
 
-                    const factor = tablaProducto.Proceso === "PEDIDOS APROBADOS" ? -1 : 1;
-
-                    tablaProducto.XS   = parseInt(row['t1'])  * factor;
-                    tablaProducto.S    = parseInt(row['t2'])  * factor;
-                    tablaProducto.M    = parseInt(row['t3'])  * factor;
-                    tablaProducto.L    = parseInt(row['t4'])  * factor;
-                    tablaProducto.XL   = parseInt(row['t5'])  * factor;
-                    tablaProducto.XXL  = parseInt(row['t6'])  * factor;
-                    tablaProducto['3XL'] = parseInt(row['t7']) * factor;
-                    tablaProducto['4XL'] = parseInt(row['t8']) * factor;
-                    tablaProducto['5XL'] = parseInt(row['t9']) * factor;
-                    tablaProducto['6XL'] = parseInt(row['t10']) * factor;
-
-                    const columnas = ['t1','t2','t3','t4','t5','t6','t7','t8','t9','t10'];
-                    tablaProducto.Total = columnas.reduce((acc, col) => acc + parseInt(row[col] || '0') * factor, 0);
-
-                    productos.push(tablaProducto);
+                let queryRegistros1 = await ObtenerQuery(filtros, false);
+                const [rows1] = await connection.query(queryRegistros1);
+                
+                if (Array.isArray(rows1)) {
+                    for (const row of rows1) productosTabla.push(new TablaProducto(row));
                 }
             }
 
-            return productos;
+            // SEGUNDA QUERY PEDIDOS APROB
+            if (ejecutarSegundo) {
+
+                let queryRegistros2 = await ObtenerQuery(filtros, true);
+                const [rows2] = await connection.query(queryRegistros2);
+               
+                if (Array.isArray(rows2)) {
+                    for (const row of rows2) productosTabla.push(new TablaProducto(row));
+                }
+            }
+
+            const productosExcel: ExcelProducto[] = [];
+            productosTabla.forEach(element => {
+                let tablaProducto: ExcelProducto = new ExcelProducto();
+                tablaProducto.Codigo = element.codigo,
+                tablaProducto.Nombre = element.nombre,
+                tablaProducto.Proceso = element.proceso;
+                tablaProducto.Material = element.material;
+                tablaProducto.Genero = element.genero;
+                tablaProducto.Color =element.color;
+                tablaProducto.Producto =element.tipo;
+                tablaProducto.Tipo = element.subtipo;
+
+                //const factor = tablaProducto.Proceso === "PEDIDOS APROBADOS" ? -1 : 1;
+                tablaProducto.XS   = element.t1;
+                tablaProducto.S    = element.t2;
+                tablaProducto.M    = element.t3;
+                tablaProducto.L    = element.t4;
+                tablaProducto.XL   = element.t5;
+                tablaProducto.XXL  = element.t6;
+                tablaProducto['3XL'] = element.t7;
+                tablaProducto['4XL'] = element.t8;
+                tablaProducto['5XL'] = element.t9;
+                tablaProducto['6XL'] = element.t10;
+
+                // tablaProducto.XS   = element.t1 * factor;
+                // tablaProducto.S    = element.t2 * factor;
+                // tablaProducto.M    = element.t3 * factor;
+                // tablaProducto.L    = element.t4 * factor;
+                // tablaProducto.XL   = element.t5 * factor;
+                // tablaProducto.XXL  = element.t6 * factor;
+                // tablaProducto['3XL'] = element.t7* factor;
+                // tablaProducto['4XL'] = element.t8* factor;
+                // tablaProducto['5XL'] = element.t9* factor;
+                // tablaProducto['6XL'] = element.t10* factor;
+
+                const columnas = ['t1','t2','t3','t4','t5','t6','t7','t8','t9','t10'];
+                tablaProducto.Total = columnas.reduce((acc, col) => acc + parseInt(element[col] || '0'), 0);
+
+                productosExcel.push(tablaProducto);
+            });
+           
+            return productosExcel;
 
         } catch (error:any) {
             throw error;
@@ -193,6 +212,7 @@ class ProductosRepository{
         producto.proceso = row['idProceso'];
         producto.moldeleria = row['moldeleria'];
         producto.imagen = row['imagen'];
+        producto.topeDescuento = row['topeDescuento'];
 
         producto.tipo = new TipoProducto({
             id: row['idTipo'],
@@ -376,8 +396,8 @@ class ProductosRepository{
             //#region Insert Producto
             const consulta = `INSERT INTO productos(
                                 codigo,nombre,empresa,idCliente,idProceso,idTipo,idSubtipo,
-                                idGenero,idTemporada,idMaterial,idColor,moldeleria)
-                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`;
+                                idGenero,idTemporada,idMaterial,idColor,moldeleria,topeDescuento)
+                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
             const parametros = [producto.codigo!.toUpperCase(),
                                 producto.nombre!.toUpperCase(),
@@ -390,7 +410,8 @@ class ProductosRepository{
                                 producto.temporada,
                                 producto.material,
                                 producto.color?.id!,
-                                producto.moldeleria
+                                producto.moldeleria,
+                                producto.topeDescuento
                             ];
             
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
@@ -438,7 +459,8 @@ class ProductosRepository{
                                 idTipo = ?,
                                 idSubtipo = ?,
                                 idGenero = ?,
-                                moldeleria = ?
+                                moldeleria = ?,
+                                topeDescuento = ?
                                 WHERE id = ?`;
 
             const parametros = [producto.codigo!.toUpperCase(),
@@ -451,6 +473,7 @@ class ProductosRepository{
                                 producto.subtipo,
                                 producto.genero,
                                 producto.moldeleria,
+                                producto.topeDescuento,
                                 producto.id
                             ];
             
@@ -660,7 +683,7 @@ class ProductosRepository{
     //#endregion
 }
 
-async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false, pedidos:boolean = false):Promise<string>{
+async function ObtenerQuery(filtros:any, pedidos:boolean = false):Promise<string>{
     try {
         //#region VARIABLES
         let query:string;
@@ -707,18 +730,19 @@ async function ObtenerQuery(filtros:any,esTotal:boolean,esExcel:boolean = false,
         }    
         // #endregion
 
-        if (esTotal)
-        {//Si esTotal agregamos para obtener un total de la consulta
-            count = "SELECT COUNT(*) AS total FROM ( ";
-            endCount = " ) as subquery";
-        }
-        else
-        {//De lo contrario paginamos
-            if(!esExcel){
-                if (filtros.tamanioPagina != null)
-                    paginado = " LIMIT " + filtros.tamanioPagina + " OFFSET " + ((filtros.pagina - 1) * filtros.tamanioPagina);
-            }
-        }
+        // if (esTotal)
+        // {//Si esTotal agregamos para obtener un total de la consulta
+        //     count = "SELECT COUNT(*) AS total FROM ( ";
+        //     endCount = " ) as subquery";
+        // }
+        // else
+        // {//De lo contrario paginamos
+        //     console.log(filtros.tamanioPagina)
+        //     if(!esExcel){ 
+        //         if (filtros.tamanioPagina != null)
+        //             paginado = " LIMIT " + filtros.tamanioPagina + " OFFSET " + ((filtros.pagina - 1) * filtros.tamanioPagina);
+        //     }
+        // }
             
         let condicionAdicional = pedidos == true ? "vp.idProducto," : "";
         query = count +

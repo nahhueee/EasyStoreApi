@@ -43,7 +43,6 @@ router.post('/descargar-excel', async (req, res) => {
   try {
 
     const productos = await ProductosRepo.ObtenerParaExcel(req.body);
-
     const columnas = [
     "Proceso", "Codigo", "Nombre", "Producto", "Tipo", "Genero", "Material", "Color",
     "XS","S","M","L","XL","XXL","3XL","4XL","5XL","6XL","Total"

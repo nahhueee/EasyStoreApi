@@ -19,7 +19,6 @@ class FacturacionService{
         try {
             const datosFacturacion = await EmpresasRepo.ObtenerEmpresa(objFactura.idEmpresa!);
             const afip = await getAfipInstance(datosFacturacion.cuil);
-
            
             //Verificamos el estado del servidor
             const serverStatus = await afip.electronicBillingService.getServerStatus();
@@ -35,21 +34,12 @@ class FacturacionService{
                 // 4 → 10,5%
                 // 5 → 21%
                 // 6 → 27%
-                
-                const date = new Date(Date.now() - ((new Date()).getTimezoneOffset() * 60000)).toISOString().split('T')[0];
 
                 // Factura A discrimina IVA
                 // Factura B no discrimina IVA pero es necesario pasar el IVA incluido en ImpIVA
                 // Factura C no necesita de IVA en ningun sentido, neto será igual al total
-                let neto = 0;
-                let iva = 0;
-
-                if(objFactura.tipoFactura === 1 || objFactura.tipoFactura === 6){
-                    neto = Math.round((objFactura.total! / 1.21) * 100) / 100;
-                    iva = Math.round((objFactura.total! - neto) * 100) / 100;
-                }else{
-                    neto = objFactura.total!;
-                }
+                
+                const date = new Date(Date.now() - ((new Date()).getTimezoneOffset() * 60000)).toISOString().split('T')[0];
 
                 let data : any = {
                     CantReg: 1, // Cantidad de comprobantes a registrar
@@ -63,22 +53,23 @@ class FacturacionService{
                     CbteFch: date.replace(/-/g, ""), // (Opcional) Fecha del comprobante (yyyymmdd) o fecha actual si es nulo
                     ImpTotal: objFactura.total, // Importe total del comprobante
                     ImpTotConc: 0, // Importe neto no gravado
-                    ImpNeto: neto, // Importe neto gravado
+                    ImpNeto: objFactura.neto, // Importe neto gravado
                     ImpOpEx: 0, // Importe exento de IVA
-                    ImpIVA: iva, //Importe total de IVA
+                    ImpIVA: objFactura.iva, //Importe total de IVA
                     CondicionIVAReceptorId: objFactura.condReceptor, //Condicion frente al iva del receptor
                     ImpTrib: 0, //Importe total de tributos
                     MonId: "PES", //Tipo de moneda usada en el comprobante (ver tipos disponibles)('PES' para pesos argentinos)
                     MonCotiz: 1, // Cotización de la moneda usada (1 para pesos argentinos)
                 };
+                console.log(data)
 
                 // Solo agregamos el campo `Iva` si es una Factura A o B
                 if (objFactura.tipoFactura === 1 || objFactura.tipoFactura === 6) {
                     data.Iva = [
                     {
                         Id: 5, // 21%
-                        BaseImp: neto,
-                        Importe: iva
+                        BaseImp: objFactura.neto,
+                        Importe: objFactura.iva
                     }
                     ];
                 }
@@ -98,9 +89,7 @@ class FacturacionService{
                         cae: detalle.CAE,
                         caeVto:  moment(detalle.CAEFchVto, "YYYYMMDD"),
                         ticket: lastVoucher.CbteNro,
-                        ptoVenta: datosFacturacion.puntoVta,
-                        neto,
-                        iva
+                        ptoVenta: datosFacturacion.puntoVta                        
                     }; 
                 } else {
                     const observaciones = detalle?.Observaciones || [];

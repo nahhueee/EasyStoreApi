@@ -11,6 +11,8 @@ export class Cliente {
     idTipoDocumento?:number;
     tipoDocumento?:string;
     documento?:number;
+    idListaPrecio?:number;
+    listaPrecio?:string;
     idCondicionPago?:number;
     condicionPago?:string;
     idCategoria?:number;

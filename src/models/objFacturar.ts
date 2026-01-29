@@ -1,5 +1,7 @@
 export class ObjFacturar {
     total?:number;
+    neto?:number;
+    iva?:number;
     tipoFactura?:number;
     docNro?:number;
     docTipo?:number;
@@ -9,6 +11,8 @@ export class ObjFacturar {
     constructor(data?: any) {
         if (data) {
           this.total = data.total;
+          this.neto = data.neto;
+          this.iva = data.iva;
           this.tipoFactura = data.tipoFactura;
           this.docNro = data.docNro;
           this.docTipo = data.docTipo;

@@ -68,5 +68,60 @@
     "message": "Observación 10015: El campo  DocNro es invalido.",
     "level": "error",
     "timestamp": "20-12-25 02:04"
+  },
+  {
+    "message": "Observación 10013: Para comprobantes clase 'A' y 'A con leyenda operación sujeta a retención' el campo  DocTipo debe ser igual a 80 (CUIT)",
+    "level": "error",
+    "timestamp": "08-01-26 15:14"
+  },
+  {
+    "message": "Observación 10015: El campo  DocNro es invalido.",
+    "level": "error",
+    "timestamp": "08-01-26 15:14"
+  },
+  {
+    "message": "Observación 10243: El campo Condicion IVA receptor no es valido para la clase de comprobante informado. Consular metodo FEParamGetCondicionIvaReceptor",
+    "level": "error",
+    "timestamp": "08-01-26 16:50"
+  },
+  {
+    "message": "Observación 10243: El campo Condicion IVA receptor no es valido para la clase de comprobante informado. Consular metodo FEParamGetCondicionIvaReceptor",
+    "level": "error",
+    "timestamp": "26-01-26 10:00"
+  },
+  {
+    "message": "Observación 10243: El campo Condicion IVA receptor no es valido para la clase de comprobante informado. Consular metodo FEParamGetCondicionIvaReceptor",
+    "level": "error",
+    "timestamp": "26-01-26 10:04"
+  },
+  {
+    "message": "Observación 10013: Para comprobantes clase 'A' y 'A con leyenda operación sujeta a retención' el campo  DocTipo debe ser igual a 80 (CUIT)",
+    "level": "error",
+    "timestamp": "26-01-26 10:06"
+  },
+  {
+    "message": "Observación 10015: El campo  DocNro es invalido.",
+    "level": "error",
+    "timestamp": "26-01-26 10:06"
+  },
+  {
+    "message": "Observación 10243: El campo Condicion IVA receptor no es valido para la clase de comprobante informado. Consular metodo FEParamGetCondicionIvaReceptor",
+    "level": "error",
+    "timestamp": "26-01-26 20:35"
+  },
+  {
+    "message": "Observación 10243: El campo Condicion IVA receptor no es valido para la clase de comprobante informado. Consular metodo FEParamGetCondicionIvaReceptor",
+    "level": "error",
+    "timestamp": "26-01-26 20:36"
+  },
+  {
+    "message": "Observación 10056: El campo ImpTotal soporta 13 numeros para la parte entera y 2 para los decimales.",
+    "level": "error",
+    "timestamp": "26-01-26 20:38"
+  },
+  {
+    "message": "Observación 10051: Los importes informados en AlicIVA no se corresponden con los porcentajes.",
+    "level": "error",
+    "timestamp": "26-01-26 20:59"
   }
 ]
