@@ -26,9 +26,9 @@ router.get('/obtener-cliente/:id', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/selector', async (req:Request, res:Response) => {
+router.get('/selector/:cuentasCorriente', async (req:Request, res:Response) => {
     try{ 
-        res.json(await ClientesRepo.ClientesSelector());
+        res.json(await ClientesRepo.ClientesSelector(req.params.cuentasCorriente));
 
     } catch(error:any){
         let msg = "Error al obtener el selector de clientes.";

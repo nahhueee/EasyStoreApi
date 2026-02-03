@@ -123,5 +123,15 @@
     "message": "Observación 10051: Los importes informados en AlicIVA no se corresponden con los porcentajes.",
     "level": "error",
     "timestamp": "26-01-26 20:59"
+  },
+  {
+    "message": "Error 10007: Campo CbteTipo no se corresponde con alguno de los comprobantes habilitados en FEParamGetTiposCbte",
+    "level": "error",
+    "timestamp": "02-02-26 10:37"
+  },
+  {
+    "message": "Observación 10018: Si ImpIva es igual a 0 el objeto Iva y AlicIva son obligatorios. Id iva = 3 (iva 0)",
+    "level": "error",
+    "timestamp": "03-02-26 15:42"
   }
 ]

@@ -37,6 +37,9 @@ import { Color, TallesProducto } from "./Producto";
     nroRelacionado?:number;
     tipoRelacionado?:string;
     estado:string = "";
+    impaga:number = 0;
+    entregado:number = 0;
+    deuda:number = 0;
   }
 
   export class ProductosVenta{
@@ -114,6 +117,7 @@ import { Color, TallesProducto } from "./Producto";
   }
 
   export class PagosVenta{
+    id:number = 0;
     idVenta?:number;
     idMetodo? : number;
     metodo?: string;

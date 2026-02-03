@@ -3,7 +3,6 @@ import { PagosVenta, ProductosVenta, ServiciosVenta, Venta } from '../models/Ven
 import { ObjQR } from '../models/ObjQR';
 import { FacturaVenta } from '../models/FacturaVenta';
 import { MiscRepo } from './miscRepository';
-import { Color } from '../models/Producto';
 import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader } from 'mysql2';
 import { Cliente } from '../models/Cliente';
@@ -117,6 +116,9 @@ class VentasRepository{
         venta.nroRelacionado = parseFloat(row['nroRelacionado']);
         venta.tipoRelacionado = row['tipoRelacionado'];
         venta.estado = row['estado'];
+        venta.impaga = row['impaga'];
+        venta.entregado = parseFloat(row['entregado'] ?? 0);
+        venta.deuda = parseFloat(row['deuda']) ?? 0;
 
         venta.cliente = new Cliente();
         venta.cliente.id = row['idCliente'];
@@ -172,15 +174,14 @@ class VentasRepository{
         try {
             //Obtenemos el proximo nro de venta a insertar
             venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
-
             //Iniciamos una transaccion
             await connection.beginTransaction();
 
             //Insertamos la venta
-            const consulta = " INSERT INTO ventas(idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado) " +
-                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
+            const consulta = " INSERT INTO ventas(idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga) " +
+                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?) ";
 
-            const parametros = [venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado];
+            const parametros = [venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga];
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
             venta.id =  resultado.insertId;
 
@@ -480,6 +481,8 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         let query:string;
         let filtro:string = "";
         let paginado:string = "";
+        let condicional:string = "";
+        let adicional:string = "";
     
         let count:string = "";
         let endCount:string = "";
@@ -519,8 +522,19 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         if(filtros.idCliente && filtros.idCliente != 0){
             filtro += " AND v.idCliente = " + filtros.idCliente;
         }
-        // #endregion
 
+        if(filtros.impagas == 1){
+            filtro += " AND v.impaga = " + filtros.impagas;
+        }
+        if(filtros.desdeCuenta && filtros.desdeCuenta == true){
+            condicional += " ,p.entregado ,SUM(v.total - IFNULL(p.entregado, 0)) AS deuda "
+            adicional += " LEFT JOIN (" +
+                        " SELECT idVenta, SUM(monto) AS entregado" +
+                        " FROM ventas_pagos " +
+                        " GROUP BY idVenta " +
+                        " ) p ON p.idVenta = v.id ";
+        }
+        // #endregion
         if (esTotal)
         {//Si esTotal agregamos para obtener un total de la consulta
             count = "SELECT COUNT(*) AS total FROM ( ";
@@ -531,10 +545,11 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             if (filtros.tamanioPagina != null)
                 paginado = " LIMIT " + filtros.tamanioPagina + " OFFSET " + ((filtros.pagina - 1) * filtros.tamanioPagina);
         }
-            
+
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
                 " SELECT v.*, c.nombre, c.razonSocial, c.idCondIva, c.idTipoDocumento, c.documento, ci.descripcion AS condicionIva, pv.descripcion AS proceso, e.razonSocial AS empresa, tc.descripcion AS tipoComprobante, td.descripcion AS tipoDescuento " + 
+                condicional + 
                 " FROM ventas v " + 
                 " LEFT JOIN clientes c ON c.id = v.idCliente " +
                 " LEFT JOIN procesos_venta pv ON pv.id = v.idProceso " +
@@ -542,8 +557,10 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
                 " LEFT JOIN tipos_comprobantes tc ON tc.id = v.idTComprobante " +
                 " LEFT JOIN tipos_descuento td ON td.id = v.idTDescuento " +
                 " LEFT JOIN condiciones_iva ci ON ci.id = c.idCondIva " +
+                adicional +
                 " WHERE 1 = 1 " +
                 filtro +
+                " GROUP BY v.id " +
                 " ORDER BY v.id DESC " +
                 paginado +
                 endCount;
@@ -568,6 +585,7 @@ async function ObtenerPagosVenta(connection, idVenta:number){
                 const row = rows[i];
                 
                 let pago:PagosVenta = new PagosVenta();
+                pago.id = row['id'];
                 pago.idVenta = row['idVenta'];
                 pago.idMetodo = row['idMetodo'];
                 pago.metodo = row['descripcion'];
@@ -741,10 +759,11 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " total = ?, " +
                          " nroRelacionado = ?, " +
                          " tipoRelacionado = ?, " +
-                         " estado = ? " +
+                         " estado = ?, " +
+                         " impaga = ? " +
                          " WHERE id = ? ";
 
-        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.idCliente, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.id];
+        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {

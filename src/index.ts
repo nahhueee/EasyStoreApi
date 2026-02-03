@@ -48,7 +48,7 @@ import estadisticasRuta from './routes/estadisticasRoute';
 import parametrosRuta from './routes/parametrosRoute';
 import logsRuta from './routes/logsRoute';
 import servidorRuta from './routes/servidorRoute';
-import cuentasRuta from './routes/cuentasCorsRoute';
+import cuentasRuta from './routes/cuentasCorrientesRoute';
 import etiquetasRuta from './routes/etiquetasRoute';
 import miscRuta from './routes/miscRoute';
 import direccionesRuta from './routes/direccionesRoute';
@@ -94,9 +94,9 @@ if(!config.web)
     BackupsServ.IniciarCron();
 //#endregion
 
-import {ServidorServ} from './services/servidorService';
-if(!config.web)
-    ServidorServ.IniciarModoServidor();
+// import {ServidorServ} from './services/servidorService';
+// if(!config.web)
+//     ServidorServ.IniciarModoServidor();
 
 //Index Route
 app.get('/easystore', (req, res) => {

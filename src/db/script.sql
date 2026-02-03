@@ -107,6 +107,7 @@ CREATE TABLE ventas (
     nroRelacionado INT,
     tipoRelacionado VARCHAR(20),
     estado VARCHAR (20),
+    impaga INT DEFAULT 0,
     fechaBaja DATETIME
 )
 ENGINE=InnoDB;
@@ -151,6 +152,7 @@ CREATE TABLE ventas_pagos (
     idVenta INT NOT NULL,
     idMetodo INT NOT NULL,
     monto DECIMAL(10,2) NOT NULL
+    idEntrega INT
 )
 ENGINE=InnoDB;
 
@@ -170,6 +172,25 @@ CREATE TABLE ventas_factura (
 )
 ENGINE=InnoDB;
 
+
+DROP TABLE IF EXISTS ventas_entrega;
+CREATE TABLE ventas_entrega (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idCliente INT NOT NULL,
+    monto DECIMAL(10,2) NOT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+ENGINE=InnoDB;
+
+DROP TABLE IF EXISTS ventas_entrega_detalle;
+CREATE TABLE ventas_entrega_detalle (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idEntrega INT NOT NULL,
+    idVenta INT NOT NULL,
+    idMetodoAplicado INT NOT NULL,
+    montoAplicado DECIMAL(10,2) NOT NULL
+)
+ENGINE=InnoDB;
 
 DROP TABLE IF EXISTS etiquetas;
 CREATE TABLE etiquetas (
@@ -528,4 +549,8 @@ INSERT INTO `procesos` (`id`, `descripcion`, `abreviatura`) VALUES
 (1, 'STOCK', 'STK'),
 (2, 'PROJECTADO', 'PROJ'),
 (3, 'PEDIDOS APROBADOS', 'APROB');
+
+
+CREATE INDEX idx_ventas_impaga_cliente ON ventas (impaga, idCliente);
+CREATE INDEX idx_ventas_pagos_venta ON ventas_pagos (idVenta);
 

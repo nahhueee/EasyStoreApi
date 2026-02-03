@@ -92,11 +92,14 @@ class ClientesRepository{
         return cliente;
     }
 
-    async ClientesSelector(){
+    async ClientesSelector(cuentasCorriente){
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT id, nombre, documento, razonSocial FROM clientes');
+            let query = "SELECT id, nombre, documento, razonSocial FROM clientes ";
+            if(cuentasCorriente == "true"){ query += "WHERE idCondicionPago = 2"}
+
+            const [rows] = await connection.query(query);
             return [rows][0];
 
         } catch (error:any) {
