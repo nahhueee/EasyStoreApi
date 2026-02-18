@@ -151,7 +151,7 @@ CREATE TABLE ventas_pagos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     idVenta INT NOT NULL,
     idMetodo INT NOT NULL,
-    monto DECIMAL(10,2) NOT NULL
+    monto DECIMAL(10,2) NOT NULL,
     idEntrega INT
 )
 ENGINE=InnoDB;
@@ -553,4 +553,8 @@ INSERT INTO `procesos` (`id`, `descripcion`, `abreviatura`) VALUES
 
 CREATE INDEX idx_ventas_impaga_cliente ON ventas (impaga, idCliente);
 CREATE INDEX idx_ventas_pagos_venta ON ventas_pagos (idVenta);
+CREATE INDEX idx_ventas_cliente_fecha ON ventas(idCliente, fecha);
+CREATE INDEX idx_ventas_proceso ON ventas(idProceso);
+CREATE INDEX idx_ventas_pagos_metodo ON ventas_pagos(idMetodo);
+
 

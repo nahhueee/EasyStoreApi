@@ -489,9 +489,15 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         //#endregion
 
         // #region FILTROS
-        if (filtros.cliente && filtros.cliente != 0)
-            filtro += " AND (estado <> 'Asociado' AND estado <> 'Asociada' AND estado <> 'Facturado' AND estado <> 'Facturada') AND v.idCliente = " + filtros.cliente;
+        if (filtros.cliente && filtros.cliente != 0){
 
+            if(filtros.desdeCuenta && filtros.desdeCuenta == false){
+                filtro += " AND (estado <> 'Asociado' AND estado <> 'Asociada' AND estado <> 'Facturado' AND estado <> 'Facturada' AND estado <> 'Finalizado' AND estado <> 'Finalizada')";
+            }
+
+            filtro += "AND v.idCliente = " + filtros.cliente;
+        }
+             
         if(filtros.nroEditando && filtros.nroEditando != 0)
             filtro += " AND v.id <> " + filtros.nroEditando;
 

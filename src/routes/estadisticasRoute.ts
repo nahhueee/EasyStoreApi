@@ -48,5 +48,46 @@ router.get('/grafico-ganancias/:id', async (req:Request, res:Response) => {
     }
 });
 
+
+router.post('/totales-venta', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await EstadisticasRepo.ObtenerTotalesVenta(req.body));
+
+    } catch(error:any){
+        let msg = "Error al obtener los datos de totales de ventas.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+router.post('/totales-metodo-pago', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await EstadisticasRepo.TotalesPorMetodoPago(req.body));
+
+    } catch(error:any){
+        let msg = "Error al obtener los datos de totales por método de pago.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+router.post('/totales-comprobante', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await EstadisticasRepo.TotalesPorComprobante(req.body));
+
+    } catch(error:any){
+        let msg = "Error al obtener los datos de totales por comprobante.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+router.post('/totales-proceso', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await EstadisticasRepo.TotalesPorProceso(req.body));
+
+    } catch(error:any){
+        let msg = "Error al obtener los datos de totales por proceso.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 // Export the router
 export default router; 

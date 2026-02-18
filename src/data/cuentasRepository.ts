@@ -266,9 +266,9 @@ class CuentasRepository{
 
             for (const element of entrega.pagos) {
                 //Insertamos los nuevos pagos
-                const insertar = " INSERT INTO ventas_pagos(idVenta, idMetodo, monto) " +
-                                " VALUES(?, ?, ?) ";
-                const parametrosInsert = [entrega.idVenta, element.idMetodo, element.monto];
+                const insertar = " INSERT INTO ventas_pagos(idVenta, idMetodo, monto, idEntrega) " +
+                                " VALUES(?, ?, ?, ?) ";
+                const parametrosInsert = [entrega.idVenta, element.idMetodo, element.monto, idEntrega];
                 await connection.query(insertar, parametrosInsert);
 
                 //Insertamos los detalle de registro
