@@ -2,7 +2,7 @@ export class Producto {
     id : number = 0;
     codigo? : string;
     nombre? : string;
-    empresa?: string;
+    empresa?: number;
     cliente?: number;
     proceso?: number;
     tipo?: TipoProducto;
@@ -220,10 +220,12 @@ export class TallesProducto {
     id:number = 0;
     idProducto:number = 0;
     ubicacion?:number;
+    idTalle:number = 0;
     talle?:string;
     idLineaTalle?:number;
     cantidad?:number;
     precio?:number;
+    codigoBarra?:string;
 
     constructor(data?: any) {
         if (data) {
@@ -234,6 +236,8 @@ export class TallesProducto {
           this.cantidad = data.cantidad;
           this.precio = data.precio;
           this.idLineaTalle = data.idLineaTalle;
+          this.idTalle = data.idTalle;
+          this.codigoBarra = data.codigoBarra;
         }
     }
 }

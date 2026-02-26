@@ -15,6 +15,17 @@ router.post('/obtener', async (req:Request, res:Response) => {
     }
 });
 
+router.get('/validar/:codigo', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await ProductosRepo.ValidarCodigo(req.params.codigo));
+
+    } catch(error:any){
+        let msg = "Error intentando validar el codigo: " + req.params.codigo;
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.get('/obtener-uno/:id', async (req:Request, res:Response) => {
     try{ 
         res.json(await ProductosRepo.ObtenerUno({id: req.params.id}));

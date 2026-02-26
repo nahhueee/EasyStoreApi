@@ -129,7 +129,7 @@ class FacturacionService{
         try {
 
             let datosQR = await VentasRepo.ObtenerQRFactura(idVenta);
-            const datosFacturacion = await ParametrosRepo.ObtenerParametrosFacturacion();
+            const datosFacturacion = await EmpresasRepo.ObtenerEmpresa(datosQR.idEmpresa!);
 
             if(datosQR){
                 datosQR.cuit = datosFacturacion.cuil;

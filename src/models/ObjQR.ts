@@ -12,6 +12,7 @@ export class ObjQR {
     nroDocRec?:number;
     tipoCodAut?:string;
     codAut?:number;
+    idEmpresa?:number;
 
     constructor(data?: any) {
         if (data) {
@@ -28,6 +29,7 @@ export class ObjQR {
           this.nroDocRec = data.nroDocRec;
           this.tipoCodAut = data.tipoCodAut;
           this.codAut = data.codAut;
-        }
+          this.idEmpresa = data.idEmpresa;
+                }
     }
 }

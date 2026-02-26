@@ -114,6 +114,37 @@ class ProductosRepository{
         }
     }
 
+    async ValidarCodigo(codigo){
+        const connection = await db.getConnection();
+
+        try {
+           
+            let consulta = "SELECT idProducto FROM talles_producto WHERE codigo_barra = ?";
+            const rows = await connection.query(consulta, [codigo]);
+            const resultado = rows[0][0];
+
+            if(resultado){
+                let consultaProducto = await ObtenerQuery({id: resultado.idProducto},false);
+                const rowsProducto = await connection.query(consultaProducto);
+
+                if (Array.isArray(rowsProducto)) {
+                    let resultado:Producto = new Producto();
+
+                    const row = rowsProducto[0][0];
+                    resultado = await this.CompletarObjeto(row, true);
+                    return resultado;
+                }
+            }
+
+            return null;
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     async ObtenerParaExcel(filtros:any){
        const connection = await db.getConnection();
         
@@ -207,7 +238,7 @@ class ProductosRepository{
         producto.id = row['id'],
         producto.codigo = row['codigo'],
         producto.nombre = row['nombre'],
-        producto.empresa = row['empresa'],
+        producto.empresa = parseInt(row['empresa']),
         producto.cliente = row['idCliente'],
         producto.proceso = row['idProceso'];
         producto.moldeleria = row['moldeleria'];
@@ -349,8 +380,9 @@ class ProductosRepository{
     async ObtenerTallesProducto(idProducto:number):Promise<any>{
         const connection = await db.getConnection();
         try {
-            const consulta = " SELECT tp.cantidad, tp.costo, tp.precio, tp.talle, tp.idLineaTalle  " +
+            const consulta = " SELECT tp.cantidad, tp.costo, tp.precio, tp.talle, tp.idLineaTalle, t.id idTalle " +
                             " FROM talles_producto tp " +
+                            " INNER JOIN talles t ON tp.talle = t.descripcion AND  tp.idLineaTalle = t.idLineaTalle " +
                             " WHERE tp.idProducto = ? " +
                             " ORDER BY tp.ubicacion ASC";
 
@@ -366,7 +398,8 @@ class ProductosRepository{
                         precio: parseFloat(row['precio']),
                         talle: row['talle'],
                         ubicacion: row['ubicacion'],
-                        idLineaTalle: row['idLineaTalle']
+                        idLineaTalle: row['idLineaTalle'],
+                        idTalle: row['idTalle']
                     }));
                 }
             }
@@ -386,11 +419,7 @@ class ProductosRepository{
     async Agregar(producto:Producto): Promise<string>{
         const connection = await db.getConnection();
         try {
-            let existe = await ValidarExistencia(connection, producto, false);
-            if(existe)//Verificamos si ya existe un producto con el mismo codigo
-                return "Ya existe un producto con el mismo código y color.";
-
-                //Iniciamos una transaccion
+            //Iniciamos una transaccion
             await connection.beginTransaction();
 
             //#region Insert Producto
@@ -460,7 +489,8 @@ class ProductosRepository{
                                 idSubtipo = ?,
                                 idGenero = ?,
                                 moldeleria = ?,
-                                topeDescuento = ?
+                                topeDescuento = ?,
+                                idMaterial = ?
                                 WHERE id = ?`;
 
             const parametros = [producto.codigo!.toUpperCase(),
@@ -474,6 +504,7 @@ class ProductosRepository{
                                 producto.genero,
                                 producto.moldeleria,
                                 producto.topeDescuento,
+                                producto.material,
                                 producto.id
                             ];
             
@@ -711,9 +742,9 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false):Promise<string
         if(filtros.material != null && filtros.material != 0){
             filtro += " AND p.idMaterial = " + filtros.material + " ";
         }
-        // if(filtros.color != null && filtros.color != 0){
-        //     filtro += " AND p.idColor = " + filtros.color + " ";
-        // }
+        if(filtros.color != null && filtros.color != 0){
+            filtro += " AND p.idColor = " + filtros.color + " ";
+        }
         if(filtros.temporada != null && filtros.temporada != 0){
             filtro += " AND p.idTemporada = " + filtros.temporada + " ";
         }
@@ -885,10 +916,10 @@ async function ObtenerRelacionados(codigo:string, idProducto:number):Promise<any
 
 async function ValidarExistencia(connection, data:any, modificando:boolean):Promise<any>{
     try {
-        let consulta = " SELECT id FROM productos WHERE fechaBaja IS NULL AND codigo = ? AND idColor = ? ";
+        let consulta = " SELECT id FROM productos WHERE fechaBaja IS NULL AND codigo = ? ";
         if(modificando) consulta += " AND id <> ? ";
         
-        const parametros = [data.codigo.toUpperCase(), data.color.id, data.id];
+        const parametros = [data.codigo.toUpperCase(), data.id];
         const rows = await connection.query(consulta,parametros);
 
         if(rows[0].length > 0) return true;
@@ -936,10 +967,13 @@ async function ObtenerUltimoProducto(connection):Promise<number>{
 
 async function InsertTalleProducto(connection, elemento):Promise<void>{
     try {
-        const consulta = " INSERT INTO talles_producto(idProducto, idLineaTalle, talle, ubicacion, precio) " +
-                         " VALUES(?, ?, ?, ?, ?) ";
+        const consulta = " INSERT INTO talles_producto(idProducto, idLineaTalle, talle, ubicacion, precio, cantidad, codigo_barra) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?) ";
 
-        const parametros = [elemento.idProducto, elemento.idLineaTalle, elemento.talle, elemento.ubicacion, elemento.precio];
+        
+        if(!elemento.cantidad || elemento.cantidad == "") elemento.cantidad = 0;
+
+        const parametros = [elemento.idProducto, elemento.idLineaTalle, elemento.talle, elemento.ubicacion, elemento.precio, elemento.cantidad, elemento.codigoBarra];
         await connection.query(consulta, parametros);
         
     } catch (error) {

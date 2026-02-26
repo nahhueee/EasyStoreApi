@@ -170,6 +170,20 @@ class MiscRepository{
         }
     }
 
+    async ObtenerTalles(){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.execute<RowDataPacket[]>('SELECT * FROM talles');
+            return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     async CondicionesIvaSelector(){
         const connection = await db.getConnection();
         

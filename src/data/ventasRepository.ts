@@ -441,7 +441,7 @@ class VentasRepository{
         const connection = await db.getConnection();
 
         try {
-            const consulta = " SELECT vf.cae, vf.ticket, vf.tipoFactura, vf.neto, vf.iva, vf.dni, vf.tipodni, vf.ptoVenta, v.fecha " +
+            const consulta = " SELECT vf.cae, vf.ticket, vf.tipoFactura, vf.neto, vf.iva, vf.dni, vf.tipodni, vf.ptoVenta, v.fecha, v.idEmpresa " +
                              " FROM ventas_factura vf " +
                              " INNER JOIN ventas v on v.id = vf.idVenta " +
                              " WHERE vf.idVenta = ? "
@@ -461,7 +461,8 @@ class VentasRepository{
                 tipoDocRec : row['tipodni'],
                 nroDocRec : row['dni'],
                 tipoCodAut : "E",
-                codAut : row['cae']
+                codAut : row['cae'],
+                idEmpresa : row['idEmpresa']
             })
 
             return objQR;

@@ -218,9 +218,9 @@ CREATE TABLE etiquetas (
 DROP TABLE IF EXISTS productos;
 CREATE TABLE productos (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    codigo VARCHAR(30),
+    codigo VARCHAR(4),
     nombre VARCHAR(100),
-    empresa VARCHAR(50),
+    idEmpresa INT,
     idProceso INT,
     idCliente INT,
     idTipo INT,
@@ -230,7 +230,7 @@ CREATE TABLE productos (
     idColor INT,
     idTemporada INT,
     moldeleria INT DEFAULT 0,
-    topeDescuento DECIMAL(5,2) DEFAULT 0,
+    topeDescuento DECIMAL(10,2) DEFAULT 0,
     imagen VARCHAR(300),
     fechaBaja DATE
 );
@@ -297,6 +297,13 @@ CREATE TABLE colores (
     hexa VARCHAR(10)
 );
 
+DROP TABLE IF EXISTS talles;
+CREATE TABLE talles (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(5),
+    idLineaTalle INT NOT NULL
+)
+
 DROP TABLE IF EXISTS materiales;
 CREATE TABLE materiales (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -344,7 +351,8 @@ CREATE TABLE talles_producto (
     ubicacion INT,
     cantidad INT DEFAULT 0,
     precio DECIMAL(10,2),
-    costo DECIMAL(10,2)
+    costo DECIMAL(10,2),
+    codigo_barra VARCHAR(13)
 );
 
 DROP TABLE IF EXISTS condiciones_iva;
@@ -494,7 +502,7 @@ INSERT INTO puntos_venta(id, descripcion) VALUES
 (5, 'CON NOTA DE EMPAQUE');
 
 INSERT INTO empresas(id, razonSocial, condicion, abrevCondicion, puntoVta, cuil, direccion) VALUES
-(1, 'SUCEDE SRL', 'Responsable Inscripto', 'RI', 1, 27411750723, 'Mi direccion 285'),
+(1, 'SUCEDE SRL', 'Responsable Inscripto', 'RI', 1, 30714907626, 'Mi direccion 285'),
 (2, 'GABEL MARIELA', 'Monotributista', 'MONO',  1, 27411750723, 'Mi direccion 285'),
 (3, 'OMAR CHAZA', 'Monotributista', 'MONO', 1, 27411750723, 'Mi direccion 285');
 
