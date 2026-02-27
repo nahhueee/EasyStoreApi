@@ -93,6 +93,17 @@ router.get('/empresas', async (req:Request, res:Response) => {
     }
 });
 
+router.get('/obtener-empresa/:idEmpresa', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await MiscRepo.ObtenerEmpresa(req.params.idEmpresa));
+
+    } catch(error:any){
+        let msg = "Error al obtener la empresa.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.get('/lineas-talle', async (req:Request, res:Response) => {
     try{ 
         res.json(await MiscRepo.ObtenerLineasTalle());

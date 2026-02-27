@@ -117,6 +117,20 @@ class MiscRepository{
         }
     }
 
+    async ObtenerEmpresa(idEmpresa){
+        const connection = await db.getConnection();
+        
+        try {
+            const [rows] = await connection.query('SELECT * FROM empresas WHERE id = ?', [idEmpresa]);
+           return [rows][0][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     async TemporadasSelector(){
         const connection = await db.getConnection();
         

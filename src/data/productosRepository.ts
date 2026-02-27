@@ -750,6 +750,9 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false):Promise<string
         }
         if (filtros.id != null && filtros.id != "") 
             filtro += " AND p.id = "+ filtros.id + "";
+        
+        if (pedidos == true) 
+            filtro += " AND v.idProceso = 6";
         // #endregion
 
         // #region ORDENAMIENTO
@@ -811,6 +814,7 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false):Promise<string
                         SUM(t9) AS t9,
                         SUM(t10) AS t10
                     FROM ventas_productos vp
+                    INNER JOIN ventas v ON vp.idVenta = v.id
                     INNER JOIN productos p ON p.id = vp.idProducto
                     `
                 }
