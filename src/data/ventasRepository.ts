@@ -1,11 +1,13 @@
 import db from '../db';
-import { PagosVenta, ProductosVenta, ServiciosVenta, Venta } from '../models/Venta';
+import { NotaCreditoVenta, PagosVenta, ProductosVenta, ServiciosVenta, Venta } from '../models/Venta';
 import { ObjQR } from '../models/ObjQR';
 import { FacturaVenta } from '../models/FacturaVenta';
 import { MiscRepo } from './miscRepository';
 import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader } from 'mysql2';
 import { Cliente } from '../models/Cliente';
+import { query } from 'express';
+import { TipoComprobante } from '../models/objFacturar';
 const moment = require('moment');
 
 class VentasRepository{
@@ -98,10 +100,6 @@ class VentasRepository{
         venta.punto = row['punto'];
         venta.fecha = moment(row['fecha']).toDate();
         venta.hora = row['hora'];
-        // venta.idCliente = row['idCliente'];
-        // venta.cliente = row['cliente'];
-        // venta.condCliente = row['condicionIva'];
-        // venta.clienteRazonSocial = row['clienteRazonSocial'];  
         venta.idListaPrecio = row['idLista'];
         venta.idEmpresa = row['idEmpresa'];
         venta.empresa = row['empresa'];
@@ -133,8 +131,9 @@ class VentasRepository{
         venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
         venta.productos = await ObtenerProductosVenta(connection, venta.id!, venta.idProceso!);
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
+        venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!);
 
-        return venta;
+       return venta;
     }
 
     async ObtenerProximoNroProceso(idProceso){
@@ -168,7 +167,7 @@ class VentasRepository{
     //#endregion
 
     //#region ABM
-    async Agregar(venta:Venta): Promise<string>{
+    async Agregar(venta:Venta, desdeNotas:boolean): Promise<string>{
         const connection = await db.getConnection();
         
         try {
@@ -225,8 +224,12 @@ class VentasRepository{
                     await InsertProductoVenta(connection, element);
                     const finalizandoCotizacion = venta.idProceso == 2 && venta.estado == "Finalizada";
 
-                    if(venta.factura || finalizandoCotizacion)
-                        await ActualizarInventario(connection, element, "-")
+                    if(desdeNotas){
+                        await ActualizarInventario(connection, element, "+");
+                    }else{
+                        if(venta.factura || finalizandoCotizacion)
+                            await ActualizarInventario(connection, element, "-");
+                    }
                 }
             }
          
@@ -701,8 +704,9 @@ async function ObtenerProductosVenta(connection, idVenta:number, idProceso:numbe
 
 async function ObtenerFacturaVenta(connection, idVenta:number){
     try {
-        const consulta = "SELECT * FROM ventas_factura " + 
-                         "WHERE idVenta = ?"
+        const consulta = " SELECT vf.*, tc.cod_arca desComprobante FROM ventas_factura vf " + 
+                         " INNER JOIN tipos_comprobantes tc ON tc.id = vf.tipoFactura " +
+                         " WHERE idVenta = ? "
 
         const [rows] = await connection.query(consulta, [idVenta]);
         if(rows.length==0) return undefined;
@@ -713,17 +717,51 @@ async function ObtenerFacturaVenta(connection, idVenta:number){
                 cae: row['cae'], 
                 caeVto: row['caeVto'], 
                 ticket: row['ticket'], 
-                tipoFactura: row['tipoFactura'], 
+                tipoComprobante: row['tipoFactura'], 
                 neto: parseFloat(row['neto']), 
                 iva: parseFloat(row['iva']), 
                 dni: row['dni'],
                 tipoDni: row['tipoDni'],
                 ptoVenta: row['ptoVenta'],
                 condReceptor: row['condReceptor'],
+                desComprobante: row['desComprobante'],
+                comprobanteAsociado: {
+                    tipo: row['tipoRelacionado'],
+                    numero: row['ticketRelacionado'],
+                    puntoVenta: row['ptoVentaRelacionado'],
+                },
             }
         );
-        
+
         return factura;
+
+    } catch (error) {
+        throw error; 
+    }
+}
+
+async function ObtenerNotasVenta(connection, nroProceso:number){
+    try {
+        const consulta = " SELECT id, nroProceso, total FROM ventas " + 
+                         " WHERE nroRelacionado = ? AND idProceso = 3 "
+
+        const [rows] = await connection.query(consulta, [nroProceso]);
+        const notas:NotaCreditoVenta[] = [];
+
+        if (Array.isArray(rows)) {
+            for (let i = 0; i < rows.length; i++) { 
+                const row = rows[i];
+                
+                const nota:NotaCreditoVenta = new NotaCreditoVenta();
+                nota.idNotaVenta = row['id'];
+                nota.nroProceso = row['nroProceso'];
+                nota.total = row['total'];
+
+                notas.push(nota);
+              }
+        }
+
+        return notas;
 
     } catch (error) {
         throw error; 
@@ -831,10 +869,27 @@ async function InsertPagoVenta(connection, pago):Promise<void>{
 
 async function InsertFacturaVenta(connection, factura):Promise<void>{
     try {
-        const consulta = " INSERT INTO ventas_factura(idVenta, cae, caeVto, ticket, tipoFactura, neto, iva, dni, tipoDni, ptoVenta, condReceptor) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
+        const consulta = " INSERT INTO ventas_factura(idVenta, cae, caeVto, ticket, tipoFactura, neto, iva, dni, tipoDni, ptoVenta, condReceptor, tipoRelacionado, ticketRelacionado, ptoVentaRelacionado) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
 
-        const parametros = [factura.idVenta, factura.cae, moment(factura.caeVto).format('YYYY-MM-DD'), factura.ticket, factura.tipoFactura, factura.neto, factura.iva, factura.dni, factura.tipoDni, factura.ptoVenta, factura.condReceptor];
+        const asociado = factura.comprobanteAsociado ?? {};
+
+        const parametros = [
+        factura.idVenta,
+        factura.cae,
+        moment(factura.caeVto).format('YYYY-MM-DD'),
+        factura.ticket,
+        factura.tipoComprobante,
+        factura.neto,
+        factura.iva,
+        factura.dni,
+        factura.tipoDni,
+        factura.ptoVenta,
+        factura.condReceptor,
+        asociado.tipo ?? null,
+        asociado.numero ?? null,
+        asociado.puntoVenta ?? null
+        ];
         await connection.query(consulta, parametros);
 
     } catch (error) {

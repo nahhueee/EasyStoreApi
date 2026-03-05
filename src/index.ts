@@ -11,11 +11,20 @@ const server = http.createServer(app);
 
 //setings
 app.set('port', process.env.Port || config.port);
-app.use(morgan("dev"));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'upload')));
+
+if(!config.produccion){
+    app.use(morgan("dev"));
+}else{
+    app.use(
+        morgan("combined", {
+        skip: (req, res) => res.statusCode < 400
+        })
+  );
+}
 
 //setings SocketIo
 const io = socketIo(server, {
@@ -107,5 +116,10 @@ app.get('/easystore', (req, res) => {
 app.use((_req, res) => {
     res.status(404).send('No se encontró el recurso solicitado.');
 });
+
+
+//Manejo y logs de errores
+import { errorMiddleware } from './middlewares/errorMiddleware';
+app.use(errorMiddleware);
   
 

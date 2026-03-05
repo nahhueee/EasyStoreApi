@@ -4,125 +4,188 @@ import {ParametrosRepo} from '../data/parametrosRepository';
 import { Afip } from "afip.ts";
 import fs from "fs";
 import path from "path";
-import { ObjFacturar } from "../models/objFacturar";
+import { ObjFacturar, TipoComprobante } from "../models/objFacturar";
 import config from '../conf/app.config';
 import { VentasRepo } from '../data/ventasRepository';
 import moment from "moment";
 import { EmpresasRepo } from "../data/empresasRepository";
+import { AppError } from "../logger/AppError";
+import { CodigoError } from "../logger/CodigosError";
 const QRCode = require('qrcode');
 
 const afipInstances: Record<string, any> = {};
 
+
 class FacturacionService{
     async Facturar(objFactura:ObjFacturar){
+        const datosFacturacion = await EmpresasRepo.ObtenerEmpresa(objFactura.idEmpresa!);
+        const afip = await ObtenerInstanciaAfip(datosFacturacion.cuil);
 
-        try {
-            const datosFacturacion = await EmpresasRepo.ObtenerEmpresa(objFactura.idEmpresa!);
-            const afip = await getAfipInstance(datosFacturacion.cuil);
-           
-            //Verificamos el estado del servidor
-            const serverStatus = await afip.electronicBillingService.getServerStatus();
-            if(serverStatus && serverStatus.FEDummyResult.AppServer == "OK" && serverStatus.FEDummyResult.DbServer == "OK" && serverStatus.FEDummyResult.AuthServer == "OK")
-            {
-                //Tipos de comprobante
-                // 1 → Factura A
-                // 6 → Factura B
-                // 11 → Factura C
-
-                // Tipos de IVA
-                // 3 → 0%
-                // 4 → 10,5%
-                // 5 → 21%
-                // 6 → 27%
-
-                // Factura A discrimina IVA
-                // Factura B no discrimina IVA pero es necesario pasar el IVA incluido en ImpIVA
-                // Factura C no necesita de IVA en ningun sentido, neto será igual al total
-                
-                const date = new Date(Date.now() - ((new Date()).getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-
-                let data : any = {
-                    CantReg: 1, // Cantidad de comprobantes a registrar
-                    PtoVta: datosFacturacion.puntoVta, // Punto de venta
-                    CbteTipo: objFactura.tipoFactura, // Tipo de comprobante (ver tipos disponibles)
-                    Concepto: 1, // Concepto del Comprobante: (1)Productos, (2)Servicios, (3)Productos y Servicios
-                    DocTipo: objFactura.docTipo, // Tipo de documento del comprador (99 consumidor final, ver tipos disponibles)
-                    DocNro: objFactura.docNro, // Número de documento del comprador (0 consumidor final)
-                    CbteDesde: 1, // Número de comprobante o numero del primer comprobante en caso de ser mas de uno
-                    CbteHasta: 1, // Número de comprobante o numero del último comprobante en caso de ser mas de uno
-                    CbteFch: date.replace(/-/g, ""), // (Opcional) Fecha del comprobante (yyyymmdd) o fecha actual si es nulo
-                    ImpTotal: objFactura.total, // Importe total del comprobante
-                    ImpTotConc: 0, // Importe neto no gravado
-                    ImpNeto: objFactura.neto, // Importe neto gravado
-                    ImpOpEx: 0, // Importe exento de IVA
-                    ImpIVA: objFactura.iva, //Importe total de IVA
-                    CondicionIVAReceptorId: objFactura.condReceptor, //Condicion frente al iva del receptor
-                    ImpTrib: 0, //Importe total de tributos
-                    MonId: "PES", //Tipo de moneda usada en el comprobante (ver tipos disponibles)('PES' para pesos argentinos)
-                    MonCotiz: 1, // Cotización de la moneda usada (1 para pesos argentinos)
-                };
-                console.log(data)
-
-                // Solo agregamos el campo `Iva` si es una Factura A o B
-                if (objFactura.tipoFactura === 1 || objFactura.tipoFactura === 6) {
-                    data.Iva = [
-                    {
-                        Id: 5, // 21%
-                        BaseImp: objFactura.neto,
-                        Importe: objFactura.iva
-                    }
-                    ];
-                }
-                const res = await afip.electronicBillingService.createNextVoucher(data);
-
-                //Detalle de la respuesta
-                const detalle = res.response?.FeDetResp?.FECAEDetResponse[0];
-                const errores = res.response?.Errors?.Err || [];
-
-                //Resultado general
-                const resultado = detalle?.Resultado;
-                if (resultado === "A") {
-                    const lastVoucher = await afip.electronicBillingService.getLastVoucher(datosFacturacion.puntoVta!, objFactura.tipoFactura!); //Obtenemos el nro del ultimo comprobante creado
-
-                    return {
-                        estado: "Aprobado",
-                        cae: detalle.CAE,
-                        caeVto:  moment(detalle.CAEFchVto, "YYYYMMDD"),
-                        ticket: lastVoucher.CbteNro,
-                        ptoVenta: datosFacturacion.puntoVta                        
-                    }; 
-                } else {
-                    const observaciones = detalle?.Observaciones || [];
-                    let mensajes: string[] = [];
-
-                    if(observaciones && observaciones.Obs){
-                        mensajes = [
-                            ...observaciones.Obs.map(o => `${o.Code}: ${o.Msg}`),
-                        ];
-    
-                        //logeamos observaciones
-                        if (observaciones.Obs && Array.isArray(observaciones.Obs)) {
-                            observaciones.Obs.forEach((obs: any) => {
-                              loggerFacturacion.error(`Observación ${obs.Code}: ${obs.Msg}`);
-                            });
-                        }
-                    }else
-                    {
-                        //logeamos errores
-                        errores.forEach(err => {
-                            loggerFacturacion.error(`Error ${err.Code}: ${err.Msg}`);
-                        });                    
-                    }
-                    
-                    return { estado: "Rechazado"};
-                }
-
-            }else{
-                logger.error('Ocurrió un error al intentar conectar con los servicios de arca.');
-            }
-        } catch (error) {
-            throw error;
+        console.log(objFactura)
+        console.log(datosFacturacion)
+        //Verificamos el estado del servidor ARCA
+        const serverStatus = await afip.electronicBillingService.getServerStatus();
+        if (
+        !serverStatus ||
+        serverStatus.FEDummyResult.AppServer !== 'OK' ||
+        serverStatus.FEDummyResult.DbServer !== 'OK' ||
+        serverStatus.FEDummyResult.AuthServer !== 'OK'
+        ) {
+            throw new AppError(
+                CodigoError.AFIP_NO_DISPONIBLE,
+                'Servicio de ARCA no disponible.',
+                503
+            );
         }
+
+        //Tipos de comprobante
+        // 1 → Factura A
+        // 6 → Factura B
+        // 11 → Factura C
+
+        // Tipos de IVA
+        // 3 → 0%
+        // 4 → 10,5%
+        // 5 → 21%
+        // 6 → 27%
+        
+        const date = new Date(Date.now() - ((new Date()).getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+
+        if (requiereAsociacion(objFactura.tipoComprobante!) && !objFactura.comprobanteAsociado) {
+            throw new AppError(CodigoError.VALIDACION, 'Las notas requieren comprobante asociado',400);
+        }
+
+        // Factura A discrimina IVA
+        // Factura B no discrimina IVA pero es necesario pasar el IVA incluido en ImpIVA
+        // Factura C no necesita de IVA en ningun sentido, neto será igual al total
+        let neto = 0;
+        let iva = 0;
+
+        const discriminaIVA = [
+            TipoComprobante.FACTURA_A,
+            TipoComprobante.FACTURA_B,
+            TipoComprobante.NC_A,
+            TipoComprobante.NC_B,
+            TipoComprobante.ND_A,
+            TipoComprobante.ND_B
+        ].includes(objFactura.tipoComprobante!);
+
+        if(discriminaIVA){
+            neto = Math.round((objFactura.total! / 1.21) * 100) / 100;
+            iva = Math.round((objFactura.total! - neto) * 100) / 100;
+        }else{
+            neto = objFactura.total!;
+        }
+
+        let data : any = {
+            CantReg: 1, // Cantidad de comprobantes a registrar
+            PtoVta: datosFacturacion.puntoVta, // Punto de venta
+            CbteTipo: objFactura.tipoComprobante, // Tipo de comprobante (ver tipos disponibles)
+            Concepto: 1, // Concepto del Comprobante: (1)Productos, (2)Servicios, (3)Productos y Servicios
+            DocTipo: objFactura.docTipo, // Tipo de documento del comprador (99 consumidor final, ver tipos disponibles)
+            DocNro: objFactura.docNro, // Número de documento del comprador (0 consumidor final)
+            CbteDesde: 1, // Número de comprobante o numero del primer comprobante en caso de ser mas de uno
+            CbteHasta: 1, // Número de comprobante o numero del último comprobante en caso de ser mas de uno
+            CbteFch: date.replace(/-/g, ""), // (Opcional) Fecha del comprobante (yyyymmdd) o fecha actual si es nulo
+            ImpTotal: objFactura.total, // Importe total del comprobante
+            ImpTotConc: 0, // Importe neto no gravado
+            ImpNeto: neto, // Importe neto gravado
+            ImpOpEx: 0, // Importe exento de IVA
+            ImpIVA: iva, //Importe total de IVA
+            CondicionIVAReceptorId: objFactura.condReceptor, //Condicion frente al iva del receptor
+            ImpTrib: 0, //Importe total de tributos
+            MonId: "PES", //Tipo de moneda usada en el comprobante (ver tipos disponibles)('PES' para pesos argentinos)
+            MonCotiz: 1, // Cotización de la moneda usada (1 para pesos argentinos)
+        };
+
+        // Solo agregamos el campo `Iva` si es una Factura/Nota A o B
+        if (discriminaIVA) {
+            data.Iva = [
+            {
+                Id: 5, // 21%
+                BaseImp: neto,
+                Importe: iva
+            }
+            ];
+        }
+
+        //Si estamos haciendo Nota credito/debito
+        if (objFactura.comprobanteAsociado) {
+            data.CbtesAsoc = [
+                {
+                Tipo: objFactura.comprobanteAsociado.tipo,
+                PtoVta: objFactura.comprobanteAsociado.puntoVenta,
+                Nro: objFactura.comprobanteAsociado.numero
+                }
+            ];
+        }
+
+        let res;
+        try {
+            res = await afip.electronicBillingService.createNextVoucher(data);
+        } catch (err: any) {
+            if (err?.code === 'ECONNRESET' || err?.message?.includes('socket')) {
+                throw new AppError(
+                    CodigoError.AFIP_TIMEOUT, 'ARCA no respondió (timeout)', 504,
+                    { modulo: 'FacturacionService', metodo: 'createNextVoucher' },
+                    err
+                );
+            }else{
+                throw new AppError(
+                    CodigoError.AFIP_ERROR, 'Ocurrió un error al intentar generar el comprobante', 500,
+                    { modulo: 'FacturacionService', metodo: 'createNextVoucher' },
+                    err
+                );
+            }
+        }
+
+        //Detalle de la respuesta
+        const detalle = res.response?.FeDetResp?.FECAEDetResponse?.[0];
+
+        //COMPROBANTE APROBADO
+        if (detalle?.Resultado === 'A') {
+            const lastVoucher = await afip.electronicBillingService.getLastVoucher(
+                datosFacturacion.puntoVta!,
+                objFactura.tipoComprobante!
+            );
+
+            return {
+                estado: 'Aprobado',
+                cae: detalle.CAE,
+                caeVto: moment(detalle.CAEFchVto, 'YYYYMMDD'),
+                ticket: lastVoucher.CbteNro,
+                ptoVenta: datosFacturacion.puntoVta,
+                neto,
+                iva
+            };
+        }
+
+        //COMPROBANTE RECHAZADO
+        const observacionesAfip = detalle?.Observaciones?.Obs ?? [];
+        const erroresAfip = res.response?.Errors?.Err ?? [];
+
+        const mensajes = [
+        ...observacionesAfip.map(o => `OBS ${o.Code}: ${o.Msg}`),
+        ...erroresAfip.map(e => `ERR ${e.Code}: ${e.Msg}`)
+        ];
+
+        if (mensajes.length === 0) {
+            mensajes.push('ARCA rechazó el comprobante sin detalles');
+        };
+
+        //logeamos mensajes por separado
+        mensajes.forEach(m => loggerFacturacion.error(m));
+
+        //Devolvemos y logeamos error tecnico
+        throw new AppError(
+            CodigoError.AFIP_RECHAZO, 'El comprobante fue rechazado por ARCA', 422,
+            {
+                modulo: 'FacturacionService',
+                metodo: 'createNextVoucher',
+                detallesAfip: mensajes,
+                resultadoAfip: detalle?.Resultado
+            }
+        );
     }
 
     async ObtenerQRFactura(idVenta){
@@ -143,46 +206,57 @@ class FacturacionService{
             return null;
 
         } catch (error) {
-            throw error;
+            throw new AppError(
+                CodigoError.QR_ERROR,
+                'No se pudo generar el QR de la factura.', 500,
+                { modulo: 'FacturacionService', metodo: 'ObtenerQRFactura' }
+            );
         }
     }
 }
 
 
-async function getAfipInstance(cuilTitular): Promise<Afip> {
-    // const dniCliente = await ParametrosRepo.ObtenerParametros('dni');
+async function ObtenerInstanciaAfip(cuilTitular): Promise<Afip> {
+    // Reutilizar instancia ARCA
+    if (afipInstances[cuilTitular]) {
+        return afipInstances[cuilTitular];
+    }
 
-    //verificamos que el usuario este habilitado para facturar
-    // const habilitado = await AdminServ.ObtenerHabilitacion(dniCliente);
-    // if (!habilitado) throw new Error(`Cliente inexistente o inhabilitado para generar facturas.`);
+    //#region Certificados y Token TA
+    const certPath = path.resolve(__dirname, '../certs/cert');
+    const keyPath  = path.resolve(__dirname, '../certs/key');
 
-    //Verificamos el cuit del titular
-    if(!cuilTitular || cuilTitular=="") throw new Error(`No se encontró en la base de datos CUIL válido.`);
+    if (!fs.existsSync(certPath)) throw new AppError(CodigoError.CERTIFICADOS, 'No se encontró archivo cert',400);
+    if (!fs.existsSync(keyPath)) throw new AppError(CodigoError.CERTIFICADOS, 'No se encontró archivo key',400);
 
-    //Verificamos que existan los archivos de clave y certificado
-    const cert = fs.readFileSync(path.resolve(__dirname, '../certs/', "cert"), "utf8");
-    const key = fs.readFileSync(path.resolve(__dirname, '../certs/', "key"), "utf8");
+    const cert = fs.readFileSync(certPath, 'utf8').trim();
+    const key  = fs.readFileSync(keyPath, 'utf8').trim();
 
     const ticketPath = path.resolve(__dirname, `../tokens/TA-${cuilTitular}.json`);
     fs.mkdirSync(path.dirname(ticketPath), { recursive: true });
-
-    // Reutiliza instancia si ya existe
-    if (afipInstances[cuilTitular]) return afipInstances[cuilTitular];
-    
-    if(key.trim().length === 0) throw new Error(`No se encontró archivo key.`);
-    if(cert.trim().length === 0) throw new Error(`No se encontró archivo cert.`);
+    //#endregion
 
     const afip = new Afip({
-        key: key,
-        cert: cert,
+        key,
+        cert,
         cuit: cuilTitular,
         production: config.produccion,
         ticketPath
     });
 
     afipInstances[cuilTitular] = afip;
-
     return afip;
+}
+
+function requiereAsociacion(tipo: TipoComprobante): boolean {
+  return [
+    TipoComprobante.NC_A,
+    TipoComprobante.NC_B,
+    TipoComprobante.NC_C,
+    TipoComprobante.ND_A,
+    TipoComprobante.ND_B,
+    TipoComprobante.ND_C
+  ].includes(tipo);
 }
 
 export const FacturacionServ = new FacturacionService();

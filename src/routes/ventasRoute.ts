@@ -65,7 +65,7 @@ router.get('/verificar-nota/:nroNota', async (req:Request, res:Response) => {
 //#region ABM
 router.post('/agregar', async (req:Request, res:Response) => {
     try{ 
-        res.json(await VentasRepo.Agregar(req.body));
+        res.json(await VentasRepo.Agregar(req.body.venta, req.body.desdeNotas));
 
     } catch(error:any){
         let msg = "Error al intentar agregar la venta.";
@@ -120,24 +120,19 @@ router.put('/aprobar', async (req:Request, res:Response) => {
 //#endregion
 
 //#region FACTURA
-router.get('/obtenerQR/:id', async (req:Request, res:Response) => {
+router.get('/obtenerQR/:id', async (req:Request, res:Response, next) => {
     try{ 
         res.json(await FacturacionServ.ObtenerQRFactura(req.params.id));
-    } catch(error:any){
-        let msg = "Error al intentar obtener el qr de la factura.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
+    } catch(error){
+        next(error);
     }
 });
 
-router.post('/facturar', async (req:Request, res:Response) => {
+router.post('/facturar', async (req:Request, res:Response, next) => {
     try{ 
         res.json(await FacturacionServ.Facturar(req.body));
-
-    } catch(error:any){
-        let msg = "Error al intentar facturar el comprobante.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
+    } catch(error){
+        next(error);
     }
 });
 //#endregion

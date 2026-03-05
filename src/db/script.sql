@@ -364,8 +364,8 @@ CREATE TABLE condiciones_iva (
 DROP TABLE IF EXISTS tipos_comprobantes;
 CREATE TABLE tipos_comprobantes (
     id INT  UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    cod_arca VARCHAR(2),
-    descripcion VARCHAR(10)
+    cod_arca VARCHAR(5),
+    descripcion VARCHAR(20)
 );
 
 DROP TABLE IF EXISTS reglas_comprobante;

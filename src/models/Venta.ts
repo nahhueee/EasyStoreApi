@@ -33,6 +33,7 @@ import { Color, TallesProducto } from "./Producto";
     servicios?:ServiciosVenta[];
     pagos?:PagosVenta[];
     factura?:FacturaVenta;
+    notas?:NotaCreditoVenta[];
 
     nroRelacionado?:number;
     tipoRelacionado?:string;
@@ -130,6 +131,13 @@ import { Color, TallesProducto } from "./Producto";
         this.monto = data
       }
     }
+  }
+  
+  
+  export class NotaCreditoVenta{
+    idNotaVenta:number = 0;
+    nroProceso:number = 0;
+    total:number = 0;
   }
   
   
