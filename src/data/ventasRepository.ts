@@ -107,7 +107,7 @@ class VentasRepository{
         venta.tipoComprobante = row['tipoComprobante'];
         venta.idTipoDescuento = row['idTDescuento'];
         venta.tipoDescuento = row['tipoDescuento'];
-        venta.descuento = parseInt(row['descuento']);
+        venta.descuento = parseFloat(row['descuento']);
         venta.codPromocion = row['codPromocion'];
         venta.redondeo = parseFloat(row['redondeo']);
         venta.total = parseFloat(row['total']);
@@ -571,7 +571,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
                 " WHERE 1 = 1 " +
                 filtro +
                 " GROUP BY v.id " +
-                " ORDER BY v.id DESC " +
+                " ORDER BY v.fecha DESC, v.id DESC " +
                 paginado +
                 endCount;
         return query;
