@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 
-export async function crearExcelResultados(data: any[]) {
+export async function crearExcelProductos(data: any[]) {
   // 1. Crear nuevo libro de trabajo
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Resultados');
@@ -126,7 +126,6 @@ export async function crearExcelResultados(data: any[]) {
       
       // Formatear números para las cantidades (columnas I-S)
       if (colIndex >= 8 && colIndex <= 18) {
-        //cell.numFmt = '_-* #,##0_-;_-* #,##0_-;_-* "–"_-;_-@_-';
         cell.numFmt = '#,##0;-#,##0;"–"';
         cell.alignment = { horizontal: 'center' };
       }

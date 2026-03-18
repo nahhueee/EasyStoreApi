@@ -4,13 +4,263 @@ import { ObjQR } from '../models/ObjQR';
 import { FacturaVenta } from '../models/FacturaVenta';
 import { MiscRepo } from './miscRepository';
 import { ProductosRepo } from './productosRepository';
-import { ResultSetHeader } from 'mysql2';
+import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
 import { query } from 'express';
 import { TipoComprobante } from '../models/objFacturar';
 const moment = require('moment');
 
 class VentasRepository{
+
+    //#region REPORTE
+    async ObtenerReporteAcumulado(filtros:any){
+        const connection = await db.getConnection();
+        let filtro:string = "";
+
+        if (filtros.fechas?.length === 2) {
+            const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+            const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
+
+            filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+        }
+        if(filtros.idProceso != 0){
+            filtro += " AND v.idProceso = " + filtros.idProceso;
+        }
+        if(filtros.cliente != 0){
+            filtro += " AND v.idCliente = " + filtros.cliente;
+        }
+        if(filtros.nroProceso && filtros.nroProceso != 0){
+            filtro += " AND v.nroProceso = " + filtros.nroProceso;
+        }
+
+        try {
+            //Obtengo la query segun los filtros
+            let query = "SELECT mp.descripcion AS metodo_pago, SUM(vp.monto) AS total_acumulado " +
+            " FROM ventas v " +
+            " INNER JOIN ventas_pagos vp ON vp.idVenta = v.id " +
+            " INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo " +
+            " WHERE  v.fechaBaja IS NULL " +
+            " AND (v.estado = 'Finalizada' OR v.estado = 'Facturada') " +
+            filtro +
+            " GROUP BY mp.id, mp.descripcion " +
+            " ORDER BY total_acumulado DESC";
+
+            const [rows] = await connection.query<RowDataPacket[]>(query);
+            return rows.map(r => ({ ...r }));
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async ObtenerReporteVentas(filtros:any){
+        const connection = await db.getConnection();
+        let filtro:string = "";
+
+        if (filtros.fechas?.length === 2) {
+            const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+            const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
+
+            filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+        }
+        if(filtros.idProceso != 0){
+            filtro += " AND v.idProceso = " + filtros.idProceso;
+        }
+        if(filtros.cliente != 0){
+            filtro += " AND v.idCliente = " + filtros.cliente;
+        }
+        if(filtros.nroProceso && filtros.nroProceso != 0){
+            filtro += " AND v.nroProceso = " + filtros.nroProceso;
+        }
+
+        try {
+            //Obtengo la query segun los filtros
+            let query = `
+            SELECT 
+                pv.descripcion AS proceso,
+                v.nroProceso,
+                p.descripcion AS punto_venta,
+                CONCAT(
+                    DATE_FORMAT(v.fecha, '%d/%m/%Y'),
+                    ' ',
+                    IFNULL(v.hora, '')
+                ) AS fecha_hora,
+                c.nombre AS cliente,
+                IFNULL(prendas.total_prendas, 0) AS venta,
+                IFNULL(servicios.total_servicios, 0) AS servicio,
+                (
+                    (IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0)) 
+                    * (IFNULL(v.descuento, 0) / 100)
+                ) * -1 AS des,
+                v.total cobrado,
+                CONCAT(IFNULL(v.descuento, 0), ' %') AS descuento,
+                com.descripcion AS comprobante,
+                IFNULL( CASE WHEN v.idTComprobante = 99 THEN v.nroProceso ELSE vf.ticket END, 0) nro_comprobante,
+                pagos.metodos, pagos.montos,
+                prendas.cantidad_prendas,
+                e.razonSocial AS facturante
+            FROM ventas v
+
+            LEFT JOIN procesos_venta pv 
+                ON pv.id = v.idProceso
+
+            LEFT JOIN clientes c 
+                ON c.id = v.idCliente
+
+            LEFT JOIN tipos_comprobantes com 
+                ON com.id = v.idTComprobante
+
+            LEFT JOIN puntos_venta p 
+                ON p.id = v.idPunto
+
+            LEFT JOIN empresas e 
+                ON e.id = v.idEmpresa
+
+            LEFT JOIN ventas_factura vf 
+                ON vf.idVenta = v.id
+
+            LEFT JOIN (
+                SELECT 
+                    vp.idVenta,
+
+                    GROUP_CONCAT(
+                        mp.descripcion
+                        ORDER BY mp.descripcion
+                        SEPARATOR ';'
+                    ) AS metodos,
+
+                    GROUP_CONCAT(
+                        vp.monto
+                        ORDER BY mp.descripcion
+                        SEPARATOR ';'
+                    ) AS montos
+
+                FROM ventas_pagos vp
+                INNER JOIN metodos_pago mp 
+                    ON mp.id = vp.idMetodo
+
+                GROUP BY vp.idVenta
+            ) pagos 
+                ON pagos.idVenta = v.id
+
+            LEFT JOIN (
+                SELECT 
+                    idVenta,
+                    SUM(cantidad) AS cantidad_prendas,
+                    SUM(total) AS total_prendas
+                FROM ventas_productos
+                GROUP BY idVenta
+            ) prendas 
+                ON prendas.idVenta = v.id
+
+            LEFT JOIN (
+                SELECT 
+                    idVenta,
+                    SUM(total) AS total_servicios
+                FROM ventas_servicios
+                GROUP BY idVenta
+            ) servicios 
+                ON servicios.idVenta = v.id
+
+            WHERE 
+                v.fechaBaja IS NULL
+                AND v.estado IN ('Finalizada', 'Facturada')
+                ${filtro}
+                ORDER BY v.fecha DESC, v.hora DESC;
+            `
+
+            const [rows] = await connection.query<RowDataPacket[]>(query);
+            return rows.map(r => ({ ...r }));
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async ObtenerReporteDetalles(filtros:any){
+        const connection = await db.getConnection();
+        let filtro:string = "";
+
+        if (filtros.fechas?.length === 2) {
+            const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+            const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
+
+            filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+        }
+        if(filtros.idProceso != 0){
+            filtro += " AND v.idProceso = " + filtros.idProceso;
+        }
+        if(filtros.cliente != 0){
+            filtro += " AND v.idCliente = " + filtros.cliente;
+        }
+        if(filtros.nroProceso && filtros.nroProceso != 0){
+            filtro += " AND v.nroProceso = " + filtros.nroProceso;
+        }
+
+        try {
+            //Obtengo la query segun los filtros
+            let query = `
+            SELECT CONCAT(DATE_FORMAT(v.fecha, '%d/%m/%Y'),' ',IFNULL(v.hora, '')) AS fecha_hora, p.descripcion punto_venta, c.nombre cliente, e.razonSocial facturante,
+                CONCAT(e.puntoVta,'-',v.id) AS remito,
+                CONCAT(
+                    LPAD(IFNULL(e.puntoVta, 0), 4, '0'),
+                    '-',
+                    LPAD(IFNULL(v.id,0), 8, '0')
+                ) AS remito,
+                CONCAT(
+                    LPAD(IFNULL(e.puntoVta, 0), 4, '0'),
+                    '-',
+                    LPAD(
+                        IFNULL(
+                            CASE 
+                                WHEN v.idTComprobante = 99 THEN v.nroProceso
+                                ELSE vf.ticket
+                            END,
+                            0
+                        ), 8, '0'
+                    )
+                ) AS comprobante,
+                tp.descripcion producto,
+                sp.descripcion tipo,
+                g.descripcion genero,
+                prod.codigo,
+                prod.nombre articulo,
+                m.descripcion material,
+                col.descripcion color,
+                t1 XS, t2 S, t3 M, t4 L, t5 XL, t6 XXL, t7 '3XL', t8 '4XL', t9 '5XL', t10 '6XL', vp.cantidad total  
+            FROM ventas v
+                LEFT JOIN puntos_venta p ON p.id = v.idPunto
+                LEFT JOIN clientes c ON c.id = v.idCliente
+                LEFT JOIN empresas e ON e.id = v.idEmpresa
+                LEFT JOIN ventas_factura vf ON vf.idVenta = v.id
+                LEFT JOIN ventas_productos vp ON vp.idVEnta = v.id
+                LEFT JOIN productos prod ON prod.id = vp.idProducto
+                LEFT JOIN tipos_producto tp ON tp.id = prod.idTipo
+                LEFT JOIN subtipos_producto sp ON sp.id = prod.idSubtipo
+                LEFT JOIN materiales m ON m.id = prod.idMaterial
+                LEFT JOIN generos g ON g.id = prod.idGenero
+                LEFT JOIN colores col ON col.id = prod.idColor
+            WHERE 
+                v.fechaBaja IS NULL 
+                AND v.estado IN ('Finalizada','Facturada')
+                ${filtro}
+            ORDER BY v.fecha DESC, v.hora DESC;
+            `
+
+            const [rows] = await connection.query<RowDataPacket[]>(query);
+            return rows.map(r => ({ ...r }));
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+    //#endregion
 
     //#region OBTENER
     async Obtener(filtros:any){
