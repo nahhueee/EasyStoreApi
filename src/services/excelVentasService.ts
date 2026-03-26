@@ -186,7 +186,6 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
   sheet2.getColumn('des').numFmt = '$ #,##0.00';
   sheet2.getColumn('cobrado').numFmt = '$ #,##0.00';
 
-
   // =========================
   // EXPORTAR
   // =========================

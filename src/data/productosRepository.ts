@@ -21,6 +21,11 @@ class ProductosRepository{
                 filtros.proceso === 0 ||
                 filtros.proceso === 3;
 
+            const ejecutarTercero =
+                filtros.proceso === null ||
+                filtros.proceso === 0 ||
+                filtros.proceso === 2;
+
             const productos: TablaProducto[] = [];
 
             // PRIMERA QUERY PRODUCTOS STOCK
@@ -42,6 +47,17 @@ class ProductosRepository{
                
                 if (Array.isArray(rows2)) {
                     for (const row of rows2) productos.push(new TablaProducto(row));
+                }
+            }
+
+             // TERCERA QUERY STOCK PROYECTADO
+            if (ejecutarTercero) {
+
+                let queryRegistros3 = await ObtenerQuery(filtros, false, true);
+                const [rows3] = await connection.query(queryRegistros3);
+               
+                if (Array.isArray(rows3)) {
+                    for (const row of rows3) productos.push(new TablaProducto(row));
                 }
             }
 
@@ -712,9 +728,33 @@ class ProductosRepository{
         }
     }
     //#endregion
+
+
+    async ActualizarInventario(connection, detalle, operacion):Promise<void>{
+        try {
+            const seleccionados = detalle.tallesSeleccionados.split(",").map(t => t.trim());
+            const lineaTalle = await MiscRepo.ObtenerLineaDeTalle(detalle.idLineaTalle);
+
+            for (const talle of seleccionados) {
+                const index = lineaTalle.talles.indexOf(talle);
+                if (index === -1) continue;
+
+                const campoTx = `t${index + 1}`;
+                const cantDescontar = detalle[campoTx];
+                
+                const consulta = `UPDATE talles_producto SET cantidad = cantidad ${operacion} ? 
+                                WHERE talle = ? AND idProducto = ?`;
+
+                const parametros = [cantDescontar, talle, detalle.idProducto];
+                await connection.query(consulta, parametros);
+            } 
+        } catch (error) {
+            throw error; 
+        }
+    }
 }
 
-async function ObtenerQuery(filtros:any, pedidos:boolean = false):Promise<string>{
+async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:boolean = false):Promise<string>{
     try {
         //#region VARIABLES
         let query:string;
@@ -753,6 +793,8 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false):Promise<string
         
         if (pedidos == true) 
             filtro += " AND v.idProceso = 6";
+        if (proyectados == true) 
+            filtro += " AND op.estado = 'Pendiente'";
         // #endregion
 
         // #region ORDENAMIENTO
@@ -783,7 +825,7 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false):Promise<string
                 " SELECT p.*, tp.descripcion tipo, stp.descripcion subtipo, c.descripcion color, c.hexa, " +
                 " g.descripcion genero, g.abreviatura abrevGenero, m.descripcion material, t.descripcion temporada, t.abreviatura abrevTemporada, ";
                 
-                if(pedidos == false){
+                if(pedidos == false && proyectados == false){
                     query += 
                     "pro.descripcion proceso, pro.abreviatura abrevProceso," +
                     "SUM(CASE WHEN pt.ubicacion = 0 THEN pt.cantidad ELSE 0 END) AS t1," +
@@ -799,7 +841,9 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false):Promise<string
                     " FROM productos p " +
                     " LEFT JOIN talles_producto pt ON pt.idProducto = p.id " 
 
-                }else{
+                }
+
+                if(pedidos == true){
                     query += 
                     `
                    'PEDIDOS APROBADOS' AS proceso, 'APROB' AS abrevProceso,
@@ -816,6 +860,25 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false):Promise<string
                     FROM ventas_productos vp
                     INNER JOIN ventas v ON vp.idVenta = v.id
                     INNER JOIN productos p ON p.id = vp.idProducto
+                    `
+                }
+
+                if(proyectados == true){
+                    query += 
+                    `
+                   'PROYECTADO' AS proceso, 'PROY' AS abrevProceso,
+                    SUM(t1) AS t1,
+                        SUM(t2) AS t2,
+                        SUM(t3) AS t3,
+                        SUM(t4) AS t4,
+                        SUM(t5) AS t5,
+                        SUM(t6) AS t6,
+                        SUM(t7) AS t7,
+                        SUM(t8) AS t8,
+                        SUM(t9) AS t9,
+                        SUM(t10) AS t10
+                    FROM ordenes_productos op
+                    INNER JOIN productos p ON p.id = op.idProducto
                     `
                 }
 

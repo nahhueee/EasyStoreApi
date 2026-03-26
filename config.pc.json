@@ -5,6 +5,7 @@
   "port": 9000,
   "idApp": 1,
   "web": false,
+  "servidor": "/easystore",
   "db": {
     "host": "127.0.0.1",
     "user": "root",

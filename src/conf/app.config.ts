@@ -9,7 +9,7 @@ dotenv.config({ path: envFilePath });
 const env = process.env.NODE_ENV || 'pc';  // Si no se define NODE_ENV, por defecto 'pc'
 
 // Cargar el archivo de configuración correspondiente según el entorno
-const configFile = `config.${env}.json`;  // El archivo se llama 'config.pc.json' o 'config.web.json'
+const configFile = `config.${env}.json`;  // El archivo se llama 'config.pc.json' o 'config.web.json' o 'config.test.json'
 const rawConfig = fs.readFileSync(path.resolve(__dirname, `../../${configFile}`), 'utf-8');
 const config = JSON.parse(rawConfig);
 

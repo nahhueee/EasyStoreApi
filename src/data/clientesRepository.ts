@@ -249,10 +249,12 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         //#endregion
 
         // #region FILTROS
-        if (filtros.busqueda != null && filtros.busqueda != "") 
-            filtro += " AND c.nombre LIKE '%"+ filtros.busqueda + "%' ";
-        if (filtros.idCliente != null && filtros.idCliente != 0) 
-            filtro += " AND c.id = "+ filtros.idCliente;
+        if (filtros.nombre != null && filtros.nombre != "") 
+            filtro += " AND c.nombre LIKE '%"+ filtros.nombre.toUpperCase().trim() + "%'";
+        if (filtros.condicionIva != null && filtros.condicionIva != "") 
+            filtro += " AND c.idCondIva = "+ filtros.condicionIva;
+        if (filtros.documento != null && filtros.documento != 0) 
+            filtro += " AND c.documento = " + filtros.documento;
         // #endregion
 
         if (esTotal)
@@ -273,7 +275,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             " LEFT JOIN condiciones_iva ci on ci.id = c.idCondIva " +
             " LEFT JOIN tipos_documento td on td.id = c.idTipoDocumento " +
             " LEFT JOIN condiciones_pago cp on cp.id = c.idCondicionPago " +
-            " WHERE c.id <> 1 AND fechaBaja IS NULL " +
+            " WHERE fechaBaja IS NULL " +
             filtro +
             " ORDER BY c.id DESC" +
             paginado +

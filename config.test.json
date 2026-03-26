@@ -1,0 +1,14 @@
+{
+    "adminUrl": "https://creationserver.com/adminserver/",
+    "produccion": false,
+    "port": 9100,
+    "idApp": 1,
+    "web": true,
+    "servidor": "/chazagolftest",
+    "db": {
+        "host": "127.0.0.1",
+        "user": "chazagolftest",
+        "password": "X4tZJLm8HPABYjat",
+        "database": "dbchazagolftest"
+    }
+}

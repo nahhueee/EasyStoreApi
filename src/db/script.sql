@@ -424,8 +424,44 @@ CREATE TABLE empresas (
     abrevCondicion VARCHAR(4), 
     puntoVta INT,
     cuil BIGINT,
+    IIBB VARCHAR(20),
     direccion VARCHAR(250)
 );
+
+DROP TABLE IF EXISTS ordenes_ingreso;
+CREATE TABLE ordenes_ingreso(
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idProveedor INT,
+    corte INT,
+    fecha DATE,
+    observaciones VARCHAR(300),
+    usuario VARCHAR(30),
+    estado VARCHAR(15),
+    actualizacion DATETIME
+);
+
+DROP TABLE IF EXISTS ordenes_productos;
+CREATE TABLE ordenes_productos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idOrden INT NOT NULL,
+    idProducto INT NOT NULL,
+    idLineaTalle INT NULL,
+    cantidad INT NOT NULL,
+    stockAplicado INT DEFAULT 0,
+    t1 INT,
+    t2 INT,
+    t3 INT,
+    t4 INT,
+    t5 INT,
+    t6 INT,
+    t7 INT,
+    t8 INT,
+    t9 INT,
+    t10 INT,
+    estado ENUM('Pendiente', 'Ingresado') NOT NULL DEFAULT 'Pendiente',
+    talles VARCHAR(100)
+)
+ENGINE=InnoDB;
 
 INSERT INTO parametros(clave, valor) 
 VALUES 

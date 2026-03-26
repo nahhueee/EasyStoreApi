@@ -62,56 +62,56 @@ import etiquetasRuta from './routes/etiquetasRoute';
 import miscRuta from './routes/miscRoute';
 import direccionesRuta from './routes/direccionesRoute';
 import serviciosRuta from './routes/serviciosRoute';
+import ordenIngresoRuta from './routes/ordenIngresoRoute';
 
-app.use('/easystore/update', actualizacionRuta)
-app.use('/easystore/usuarios', usuariosRuta);
-app.use('/easystore/clientes', clientesRuta);
-app.use('/easystore/rubros', rubrosRuta);
-app.use('/easystore/productos', productosRuta);
-app.use('/easystore/ventas', ventasRuta);
-app.use('/easystore/movimientos', movimientosRuta);
-app.use('/easystore/cajas', cajasRuta); 
-app.use('/easystore/estadisticas', estadisticasRuta);
-app.use('/easystore/parametros', parametrosRuta);
-app.use('/easystore/logs', logsRuta);
-app.use('/easystore/server', servidorRuta);
-app.use('/easystore/cuentas', cuentasRuta);
-app.use('/easystore/etiquetas', etiquetasRuta);
-app.use('/easystore/misc', miscRuta);
-app.use('/easystore/direcciones', direccionesRuta);
-app.use('/easystore/servicios', serviciosRuta);
+const base = config.servidor;
+app.use(`${base}/update`, actualizacionRuta)
+app.use(`${base}/usuarios`, usuariosRuta);
+app.use(`${base}/clientes`, clientesRuta);
+app.use(`${base}/rubros`, rubrosRuta);
+app.use(`${base}/productos`, productosRuta);
+app.use(`${base}/ventas`, ventasRuta);
+app.use(`${base}/movimientos`, movimientosRuta);
+app.use(`${base}/cajas`, cajasRuta); 
+app.use(`${base}/estadisticas`, estadisticasRuta);
+app.use(`${base}/parametros`, parametrosRuta);
+app.use(`${base}/logs`, logsRuta);
+app.use(`${base}/server`, servidorRuta);
+app.use(`${base}/cuentas`, cuentasRuta);
+app.use(`${base}/etiquetas`, etiquetasRuta);
+app.use(`${base}/misc`, miscRuta);
+app.use(`${base}/direcciones`, direccionesRuta);
+app.use(`${base}/servicios`, serviciosRuta);
+app.use(`${base}/orden-ingreso`, ordenIngresoRuta);
 
-//AdminServer Route
+// AdminServer Route
 import adminServerRuta from './routes/adminRoute';
-app.use('/easystore/adminserver', adminServerRuta);
+app.use(`${base}/adminserver`, adminServerRuta);
 
-//Upload images Route
+// Upload images Route
 import imagenesRuta from './routes/imagenesRoute';
-app.use('/easystore/imagenes', imagenesRuta);
+app.use(`${base}/imagenes`, imagenesRuta);
 
-//Files Route
+// Files Route
 import filesRoute from './routes/filesRoute';
-app.use('/easystore/files', filesRoute);
+app.use(`${base}/files`, filesRoute);
+
 //#endregion
 
 //#region backups 
-import backupRoute from './routes/backupRoute';
-app.use('/easystore/backup', backupRoute);
+// import backupRoute from './routes/backupRoute';
+// app.use(`${base}/backup`, backupRoute);
 
-import {BackupsServ} from './services/backupService';
-if(!config.web)
-    BackupsServ.IniciarCron();
+// import {BackupsServ} from './services/backupService';
+// if(!config.web)
+//     BackupsServ.IniciarCron();
 //#endregion
 
-// import {ServidorServ} from './services/servidorService';
-// if(!config.web)
-//     ServidorServ.IniciarModoServidor();
-
-//Index Route
-app.get('/easystore', (req, res) => {
-    res.status(200).send('Servidor de EasyStore funcionando en este puerto.');
+// Index Route
+console.log(base)
+app.get(`${base}`, (req, res) => {
+    res.status(200).send('Servidor funcionando CHAZAGOLF en este puerto.');
 });
- 
 //404
 app.use((_req, res) => {
     res.status(404).send('No se encontró el recurso solicitado.');

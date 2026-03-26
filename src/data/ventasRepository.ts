@@ -475,10 +475,10 @@ class VentasRepository{
                     const finalizandoCotizacion = venta.idProceso == 2 && venta.estado == "Finalizada";
 
                     if(desdeNotas){
-                        await ActualizarInventario(connection, element, "+");
+                        await ProductosRepo.ActualizarInventario(connection, element, "+");
                     }else{
                         if(venta.factura || finalizandoCotizacion)
-                            await ActualizarInventario(connection, element, "-");
+                            await ProductosRepo.ActualizarInventario(connection, element, "-");
                     }
                 }
             }
@@ -584,7 +584,7 @@ class VentasRepository{
                     await InsertProductoVenta(connection, element);
 
                     if(venta.factura)
-                        await ActualizarInventario(connection, element, "-")
+                        await ProductosRepo.ActualizarInventario(connection, element, "-")
                 }
             }
          
@@ -1147,29 +1147,5 @@ async function InsertFacturaVenta(connection, factura):Promise<void>{
     }
 }
 //#endregion
-
-
-async function ActualizarInventario(connection, detalle, operacion):Promise<void>{
-    try {
-        const seleccionados = detalle.tallesSeleccionados.split(",").map(t => t.trim());
-        const lineaTalle = await MiscRepo.ObtenerLineaDeTalle(detalle.idLineaTalle);
-
-        for (const talle of seleccionados) {
-            const index = lineaTalle.talles.indexOf(talle);
-            if (index === -1) continue;
-
-            const campoTx = `t${index + 1}`;
-            const cantDescontar = detalle[campoTx];
-            
-            const consulta = `UPDATE talles_producto SET cantidad = cantidad ${operacion} ? 
-                              WHERE talle = ? AND idProducto = ?`;
-
-            const parametros = [cantDescontar, talle, detalle.idProducto];
-            await connection.query(consulta, parametros);
-        } 
-    } catch (error) {
-        throw error; 
-    }
-}
 
 export const VentasRepo = new VentasRepository();

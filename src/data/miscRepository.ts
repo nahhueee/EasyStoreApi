@@ -153,7 +153,8 @@ class MiscRepository{
 
             const result = rows.map(row => ({
                 id: row.id,
-                talles: row.descripcion.split("-")
+                talles: row.descripcion.split("-"),
+                mostrar: row.mostrar
             }));
 
             return result;
