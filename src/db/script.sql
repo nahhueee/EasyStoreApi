@@ -463,6 +463,26 @@ CREATE TABLE ordenes_productos (
 )
 ENGINE=InnoDB;
 
+DROP TABLE IF EXISTS recepciones;
+CREATE TABLE recepciones (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idOrden INT,
+    usuario VARCHAR(30),
+    fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+DROP TABLE IF EXISTS recepciones_talles_producto;
+CREATE TABLE recepciones_talles_producto (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idRecepcion INT NOT NULL,
+    idProducto INT NOT NULL,
+    idLineaTalle INT NOT NULL,
+    talle VARCHAR(10) NOT NULL,
+    cantidad INT NOT NULL,
+    original INT
+)ENGINE=InnoDB;
+
+
 INSERT INTO parametros(clave, valor) 
 VALUES 
 ('version','1.1.2'),

@@ -255,6 +255,8 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             filtro += " AND c.idCondIva = "+ filtros.condicionIva;
         if (filtros.documento != null && filtros.documento != 0) 
             filtro += " AND c.documento = " + filtros.documento;
+        if (filtros.idCliente != null && filtros.idCliente != 0) 
+            filtro += " AND c.id = "+ filtros.idCliente;
         // #endregion
 
         if (esTotal)

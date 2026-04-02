@@ -1,6 +1,5 @@
 import moment from 'moment';
 import db from '../db';
-import { Cliente, DireccionesCliente, UltimoDescuentoCliente } from '../models/Cliente';
 import { OrdenIngreso, ProductoOrden } from '../models/OrdenIngreso';
 import { ProductosRepo } from './productosRepository';
 
@@ -36,14 +35,14 @@ class OrdenIngresoRepository{
         }
     }
 
-    async ObtenerOrden(filtros:any){
+    async ObtenerOrden(idOrden:any){
         const connection = await db.getConnection();
         
         try {
-            let consulta = await ObtenerQuery(filtros,false);
+            let consulta = await ObtenerQuery({id: idOrden},false);
             const rows = await connection.query(consulta);
            
-            return await this.CompletarObjeto(connection, rows[0][0]);
+            return await this.CompletarObjeto(connection, rows[0][0], true);
         } catch (error:any) {
             throw error;
         } finally{
@@ -51,7 +50,7 @@ class OrdenIngresoRepository{
         }
     }
 
-    async CompletarObjeto(connection, row){
+    async CompletarObjeto(connection, row, unico:boolean = false){
         let orden:OrdenIngreso = new OrdenIngreso();
         orden.id = row['id'];
         orden.corte = row['corte'];
@@ -59,9 +58,12 @@ class OrdenIngresoRepository{
         orden.idProveedor = row['idProveedor'];
         orden.observaciones = row['observaciones'];
         orden.usuario = row['usuario'];
-        orden.estado = row['estado'];
+        orden.actualizacion = row['actualizacion'];
         
-        orden.productos = await ObtenerProductosOrden(connection, row['id']);
+        const resultadoProductos = await ObtenerProductosOrden(connection, row['id'], unico);
+        orden.productos = resultadoProductos.productos;
+        orden.estado = resultadoProductos.estado;
+
         return orden;
     }
 
@@ -86,11 +88,6 @@ class OrdenIngresoRepository{
             
             //Insertamos los productos de la orden
             for (const prod of orden.productos) {
-                if (prod.estado === "Ingresado") {
-                    await ProductosRepo.ActualizarInventario(connection, prod, "+");
-                    prod.stockAplicado = 1;
-                }
-
                 prod.idOrden = orden.id;
                 InsertProductoOrden(connection, prod);
             }
@@ -100,6 +97,7 @@ class OrdenIngresoRepository{
             return "OK";
 
         } catch (error:any) {
+            await connection.rollback();
             throw error;
         } finally{
             connection.release();
@@ -130,57 +128,30 @@ class OrdenIngresoRepository{
             const parametros = [data.idProveedor, data.corte, moment(data.fecha).format('YYYY-MM-DD HH:mm:ss'), data.observaciones, data.usuario, data.estado, data.id];
             await connection.query(consulta, parametros);
                
-           
-            //#region ACTUALIZAR DETALLE Y STOCK
-            const productosDB = await ObtenerProductosOrden(connection, data.id!);
-            const mapDB = new Map(productosDB.map(p => [p.id, p]));
-
-            // Recorrer nuevos detalles
+            await connection.query("DELETE FROM ordenes_productos WHERE idOrden = ?", [data.id]);
             for (const prod of data.productos) {
-                const anterior = mapDB.get(prod.id);
-                
-                if (!anterior) {
-                    // NUEVO
+                prod.idOrden = data.id;
 
-                    if (prod.estado === "Ingresado") {
-                        await ProductosRepo.ActualizarInventario(connection, prod, "+");
-                        prod.stockAplicado = 1;
-                    } 
-                    
-                    prod.idOrden = data.id;
-                    await InsertProductoOrden(connection, prod);
-                }else{
-                    // EXISTENTE
-
-                    // transición a Ingresado
-                    if (prod.estado === "Ingresado" && anterior.stockAplicado == 0) {
-                        await ProductosRepo.ActualizarInventario(connection, prod, "+");
-                        prod.stockAplicado = 1;
-                    }
-
-                    // reversión
-                    else if (prod.estado !== "Ingresado" && anterior.stockAplicado == 1) {
-                        await ProductosRepo.ActualizarInventario(connection, prod, "-");
-                        prod.stockAplicado = 0;
-                    } 
-                    else {
-                        prod.stockAplicado = anterior.stockAplicado;
-                    }
-
-                    prod.idOrden = data.id;
-                    if(prod.estado === "Eliminado")
-                        await connection.query("DELETE FROM ordenes_productos WHERE id = ?", [prod.id]);
-                    else
-                        await UpdateProductoOrden(connection, prod);
+                if(prod.estado != "Eliminado"){
+                    InsertProductoOrden(connection, prod);
                 }
             }
-            //#endregion
+
+            for (const rec of data.recepcionesRevertir) {
+
+                const detalle = await ObtenerDetalleRecepcion(connection, rec);
+                const nroTalle = parseInt(detalle.talle.replace('t', ''));
+                await ProductosRepo.ActualizarInventarioOrden(connection, detalle.idProducto, nroTalle, detalle.cantidad, detalle.idLineaTalle, "-");
+
+                await connection.query("DELETE FROM recepciones_talles_producto WHERE id = ?", [rec]);
+            }
                 
             //Mandamos la transaccion
             await connection.commit();
             return "OK";
 
         } catch (error:any) {
+            await connection.rollback();
             throw error;
         } finally{
             connection.release();
@@ -201,6 +172,113 @@ class OrdenIngresoRepository{
         }
     }
     //#endregion
+
+    async ObtenerHistorialRecepciones(idOrden) {
+        const connection = await db.getConnection();
+        
+        try {
+            const SQL = `
+                SELECT 
+                    rt.id,
+                    rt.idProducto,
+                    rt.idLineaTalle,
+                    r.fecha,
+                    r.usuario,
+
+                    SUM(CASE WHEN rt.talle = 't1' THEN rt.cantidad ELSE 0 END) as XS,
+                    SUM(CASE WHEN rt.talle = 't2' THEN rt.cantidad ELSE 0 END) as S,
+                    SUM(CASE WHEN rt.talle = 't3' THEN rt.cantidad ELSE 0 END) as M,
+                    SUM(CASE WHEN rt.talle = 't4' THEN rt.cantidad ELSE 0 END) as L,
+                    SUM(CASE WHEN rt.talle = 't5' THEN rt.cantidad ELSE 0 END) as XL,
+                    SUM(CASE WHEN rt.talle = 't6' THEN rt.cantidad ELSE 0 END) as XXL,
+                    SUM(CASE WHEN rt.talle = 't7' THEN rt.cantidad ELSE 0 END) as 3XL,
+                    SUM(CASE WHEN rt.talle = 't8' THEN rt.cantidad ELSE 0 END) as 4XL,
+                    SUM(CASE WHEN rt.talle = 't9' THEN rt.cantidad ELSE 0 END) as 5XL,
+                    SUM(CASE WHEN rt.talle = 't10' THEN rt.cantidad ELSE 0 END) as 6XL,
+
+                    SUM(rt.cantidad) as total
+
+                FROM recepciones r
+                INNER JOIN recepciones_talles_producto rt ON rt.idRecepcion = r.id
+                WHERE r.idOrden = ?
+                GROUP BY rt.id, rt.idProducto, rt.idLineaTalle, r.fecha, r.usuario
+                ORDER BY fecha DESC;
+            `;
+
+            const [rows] = await connection.query(SQL, [idOrden]) as any;
+
+            const map: { [idProducto: number]: any[] } = {};
+
+            rows.forEach(r => {
+                // Normalizar números
+                Object.keys(r).forEach(k => {
+                    if (!isNaN(Number(r[k]))) {
+                    r[k] = Number(r[k]);
+                    }
+                });
+
+                const idProducto = r.idProducto;
+                // Inicializar array si no existe
+                if (!map[idProducto]) {
+                    map[idProducto] = [];
+                }
+
+                // Sacar idProducto del objeto interno
+                const { idProducto: _, ...rest } = r;
+                map[idProducto].push(rest);
+            });
+
+
+            // Ordenar por fecha DESC (más reciente primero)
+            Object.keys(map).forEach(id => {
+                map[Number(id)].sort((a, b) => 
+                    new Date(b.fecha).getTime() - new Date(a.fecha).getTime()
+                );
+            });
+
+            return map;
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async AgregarRecepcion(data:any): Promise<string>{
+        const connection = await db.getConnection();
+        
+        try {
+
+            //Iniciamos una transaccion
+            await connection.beginTransaction();
+
+            //Insertamos la cabecera
+            const consulta = "INSERT INTO recepciones(usuario, idOrden) " + 
+                             "VALUES(?, ?)";
+            const parametros = [data.usuario, data.idOrden];
+            const [result]: any = await connection.query(consulta, parametros);
+            
+            //Insertamos los detalles de la recepcion
+            for (const item of data.detalles) {
+                item.idRecepcion = result.insertId;
+                InsertDetalleRecepcion(connection, item);
+
+                const nroTalle = parseInt(item.talle.replace('t', ''));
+                await ProductosRepo.ActualizarInventarioOrden(connection, item.idProducto, nroTalle, item.cantidad, item.idLineaTalle, "+");
+            }
+            
+            //Mandamos la transaccion
+            await connection.commit();
+            return "OK";
+
+        } catch (error:any) {
+            await connection.rollback();
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
 }
 
 async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
@@ -215,6 +293,10 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         //#endregion
 
         // #region FILTROS
+        if(filtros.id && filtros.id != 0){
+            filtro += " AND oi.id = " + filtros.id;
+        }
+
         if(filtros.nroCorte && filtros.nroCorte != 0){
             filtro += " AND oi.corte = " + filtros.nroCorte;
         }
@@ -253,50 +335,33 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 //#region DETALLE ORDEN
 async function InsertProductoOrden(connection, producto):Promise<void>{
     try {
-        const consulta = " INSERT INTO ordenes_productos(idOrden, idProducto, idLineaTalle, cantidad, talles, estado, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        const consulta = " INSERT INTO ordenes_productos(idOrden, idProducto, idLineaTalle, cantidad, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-        const parametros = [producto.idOrden, producto.idProducto, producto.idLineaTalle, producto.cantidad, producto.tallesSeleccionados, producto.estado, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
+        const parametros = [producto.idOrden, producto.idProducto, producto.idLineaTalle, producto.cantidad, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
         await connection.query(consulta, parametros);
     } catch (error) {
         throw error; 
     }
 }
-async function UpdateProductoOrden(connection, producto): Promise<void> {
-  const consulta = `
-    UPDATE ordenes_productos SET
-      cantidad = ?,
-      talles = ?,
-      estado = ?,
-      t1 = ?, t2 = ?, t3 = ?, t4 = ?, t5 = ?,
-      t6 = ?, t7 = ?, t8 = ?, t9 = ?, t10 = ?,
-      stockAplicado = ?
-    WHERE id = ?
-  `;
 
-  const parametros = [
-    producto.cantidad,
-    producto.tallesSeleccionados,
-    producto.estado,
-    producto.t1,
-    producto.t2,
-    producto.t3,
-    producto.t4,
-    producto.t5,
-    producto.t6,
-    producto.t7,
-    producto.t8,
-    producto.t9,
-    producto.t10,
-    producto.stockAplicado,
-    producto.id
-  ];
+async function InsertDetalleRecepcion(connection, detalle):Promise<void>{
+    try {
+        const consulta = " INSERT INTO recepciones_talles_producto(idRecepcion,idProducto,idLineaTalle,talle,cantidad,original) " +
+                         " VALUES(?, ?, ?, ?, ?, ?)";
 
-  await connection.query(consulta, parametros);
+        const parametros = [detalle.idRecepcion, detalle.idProducto, detalle.idLineaTalle, detalle.talle, detalle.cantidad, detalle.original];
+        await connection.query(consulta, parametros);
+    } catch (error) {
+        throw error; 
+    }
 }
 
-async function ObtenerProductosOrden(connection, idOrden:number){
+async function ObtenerProductosOrden(connection, idOrden:number, unico:boolean = false){
     try {
+        let totalOrdenOriginal = 0;
+        let totalOrdenRecibido = 0;
+
         const consulta = "SELECT op.*, p.codigo, p.nombre, c.id idColor, c.descripcion color, c.hexa FROM ordenes_productos op " + 
                          "INNER JOIN productos p ON p.id = op.idProducto " + 
                          "INNER JOIN colores c ON c.id = p.idColor " +
@@ -304,6 +369,26 @@ async function ObtenerProductosOrden(connection, idOrden:number){
         const [rows] = await connection.query(consulta, [idOrden]);
 
         const productos:ProductoOrden[] = [];
+
+        const [recepciones] = await connection.query(`
+            SELECT 
+                rt.idProducto,
+                rt.talle,
+                SUM(rt.cantidad) as recibido
+            FROM recepciones_talles_producto rt
+            INNER JOIN recepciones r ON r.id = rt.idRecepcion
+            WHERE r.idOrden = ?
+            GROUP BY rt.idProducto, rt.talle
+        `, [idOrden]);
+
+        const recepcionMap = new Map<string, number>();
+
+        if (Array.isArray(recepciones)) {
+            recepciones.forEach((r: any) => {
+                const key = `${r.idProducto}_${r.talle}`;
+                recepcionMap.set(key, r.recibido);
+            });
+        }
 
         if (Array.isArray(rows)) {
             for (let i = 0; i < rows.length; i++) { 
@@ -316,7 +401,6 @@ async function ObtenerProductosOrden(connection, idOrden:number){
                 producto.nomProducto = row['nombre'];
                 producto.cantidad = row['cantidad'];
                 producto.idLineaTalle = row['idLineaTalle'];
-                producto.estado = row['estado'];
                 producto.stockAplicado = row['stockAplicado'];
                 producto.t1 = parseInt(row['t1']);
                 producto.t2 = parseInt(row['t2']);
@@ -332,12 +416,49 @@ async function ObtenerProductosOrden(connection, idOrden:number){
                 producto.color = row['color'];
                 producto.hexa = row['hexa'];
                 producto.codigosBarra = await ObtenerCodigosBarraProducto(connection, producto.idProducto!);
+                
+                let totalOriginal = 0;
+                let totalRecibido = 0;
 
+                for (let iTalle = 1; iTalle <= 10; iTalle++) {
+                    const key = `t${iTalle}`;
+
+                    const original = Number(row[key] ?? 0);
+                    const recibido = Number(recepcionMap.get(`${producto.idProducto}_${key}`) ?? 0);
+
+                    totalOriginal += original;
+                    totalRecibido += recibido;
+
+                    totalOrdenOriginal += totalOriginal;
+                    totalOrdenRecibido += totalRecibido;
+
+                    if(!unico)
+                        producto[key] = original - recibido; 
+                }
+
+                if (totalRecibido === 0) producto.estado = 'Pendiente';
+                else if (totalRecibido < totalOriginal) producto.estado = 'Parcial';
+                else producto.estado = 'Ingresado';
                 productos.push(producto);
             }
         }
 
-        return productos;
+
+        let estadoOrden = 'Nueva';
+        if (totalOrdenRecibido === 0) {
+            estadoOrden = 'Nueva';
+        } else if (totalOrdenRecibido < totalOrdenOriginal) {
+            estadoOrden = 'Pendiente';
+        } else {
+            estadoOrden = 'Finalizada';
+        }
+
+        return {
+            productos,
+            estado: estadoOrden,
+            totalOriginal: totalOrdenOriginal,
+            totalRecibido: totalOrdenRecibido
+        };
 
     } catch (error) {
         throw error; 
@@ -356,6 +477,20 @@ async function ObtenerCodigosBarraProducto(connection, idProducto:number){
     } catch (error) {
         throw error; 
     }
+}
+
+async function ObtenerDetalleRecepcion(connection, id:any){
+    try {
+        let consulta = `
+            SELECT idProducto, talle, idLineaTalle, cantidad
+            FROM recepciones_talles_producto
+            WHERE id = ?
+        `
+        const rows = await connection.query(consulta, [id]);
+        return rows[0][0];
+    } catch (error:any) {
+        throw error;
+    } 
 }
 
 //#endregion

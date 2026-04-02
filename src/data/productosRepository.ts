@@ -50,7 +50,7 @@ class ProductosRepository{
                 }
             }
 
-             // TERCERA QUERY STOCK PROYECTADO
+            // TERCERA QUERY STOCK PROYECTADO
             if (ejecutarTercero) {
 
                 let queryRegistros3 = await ObtenerQuery(filtros, false, true);
@@ -175,6 +175,11 @@ class ProductosRepository{
                 filtros.proceso === 0 ||
                 filtros.proceso === 3;
 
+            const ejecutarTercero =
+                filtros.proceso === null ||
+                filtros.proceso === 0 ||
+                filtros.proceso === 2;
+
             const productosTabla: TablaProducto[] = [];
 
             // PRIMERA QUERY PRODUCTOS STOCK
@@ -191,11 +196,22 @@ class ProductosRepository{
             // SEGUNDA QUERY PEDIDOS APROB
             if (ejecutarSegundo) {
 
-                let queryRegistros2 = await ObtenerQuery(filtros, true);
+                let queryRegistros2 = await ObtenerQuery(filtros, true, false);
                 const [rows2] = await connection.query(queryRegistros2);
                
                 if (Array.isArray(rows2)) {
                     for (const row of rows2) productosTabla.push(new TablaProducto(row));
+                }
+            }
+
+            // TERCERA QUERY STOCK PROYECTADO
+            if (ejecutarTercero) {
+
+                let queryRegistros3 = await ObtenerQuery(filtros, false, true);
+                const [rows3] = await connection.query(queryRegistros3);
+               
+                if (Array.isArray(rows3)) {
+                    for (const row of rows3) productosTabla.push(new TablaProducto(row));
                 }
             }
 
@@ -752,6 +768,22 @@ class ProductosRepository{
             throw error; 
         }
     }
+
+    async ActualizarInventarioOrden(connection, idProd, nroTalle, cantidad, idLineaTalle, operacion):Promise<void>{
+        try {
+            const lineaTalle = await MiscRepo.ObtenerLineaDeTalle(idLineaTalle);
+            const talle = lineaTalle.talles[nroTalle - 1];
+
+            const consulta = `UPDATE talles_producto SET cantidad = cantidad ${operacion} ? 
+                              WHERE talle = ? AND idProducto = ?`;
+
+            const parametros = [cantidad, talle, idProd];
+            await connection.query(consulta, parametros);
+             
+        } catch (error) {
+            throw error; 
+        }
+    }
 }
 
 async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:boolean = false):Promise<string>{
@@ -821,6 +853,16 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:bo
         // }
             
         let condicionAdicional = pedidos == true ? "vp.idProducto," : "";
+        let having = "";
+
+        if (proyectados == true) {
+            having = `
+            HAVING 
+                t1 + t2 + t3 + t4 + t5 + 
+                t6 + t7 + t8 + t9 + t10 > 0
+            `;
+        }
+
         query = count +
                 " SELECT p.*, tp.descripcion tipo, stp.descripcion subtipo, c.descripcion color, c.hexa, " +
                 " g.descripcion genero, g.abreviatura abrevGenero, m.descripcion material, t.descripcion temporada, t.abreviatura abrevTemporada, ";
@@ -866,19 +908,46 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:bo
                 if(proyectados == true){
                     query += 
                     `
-                   'PROYECTADO' AS proceso, 'PROY' AS abrevProceso,
-                    SUM(t1) AS t1,
-                        SUM(t2) AS t2,
-                        SUM(t3) AS t3,
-                        SUM(t4) AS t4,
-                        SUM(t5) AS t5,
-                        SUM(t6) AS t6,
-                        SUM(t7) AS t7,
-                        SUM(t8) AS t8,
-                        SUM(t9) AS t9,
-                        SUM(t10) AS t10
+                        'PROYECTADO' AS proceso, 
+                        'PROY' AS abrevProceso,
+
+                        SUM(GREATEST(IFNULL(op.t1,0) - IFNULL(r.t1, 0), 0)) AS t1,
+                        SUM(GREATEST(IFNULL(op.t2,0) - IFNULL(r.t2, 0), 0)) AS t2,
+                        SUM(GREATEST(IFNULL(op.t3,0) - IFNULL(r.t3, 0), 0)) AS t3,
+                        SUM(GREATEST(IFNULL(op.t4,0) - IFNULL(r.t4, 0), 0)) AS t4,
+                        SUM(GREATEST(IFNULL(op.t5,0) - IFNULL(r.t5, 0), 0)) AS t5,
+                        SUM(GREATEST(IFNULL(op.t6,0) - IFNULL(r.t6, 0), 0)) AS t6,
+                        SUM(GREATEST(IFNULL(op.t7,0) - IFNULL(r.t7, 0), 0)) AS t7,
+                        SUM(GREATEST(IFNULL(op.t8,0) - IFNULL(r.t8, 0), 0)) AS t8,
+                        SUM(GREATEST(IFNULL(op.t9,0) - IFNULL(r.t9, 0), 0)) AS t9,
+                        SUM(GREATEST(IFNULL(op.t10,0) - IFNULL(r.t10, 0), 0)) AS t10
+
                     FROM ordenes_productos op
                     INNER JOIN productos p ON p.id = op.idProducto
+
+                    LEFT JOIN (
+                        SELECT 
+                            r.idOrden,
+                            rt.idProducto,
+
+                            SUM(CASE WHEN rt.talle = 't1' THEN rt.cantidad ELSE 0 END) AS t1,
+                            SUM(CASE WHEN rt.talle = 't2' THEN rt.cantidad ELSE 0 END) AS t2,
+                            SUM(CASE WHEN rt.talle = 't3' THEN rt.cantidad ELSE 0 END) AS t3,
+                            SUM(CASE WHEN rt.talle = 't4' THEN rt.cantidad ELSE 0 END) AS t4,
+                            SUM(CASE WHEN rt.talle = 't5' THEN rt.cantidad ELSE 0 END) AS t5,
+                            SUM(CASE WHEN rt.talle = 't6' THEN rt.cantidad ELSE 0 END) AS t6,
+                            SUM(CASE WHEN rt.talle = 't7' THEN rt.cantidad ELSE 0 END) AS t7,
+                            SUM(CASE WHEN rt.talle = 't8' THEN rt.cantidad ELSE 0 END) AS t8,
+                            SUM(CASE WHEN rt.talle = 't9' THEN rt.cantidad ELSE 0 END) AS t9,
+                            SUM(CASE WHEN rt.talle = 't10' THEN rt.cantidad ELSE 0 END) AS t10
+
+                        FROM recepciones_talles_producto rt
+                        INNER JOIN recepciones r ON r.id = rt.idRecepcion
+                        GROUP BY r.idOrden, rt.idProducto
+
+                    ) r 
+                    ON r.idProducto = op.idProducto 
+                    AND r.idOrden = op.idOrden
                     `
                 }
 
@@ -897,6 +966,7 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:bo
                 " pro.descripcion, tp.descripcion, stp.descripcion, " +
                 condicionAdicional +
                 " g.descripcion, g.abreviatura, m.descripcion, t.descripcion, t.abreviatura " +
+                having +
                 orden +
                 paginado +
                 endCount;

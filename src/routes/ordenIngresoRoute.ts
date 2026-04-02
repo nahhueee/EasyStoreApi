@@ -25,6 +25,17 @@ router.get('/obtener/:idOrden', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
+
+router.get('/obtener-recepciones/:idOrden', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await OrdenesRepo.ObtenerHistorialRecepciones(req.params.idOrden));
+
+    } catch(error:any){
+        let msg = "Error al obtener el historial de recepciones.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 //#endregion
 
 //#region ABM
@@ -56,6 +67,17 @@ router.delete('/eliminar/:id', async (req:Request, res:Response) => {
 
     } catch(error:any){
         let msg = "Error al intentar eliminar la orden de ingreso.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.post('/agregar-recepcion', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await OrdenesRepo.AgregarRecepcion(req.body));
+
+    } catch(error:any){
+        let msg = "Error al intentar agregar la orden de recepción.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }
