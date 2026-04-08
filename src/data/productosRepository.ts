@@ -825,8 +825,6 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:bo
         
         if (pedidos == true) 
             filtro += " AND v.idProceso = 6";
-        if (proyectados == true) 
-            filtro += " AND op.estado = 'Pendiente'";
         // #endregion
 
         // #region ORDENAMIENTO
@@ -908,46 +906,64 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:bo
                 if(proyectados == true){
                     query += 
                     `
-                        'PROYECTADO' AS proceso, 
+                    'PROYECTADO' AS proceso, 
                         'PROY' AS abrevProceso,
 
-                        SUM(GREATEST(IFNULL(op.t1,0) - IFNULL(r.t1, 0), 0)) AS t1,
-                        SUM(GREATEST(IFNULL(op.t2,0) - IFNULL(r.t2, 0), 0)) AS t2,
-                        SUM(GREATEST(IFNULL(op.t3,0) - IFNULL(r.t3, 0), 0)) AS t3,
-                        SUM(GREATEST(IFNULL(op.t4,0) - IFNULL(r.t4, 0), 0)) AS t4,
-                        SUM(GREATEST(IFNULL(op.t5,0) - IFNULL(r.t5, 0), 0)) AS t5,
-                        SUM(GREATEST(IFNULL(op.t6,0) - IFNULL(r.t6, 0), 0)) AS t6,
-                        SUM(GREATEST(IFNULL(op.t7,0) - IFNULL(r.t7, 0), 0)) AS t7,
-                        SUM(GREATEST(IFNULL(op.t8,0) - IFNULL(r.t8, 0), 0)) AS t8,
-                        SUM(GREATEST(IFNULL(op.t9,0) - IFNULL(r.t9, 0), 0)) AS t9,
-                        SUM(GREATEST(IFNULL(op.t10,0) - IFNULL(r.t10, 0), 0)) AS t10
+                        SUM(GREATEST(IFNULL(op.t1,0) - IFNULL(r.t1, 0) - IFNULL(b.t1, 0), 0)) AS t1,
+                        SUM(GREATEST(IFNULL(op.t2,0) - IFNULL(r.t2, 0) - IFNULL(b.t2, 0), 0)) AS t2,
+                        SUM(GREATEST(IFNULL(op.t3,0) - IFNULL(r.t3, 0) - IFNULL(b.t3, 0), 0)) AS t3,
+                        SUM(GREATEST(IFNULL(op.t4,0) - IFNULL(r.t4, 0) - IFNULL(b.t4, 0), 0)) AS t4,
+                        SUM(GREATEST(IFNULL(op.t5,0) - IFNULL(r.t5, 0) - IFNULL(b.t5, 0), 0)) AS t5,
+                        SUM(GREATEST(IFNULL(op.t6,0) - IFNULL(r.t6, 0) - IFNULL(b.t6, 0), 0)) AS t6,
+                        SUM(GREATEST(IFNULL(op.t7,0) - IFNULL(r.t7, 0) - IFNULL(b.t7, 0), 0)) AS t7,
+                        SUM(GREATEST(IFNULL(op.t8,0) - IFNULL(r.t8, 0) - IFNULL(b.t8, 0), 0)) AS t8,
+                        SUM(GREATEST(IFNULL(op.t9,0) - IFNULL(r.t9, 0) - IFNULL(b.t9, 0), 0)) AS t9,
+                        SUM(GREATEST(IFNULL(op.t10,0) - IFNULL(r.t10, 0) - IFNULL(b.t10, 0), 0)) AS t10
 
-                    FROM ordenes_productos op
-                    INNER JOIN productos p ON p.id = op.idProducto
+                        FROM ordenes_productos op
+                        INNER JOIN productos p ON p.id = op.idProducto
 
-                    LEFT JOIN (
-                        SELECT 
-                            r.idOrden,
-                            rt.idProducto,
+                        LEFT JOIN (
+                            SELECT 
+                                r.idOrden,
+                                rt.idProducto,
 
-                            SUM(CASE WHEN rt.talle = 't1' THEN rt.cantidad ELSE 0 END) AS t1,
-                            SUM(CASE WHEN rt.talle = 't2' THEN rt.cantidad ELSE 0 END) AS t2,
-                            SUM(CASE WHEN rt.talle = 't3' THEN rt.cantidad ELSE 0 END) AS t3,
-                            SUM(CASE WHEN rt.talle = 't4' THEN rt.cantidad ELSE 0 END) AS t4,
-                            SUM(CASE WHEN rt.talle = 't5' THEN rt.cantidad ELSE 0 END) AS t5,
-                            SUM(CASE WHEN rt.talle = 't6' THEN rt.cantidad ELSE 0 END) AS t6,
-                            SUM(CASE WHEN rt.talle = 't7' THEN rt.cantidad ELSE 0 END) AS t7,
-                            SUM(CASE WHEN rt.talle = 't8' THEN rt.cantidad ELSE 0 END) AS t8,
-                            SUM(CASE WHEN rt.talle = 't9' THEN rt.cantidad ELSE 0 END) AS t9,
-                            SUM(CASE WHEN rt.talle = 't10' THEN rt.cantidad ELSE 0 END) AS t10
+                                SUM(CASE WHEN rt.talle = 't1' THEN rt.cantidad ELSE 0 END) AS t1,
+                                SUM(CASE WHEN rt.talle = 't2' THEN rt.cantidad ELSE 0 END) AS t2,
+                                SUM(CASE WHEN rt.talle = 't3' THEN rt.cantidad ELSE 0 END) AS t3,
+                                SUM(CASE WHEN rt.talle = 't4' THEN rt.cantidad ELSE 0 END) AS t4,
+                                SUM(CASE WHEN rt.talle = 't5' THEN rt.cantidad ELSE 0 END) AS t5,
+                                SUM(CASE WHEN rt.talle = 't6' THEN rt.cantidad ELSE 0 END) AS t6,
+                                SUM(CASE WHEN rt.talle = 't7' THEN rt.cantidad ELSE 0 END) AS t7,
+                                SUM(CASE WHEN rt.talle = 't8' THEN rt.cantidad ELSE 0 END) AS t8,
+                                SUM(CASE WHEN rt.talle = 't9' THEN rt.cantidad ELSE 0 END) AS t9,
+                                SUM(CASE WHEN rt.talle = 't10' THEN rt.cantidad ELSE 0 END) AS t10
 
-                        FROM recepciones_talles_producto rt
-                        INNER JOIN recepciones r ON r.id = rt.idRecepcion
-                        GROUP BY r.idOrden, rt.idProducto
+                            FROM recepciones_talles_producto rt
+                            INNER JOIN recepciones r ON r.id = rt.idRecepcion
+                            GROUP BY r.idOrden, rt.idProducto
+                        ) r 
+                        ON r.idProducto = op.idProducto 
+                        AND r.idOrden = op.idOrden
 
-                    ) r 
-                    ON r.idProducto = op.idProducto 
-                    AND r.idOrden = op.idOrden
+                        LEFT JOIN (
+                            SELECT 
+                                idOrden,
+                                idProducto,
+                                IFNULL(t1, 0) AS t1,
+                                IFNULL(t2, 0) AS t2,
+                                IFNULL(t3, 0) AS t3,
+                                IFNULL(t4, 0) AS t4,
+                                IFNULL(t5, 0) AS t5,
+                                IFNULL(t6, 0) AS t6,
+                                IFNULL(t7, 0) AS t7,
+                                IFNULL(t8, 0) AS t8,
+                                IFNULL(t9, 0) AS t9,
+                                IFNULL(t10, 0) AS t10
+                            FROM ordenes_productos_bajas
+                        ) b
+                        ON b.idProducto = op.idProducto
+                        AND b.idOrden = op.idOrden
                     `
                 }
 

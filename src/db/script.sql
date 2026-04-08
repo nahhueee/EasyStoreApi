@@ -437,7 +437,7 @@ CREATE TABLE ordenes_ingreso(
     observaciones VARCHAR(300),
     usuario VARCHAR(30),
     estado VARCHAR(15),
-    actualizacion DATETIME
+    alta DATETIME
 );
 
 DROP TABLE IF EXISTS ordenes_productos;
@@ -458,10 +458,30 @@ CREATE TABLE ordenes_productos (
     t8 INT,
     t9 INT,
     t10 INT,
-    estado ENUM('Pendiente', 'Ingresado') NOT NULL DEFAULT 'Pendiente',
     talles VARCHAR(100)
 )
 ENGINE=InnoDB;
+
+CREATE TABLE ordenes_productos_bajas (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    idOrden INT NOT NULL,
+    idProducto INT NOT NULL,
+    idLineaTalle INT NULL,
+    t1 INT,
+    t2 INT,
+    t3 INT,
+    t4 INT,
+    t5 INT,
+    t6 INT,
+    t7 INT,
+    t8 INT,
+    t9 INT,
+    t10 INT,
+    talles VARCHAR(100),
+    obs VARCHAR(250),
+    usuarioBaja VARCHAR(30),
+    fechaBaja DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
 
 DROP TABLE IF EXISTS recepciones;
 CREATE TABLE recepciones (
@@ -481,6 +501,7 @@ CREATE TABLE recepciones_talles_producto (
     cantidad INT NOT NULL,
     original INT
 )ENGINE=InnoDB;
+
 
 
 INSERT INTO parametros(clave, valor) 

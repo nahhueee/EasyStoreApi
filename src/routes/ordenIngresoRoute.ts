@@ -36,6 +36,28 @@ router.get('/obtener-recepciones/:idOrden', async (req:Request, res:Response) =>
         res.status(500).send(msg);
     }
 });
+
+router.get('/obtener-proximo', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await OrdenesRepo.ObtenerProximoNroOrden());
+
+    } catch(error:any){
+        let msg = "Error al obtener el proximo nro de orden.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/datos-reporte/:idOrden', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await OrdenesRepo.ObtenerDatosReporte(req.params.idOrden));
+
+    } catch(error:any){
+        let msg = "Error al obtener los datos del reporte.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 //#endregion
 
 //#region ABM

@@ -58,13 +58,233 @@ class OrdenIngresoRepository{
         orden.idProveedor = row['idProveedor'];
         orden.observaciones = row['observaciones'];
         orden.usuario = row['usuario'];
+        orden.alta = row['alta'];
         orden.actualizacion = row['actualizacion'];
-        
+       
         const resultadoProductos = await ObtenerProductosOrden(connection, row['id'], unico);
         orden.productos = resultadoProductos.productos;
         orden.estado = resultadoProductos.estado;
 
         return orden;
+    }
+
+    async ObtenerProximoNroOrden() {
+        const connection = await db.getConnection();
+        
+        try {
+            const consulta = `
+                SELECT id FROM ordenes_ingreso
+                ORDER BY id DESC
+                LIMIT 1
+            `;
+            
+            const [rows]: any = await connection.query(consulta);
+            return rows[0].id + 1;
+
+        } catch (error: any) {
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async ObtenerDatosReporte(idOrden) {
+        const connection = await db.getConnection();
+        
+        try {
+            const consulta = `
+                SELECT
+                    r.idProducto,
+                    p.codigo,
+                    p.nombre AS nombreProducto,
+                    c.descripcion AS color,
+                    r.tipo,
+                    DATE_FORMAT(r.fecha, '%d/%m/%Y') AS fecha,
+                    r.usuario,
+                    r.idRecepcion,
+                    r.t1, r.t2, r.t3, r.t4, r.t5,
+                    r.t6, r.t7, r.t8, r.t9, r.t10,
+                    r.total
+                FROM (
+
+                    -- ============================================================
+                    -- BLOQUE 1: RESUMEN (pedido / recibido / pendiente) por producto
+                    -- ============================================================
+                    SELECT
+                        op.idProducto,
+                        op.idLineaTalle,
+                        op.talles,
+                        1                                               AS orden_bloque,
+                        'PEDIDO'                                        AS tipo,
+                        NULL                                            AS fecha,
+                        NULL                                            AS usuario,
+                        NULL                                            AS idRecepcion,
+                        op.t1, op.t2, op.t3, op.t4, op.t5,
+                        op.t6, op.t7, op.t8, op.t9, op.t10,
+                        COALESCE(op.t1,0)+COALESCE(op.t2,0)+COALESCE(op.t3,0)+
+                        COALESCE(op.t4,0)+COALESCE(op.t5,0)+COALESCE(op.t6,0)+
+                        COALESCE(op.t7,0)+COALESCE(op.t8,0)+COALESCE(op.t9,0)+
+                        COALESCE(op.t10,0)                              AS total
+                    FROM ordenes_productos op
+                    WHERE op.idOrden = ?
+
+                    UNION ALL
+
+                    -- Subtotal recibido acumulado
+                    SELECT
+                        op.idProducto,
+                        op.idLineaTalle,
+                        op.talles,
+                        2                                               AS orden_bloque,
+                        'RECIBIDO'                                      AS tipo,
+                        NULL, NULL, NULL,
+                        SUM(CASE WHEN rtp.talle = 't1'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't2'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't3'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't4'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't5'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't6'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't7'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't8'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't9'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't10' THEN rtp.cantidad ELSE 0 END),
+                        SUM(rtp.cantidad)                               AS total
+                    FROM ordenes_productos op
+                    JOIN recepciones r
+                        ON r.idOrden = op.idOrden
+                    JOIN recepciones_talles_producto rtp
+                        ON rtp.idRecepcion  = r.id
+                        AND rtp.idProducto  = op.idProducto
+                        AND rtp.idLineaTalle = op.idLineaTalle
+                    WHERE op.idOrden = ?
+                    GROUP BY op.idProducto, op.idLineaTalle, op.talles
+
+                    UNION ALL
+
+                    -- Pendiente (pedido - recibido)
+                    SELECT
+                        op.idProducto,
+                        op.idLineaTalle,
+                        op.talles,
+                        3                                               AS orden_bloque,
+                        'PENDIENTE'                                     AS tipo,
+                        NULL, NULL, NULL,
+                        COALESCE(op.t1,0)  - SUM(CASE WHEN rtp.talle='t1'  THEN rtp.cantidad ELSE 0 END),
+                        COALESCE(op.t2,0)  - SUM(CASE WHEN rtp.talle='t2'  THEN rtp.cantidad ELSE 0 END),
+                        COALESCE(op.t3,0)  - SUM(CASE WHEN rtp.talle='t3'  THEN rtp.cantidad ELSE 0 END),
+                        COALESCE(op.t4,0)  - SUM(CASE WHEN rtp.talle='t4'  THEN rtp.cantidad ELSE 0 END),
+                        COALESCE(op.t5,0)  - SUM(CASE WHEN rtp.talle='t5'  THEN rtp.cantidad ELSE 0 END),
+                        COALESCE(op.t6,0)  - SUM(CASE WHEN rtp.talle='t6'  THEN rtp.cantidad ELSE 0 END),
+                        COALESCE(op.t7,0)  - SUM(CASE WHEN rtp.talle='t7'  THEN rtp.cantidad ELSE 0 END),
+                        COALESCE(op.t8,0)  - SUM(CASE WHEN rtp.talle='t8'  THEN rtp.cantidad ELSE 0 END),
+                        COALESCE(op.t9,0)  - SUM(CASE WHEN rtp.talle='t9'  THEN rtp.cantidad ELSE 0 END),
+                        COALESCE(op.t10,0) - SUM(CASE WHEN rtp.talle='t10' THEN rtp.cantidad ELSE 0 END),
+                        (
+                            COALESCE(op.t1,0)+COALESCE(op.t2,0)+COALESCE(op.t3,0)+
+                            COALESCE(op.t4,0)+COALESCE(op.t5,0)+COALESCE(op.t6,0)+
+                            COALESCE(op.t7,0)+COALESCE(op.t8,0)+COALESCE(op.t9,0)+
+                            COALESCE(op.t10,0)
+                        ) - SUM(rtp.cantidad)                           AS total
+                    FROM ordenes_productos op
+                    JOIN recepciones r
+                        ON r.idOrden = op.idOrden
+                    JOIN recepciones_talles_producto rtp
+                        ON rtp.idRecepcion   = r.id
+                        AND rtp.idProducto   = op.idProducto
+                        AND rtp.idLineaTalle = op.idLineaTalle
+                    WHERE op.idOrden = ?
+                    GROUP BY
+                        op.idProducto, op.idLineaTalle, op.talles,
+                        op.t1, op.t2, op.t3, op.t4, op.t5,
+                        op.t6, op.t7, op.t8, op.t9, op.t10
+
+                    -- ============================================================
+                    -- BLOQUE 2: RECEPCIONES cronológicas
+                    -- ============================================================
+                    UNION ALL
+
+                    SELECT
+                        op.idProducto,
+                        op.idLineaTalle,
+                        op.talles,
+                        4                                               AS orden_bloque,
+                        CONCAT('RECEPCION #', r.id)                     AS tipo,
+                        r.fecha,
+                        r.usuario,
+                        r.id                                            AS idRecepcion,
+                        SUM(CASE WHEN rtp.talle = 't1'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't2'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't3'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't4'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't5'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't6'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't7'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't8'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't9'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle = 't10' THEN rtp.cantidad ELSE 0 END),
+                        SUM(rtp.cantidad)                               AS total
+                    FROM ordenes_productos op
+                    JOIN recepciones r
+                        ON r.idOrden = op.idOrden
+                    JOIN recepciones_talles_producto rtp
+                        ON rtp.idRecepcion   = r.id
+                        AND rtp.idProducto   = op.idProducto
+                        AND rtp.idLineaTalle = op.idLineaTalle
+                    WHERE op.idOrden = ?
+                    GROUP BY
+                        op.idProducto, op.idLineaTalle, op.talles,
+                        r.id, r.fecha, r.usuario
+
+                    -- ============================================================
+                    -- BLOQUE 3: BAJAS (si existen)
+                    -- ============================================================
+                    UNION ALL
+
+                    SELECT
+                        opb.idProducto,
+                        opb.idLineaTalle,
+                        op.talles,
+                        5                                               AS orden_bloque,
+                        CONCAT('BAJA - ', COALESCE(opb.obs, ''))        AS tipo,
+                        opb.fechaBaja                                   AS fecha,
+                        opb.usuarioBaja                                 AS usuario,
+                        NULL                                            AS idRecepcion,
+                        opb.t1, opb.t2, opb.t3, opb.t4, opb.t5,
+                        opb.t6, opb.t7, opb.t8, opb.t9, opb.t10,
+                        COALESCE(opb.t1,0)+COALESCE(opb.t2,0)+COALESCE(opb.t3,0)+
+                        COALESCE(opb.t4,0)+COALESCE(opb.t5,0)+COALESCE(opb.t6,0)+
+                        COALESCE(opb.t7,0)+COALESCE(opb.t8,0)+COALESCE(opb.t9,0)+
+                        COALESCE(opb.t10,0)                             AS total
+                    FROM ordenes_productos_bajas opb
+                    JOIN ordenes_productos op
+                        ON  op.idOrden     = opb.idOrden
+                        AND op.idProducto  = opb.idProducto
+                        AND op.idLineaTalle = opb.idLineaTalle
+                    WHERE opb.idOrden = ?
+
+                ) AS r
+                LEFT JOIN productos p 
+                    ON p.id = r.idProducto 
+                LEFT JOIN colores c 
+                    ON c.id = p.idColor 
+                ORDER BY
+                    idProducto      ASC,
+                    idLineaTalle    ASC,
+                    orden_bloque    ASC,
+                    fecha           ASC;
+            `;
+            
+            const [rows]: any = await connection.query(
+            consulta,
+            [idOrden, idOrden, idOrden, idOrden, idOrden]
+            );
+            return rows;
+
+        } catch (error: any) {
+            throw error;
+        } finally {
+            connection.release();
+        }
     }
 
     //#endregion
@@ -79,7 +299,7 @@ class OrdenIngresoRepository{
             await connection.beginTransaction();
 
             //Insertamos la orden
-            const consulta = "INSERT INTO ordenes_ingreso(idProveedor,corte,fecha,observaciones,usuario,estado,actualizacion) " + 
+            const consulta = "INSERT INTO ordenes_ingreso(idProveedor,corte,fecha,observaciones,usuario,estado,alta) " + 
                              "VALUES(?, ?, ?, ?, ?, ?, NOW())";
             const parametros = [orden.idProveedor, orden.corte, moment(orden.fecha).format('YYYY-MM-DD HH:mm:ss'), orden.observaciones, orden.usuario, orden.estado];
             
@@ -131,19 +351,18 @@ class OrdenIngresoRepository{
             await connection.query("DELETE FROM ordenes_productos WHERE idOrden = ?", [data.id]);
             for (const prod of data.productos) {
                 prod.idOrden = data.id;
-
-                if(prod.estado != "Eliminado"){
-                    InsertProductoOrden(connection, prod);
-                }
+                InsertProductoOrden(connection, prod);
             }
 
             for (const rec of data.recepcionesRevertir) {
 
-                const detalle = await ObtenerDetalleRecepcion(connection, rec);
-                const nroTalle = parseInt(detalle.talle.replace('t', ''));
-                await ProductosRepo.ActualizarInventarioOrden(connection, detalle.idProducto, nroTalle, detalle.cantidad, detalle.idLineaTalle, "-");
-
-                await connection.query("DELETE FROM recepciones_talles_producto WHERE id = ?", [rec]);
+                const detalles = await ObtenerDetallesRecepcion(connection, rec.idProducto, rec.idRecepcion);
+                for (const det of detalles) {
+                    const nroTalle = parseInt(det.talle.replace('t', ''));
+                    await ProductosRepo.ActualizarInventarioOrden(connection, det.idProducto, nroTalle, det.cantidad, det.idLineaTalle, "-");
+                }
+               
+                await connection.query("DELETE FROM recepciones_talles_producto WHERE idProducto = ? && idRecepcion = ?", [rec.idProducto, rec.idRecepcion]);
             }
                 
             //Mandamos la transaccion
@@ -179,11 +398,12 @@ class OrdenIngresoRepository{
         try {
             const SQL = `
                 SELECT 
-                    rt.id,
+                    rt.idRecepcion,
                     rt.idProducto,
                     rt.idLineaTalle,
                     r.fecha,
                     r.usuario,
+                    
 
                     SUM(CASE WHEN rt.talle = 't1' THEN rt.cantidad ELSE 0 END) as XS,
                     SUM(CASE WHEN rt.talle = 't2' THEN rt.cantidad ELSE 0 END) as S,
@@ -201,7 +421,7 @@ class OrdenIngresoRepository{
                 FROM recepciones r
                 INNER JOIN recepciones_talles_producto rt ON rt.idRecepcion = r.id
                 WHERE r.idOrden = ?
-                GROUP BY rt.id, rt.idProducto, rt.idLineaTalle, r.fecha, r.usuario
+                GROUP BY rt.idRecepcion, rt.idProducto, rt.idLineaTalle, r.fecha, r.usuario
                 ORDER BY fecha DESC;
             `;
 
@@ -267,6 +487,37 @@ class OrdenIngresoRepository{
                 const nroTalle = parseInt(item.talle.replace('t', ''));
                 await ProductosRepo.ActualizarInventarioOrden(connection, item.idProducto, nroTalle, item.cantidad, item.idLineaTalle, "+");
             }
+
+            //Marcamos las bajas
+            for (const item of data.bajas) {
+                const sql = `
+                INSERT INTO ordenes_productos_bajas 
+                    (idOrden, idProducto, idLineaTalle, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, talles, obs, usuarioBaja)
+                VALUES 
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `;
+
+                const parametros = [
+                data.idOrden,
+                item.idProducto,
+                item.idLineaTalle ?? null,
+                item.t1 ?? 0,
+                item.t2 ?? 0,
+                item.t3 ?? 0,
+                item.t4 ?? 0,
+                item.t5 ?? 0,
+                item.t6 ?? 0,
+                item.t7 ?? 0,
+                item.t8 ?? 0,
+                item.t9 ?? 0,
+                item.t10 ?? 0,
+                item.talles ?? null,
+                item.obsBaja,
+                data.usuario
+                ];
+
+                await connection.query(sql, parametros);
+            }
             
             //Mandamos la transaccion
             await connection.commit();
@@ -296,6 +547,9 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         if(filtros.id && filtros.id != 0){
             filtro += " AND oi.id = " + filtros.id;
         }
+        if(filtros.nroOrden && filtros.nroOrden != 0){
+            filtro += " AND oi.id = " + filtros.nroOrden;
+        }
 
         if(filtros.nroCorte && filtros.nroCorte != 0){
             filtro += " AND oi.corte = " + filtros.nroCorte;
@@ -317,11 +571,14 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         }
             
         //Arma la Query con el paginado y los filtros correspondientes
-        query = count +
-            " SELECT oi.* FROM ordenes_ingreso oi " +
+        query = 
+            count +
+            " SELECT oi.*, " +
+            " (SELECT r.fecha FROM recepciones r WHERE r.idOrden = oi.id ORDER BY r.fecha DESC LIMIT 1) as actualizacion " +
+            " FROM ordenes_ingreso oi " +
             " WHERE 1 = 1 " +
             filtro +
-            " ORDER BY fecha DESC" +
+            " ORDER BY oi.id DESC " +
             paginado +
             endCount;
 
@@ -382,7 +639,6 @@ async function ObtenerProductosOrden(connection, idOrden:number, unico:boolean =
         `, [idOrden]);
 
         const recepcionMap = new Map<string, number>();
-
         if (Array.isArray(recepciones)) {
             recepciones.forEach((r: any) => {
                 const key = `${r.idProducto}_${r.talle}`;
@@ -390,10 +646,34 @@ async function ObtenerProductosOrden(connection, idOrden:number, unico:boolean =
             });
         }
 
+        const [bajas] = await connection.query(`
+            SELECT 
+                idProducto,
+                t1, t2, t3, t4, t5, t6, t7, t8, t9, t10,
+                obs, usuarioBaja, fechaBaja      
+            FROM ordenes_productos_bajas
+            WHERE idOrden = ?
+        `, [idOrden]);
+
+        const bajasMap = new Map<number, any>();
+        if (Array.isArray(bajas)) {
+            bajas.forEach((b: any) => {
+                bajasMap.set(b.idProducto, b);
+            });
+        }
+
+        
         if (Array.isArray(rows)) {
             for (let i = 0; i < rows.length; i++) { 
                 const row = rows[i];
-                
+                const baja = bajasMap.get(row['idProducto']);
+
+                const restar = (campo: string, valor: number) => {
+                    const original = isNaN(valor) ? 0 : valor;
+                    const bajaCantidad = baja?.[campo] ?? 0;
+                    return Math.max(0, original - bajaCantidad);
+                };
+
                 let producto:ProductoOrden = new ProductoOrden();
                 producto.id = row['id'];
                 producto.idProducto = row['idProducto'];
@@ -402,57 +682,80 @@ async function ObtenerProductosOrden(connection, idOrden:number, unico:boolean =
                 producto.cantidad = row['cantidad'];
                 producto.idLineaTalle = row['idLineaTalle'];
                 producto.stockAplicado = row['stockAplicado'];
-                producto.t1 = parseInt(row['t1']);
-                producto.t2 = parseInt(row['t2']);
-                producto.t3 = parseInt(row['t3']);
-                producto.t4 = parseInt(row['t4']);
-                producto.t5 = parseInt(row['t5']);
-                producto.t6 = parseInt(row['t6']);
-                producto.t7 = parseInt(row['t7']);
-                producto.t8 = parseInt(row['t8']);
-                producto.t9 = parseInt(row['t9']);
-                producto.t10 = parseInt(row['t10']);
+                producto.t1  = restar('t1',  parseInt(row['t1']) || 0);
+                producto.t2  = restar('t2',  parseInt(row['t2']) || 0);
+                producto.t3  = restar('t3',  parseInt(row['t3']) || 0);
+                producto.t4  = restar('t4',  parseInt(row['t4']) || 0);
+                producto.t5  = restar('t5',  parseInt(row['t5']) || 0);
+                producto.t6  = restar('t6',  parseInt(row['t6']) || 0);
+                producto.t7  = restar('t7',  parseInt(row['t7']) || 0);
+                producto.t8  = restar('t8',  parseInt(row['t8']) || 0);
+                producto.t9  = restar('t9',  parseInt(row['t9']) || 0);
+                producto.t10 = restar('t10', parseInt(row['t10']) || 0);
                 producto.tallesSeleccionados = row['talles'];
                 producto.color = row['color'];
                 producto.hexa = row['hexa'];
+
+                if (baja) {
+                    baja.total = [baja.t1, baja.t2, baja.t3, baja.t4, baja.t5,
+                                baja.t6, baja.t7, baja.t8, baja.t9, baja.t10]
+                                .reduce((acc, val) => acc + (val ?? 0), 0);
+                }
+
+                producto.baja = baja ?? null;
+
                 producto.codigosBarra = await ObtenerCodigosBarraProducto(connection, producto.idProducto!);
                 
                 let totalOriginal = 0;
                 let totalRecibido = 0;
 
                 for (let iTalle = 1; iTalle <= 10; iTalle++) {
+                    
                     const key = `t${iTalle}`;
 
                     const original = Number(row[key] ?? 0);
                     const recibido = Number(recepcionMap.get(`${producto.idProducto}_${key}`) ?? 0);
+                    const bajaCantidad = baja?.[key] ?? 0;
+                    const originalNeto = Math.max(0, original - bajaCantidad);
 
-                    totalOriginal += original;
+                    totalOriginal += originalNeto;
                     totalRecibido += recibido;
 
-                    totalOrdenOriginal += totalOriginal;
-                    totalOrdenRecibido += totalRecibido;
+                    totalOrdenOriginal += originalNeto;
+                    totalOrdenRecibido += recibido;
 
-                    if(!unico)
-                        producto[key] = original - recibido; 
+                    if(!unico){
+                        const bajaCantidad = baja?.[key] ?? 0;
+                        producto[key] = Math.max(0, original - recibido - bajaCantidad); 
+                    }
                 }
 
-                if (totalRecibido === 0) producto.estado = 'Pendiente';
+                const tieneBaja = bajasMap.has(producto.idProducto!);
+                if (tieneBaja) producto.estado = 'Incompleto';
+                else if (totalRecibido === 0) producto.estado = 'Pendiente';
                 else if (totalRecibido < totalOriginal) producto.estado = 'Parcial';
                 else producto.estado = 'Ingresado';
+
                 productos.push(producto);
             }
         }
 
-
         let estadoOrden = 'Nueva';
-        if (totalOrdenRecibido === 0) {
+
+        const hayBajas = bajas && Array.isArray(bajas) && (bajas as any[]).length > 0;
+
+        if (totalOrdenRecibido === 0 && !hayBajas) {
             estadoOrden = 'Nueva';
+        } else if (hayBajas && totalOrdenRecibido === 0) {
+            estadoOrden = 'Incompleta';
         } else if (totalOrdenRecibido < totalOrdenOriginal) {
             estadoOrden = 'Pendiente';
+        } else if (hayBajas) {
+            estadoOrden = 'Incompleta';
         } else {
             estadoOrden = 'Finalizada';
         }
-
+ 
         return {
             productos,
             estado: estadoOrden,
@@ -466,8 +769,8 @@ async function ObtenerProductosOrden(connection, idOrden:number, unico:boolean =
 }
 async function ObtenerCodigosBarraProducto(connection, idProducto:number){
     try {
-        const consulta = "SELECT codigo_barra, t.descripcion talle FROM codigos_barra cb " + 
-                         "INNER JOIN talles t ON t.id = CAST(SUBSTRING(cb.codigo_barra, 7, 3) AS UNSIGNED) " +
+        const consulta = "SELECT codigo_barra, t.descripcion talle FROM talles_producto tp " + 
+                         "INNER JOIN talles t ON t.descripcion = tp.talle " +
                          "WHERE idProducto = ? "
                          "ORDER BY t.posicion ASC ";
                          ;
@@ -479,15 +782,15 @@ async function ObtenerCodigosBarraProducto(connection, idProducto:number){
     }
 }
 
-async function ObtenerDetalleRecepcion(connection, id:any){
+async function ObtenerDetallesRecepcion(connection, idProducto:number, idRecepcion:number){
     try {
         let consulta = `
             SELECT idProducto, talle, idLineaTalle, cantidad
             FROM recepciones_talles_producto
-            WHERE id = ?
+            WHERE idProducto = ? AND idRecepcion = ?
         `
-        const rows = await connection.query(consulta, [id]);
-        return rows[0][0];
+        const rows = await connection.query(consulta, [idProducto, idRecepcion]);
+        return rows[0];
     } catch (error:any) {
         throw error;
     } 

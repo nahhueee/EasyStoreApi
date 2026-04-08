@@ -6,9 +6,10 @@ export class OrdenIngreso{
   corte: number = 0;
   usuario: string = "";
   actualizacion: Date = new Date();
+  alta: Date = new Date();
   estado: string = "";
   productos: ProductoOrden[] = [];
-  recepcionesRevertir:number[]=[];
+  recepcionesRevertir:any[]=[];
 
   constructor(data?: any) {
     if (data) {
@@ -18,8 +19,9 @@ export class OrdenIngreso{
       this.observaciones = data.observaciones;
       this.corte = data.corte;
       this.usuario = data.usuario;
-      this.actualizacion = data.actualizacion;
+      this.alta = data.alta;
       this.productos = data.productos;
+      this.actualizacion = data.actualizacion;
     }
   }
 }
@@ -37,7 +39,7 @@ export class ProductoOrden{
     cantidad?: number;
     stockAplicado?: number = 0;
     idLineaTalle?:number;
-    estado: "Pendiente" | "Ingresado" | "Eliminado" | "Parcial" = "Pendiente";
+    estado: "Pendiente" | "Ingresado" | "Incompleto" | "Parcial" = "Pendiente";
     t1?: number;
     t2?: number;
     t3?: number;
@@ -51,7 +53,15 @@ export class ProductoOrden{
     tallesSeleccionados:string = "";
     codigosBarra:[] = [];
     recepciones: [] = [];
-  
+    baja?: {
+        t1: number; t2: number; t3: number; t4: number; t5: number;
+        t6: number; t7: number; t8: number; t9: number; t10: number;
+        obs: string;
+        usuarioBaja: string;
+        fechaBaja: Date;
+        total: number;
+    } | null;
+    
     constructor(data?: any) {
         if (data) {
         this.idProducto = data.idProducto;
