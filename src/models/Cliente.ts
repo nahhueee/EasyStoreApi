@@ -16,6 +16,7 @@ export class Cliente {
     idCondicionPago?:number;
     condicionPago?:string;
     idCategoria?:number;
+    inicial?:number;
     fechaAlta?:Date;
     direcciones?:DireccionesCliente[];
     ultimoDescuento?:UltimoDescuentoCliente;

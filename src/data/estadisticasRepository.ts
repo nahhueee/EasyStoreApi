@@ -22,43 +22,34 @@ class EstadisticasRepository{
             const consulta = `
                 SELECT
                     COUNT(*) AS cantidad_total_ventas,
-
                     SUM(v.total) AS total_facturado,
 
-                    SUM(IFNULL(p.entregado, 0)) AS total_cobrado,
-
-                    SUM(v.total - IFNULL(p.entregado, 0)) AS deuda_total,
+                    SUM(CASE 
+                        WHEN v.idTComprobante = 99 THEN 1 
+                        ELSE 0 
+                    END) AS cantidad_cotizaciones,
 
                     SUM(CASE 
-                        WHEN IFNULL(p.entregado, 0) >= v.total THEN 1 
+                        WHEN v.idTComprobante = 99 THEN v.total 
                         ELSE 0 
-                    END) AS cantidad_pagas,
+                    END) AS total_cotizaciones,
 
                     SUM(CASE 
-                        WHEN IFNULL(p.entregado, 0) < v.total THEN 1 
+                        WHEN v.idTComprobante NOT IN (99, 3, 8, 13, 100) THEN 1 
                         ELSE 0 
-                    END) AS cantidad_impagas,
+                    END) AS cantidad_fiscal,
 
                     SUM(CASE 
-                        WHEN IFNULL(p.entregado, 0) >= v.total THEN v.total 
+                        WHEN v.idTComprobante NOT IN (99, 3, 8, 13, 100) THEN v.total 
                         ELSE 0 
-                    END) AS total_ventas_pagas,
-
-                    SUM(CASE 
-                        WHEN IFNULL(p.entregado, 0) < v.total THEN v.total 
-                        ELSE 0 
-                    END) AS total_ventas_impagas
+                    END) AS total_fiscal
 
                 FROM ventas v
-                LEFT JOIN (
-                    SELECT idVenta, SUM(monto) AS entregado
-                    FROM ventas_pagos
-                    GROUP BY idVenta
-                ) p ON p.idVenta = v.id
 
                 WHERE v.idCliente = ?
                 ${filtroFecha}
                 AND v.fechaBaja IS NULL
+                AND v.idTComprobante NOT IN (3, 8, 13, 100)
             `;
 
 
@@ -67,14 +58,12 @@ class EstadisticasRepository{
 
             return {
                 cantidad_total_ventas: parseInt(r.cantidad_total_ventas || 0),
-                cantidad_pagas: parseInt(r.cantidad_pagas || 0),
-                cantidad_impagas: parseInt(r.cantidad_impagas || 0),
+                cantidad_cotizaciones: parseInt(r.cantidad_cotizaciones || 0),
+                cantidad_fiscal: parseInt(r.cantidad_fiscal || 0),
 
                 total_facturado: parseFloat(r.total_facturado || 0),
-                total_cobrado: parseFloat(r.total_cobrado || 0),
-                deuda_total: parseFloat(r.deuda_total || 0),
-                total_ventas_pagas: parseFloat(r.total_ventas_pagas || 0),
-                total_ventas_impagas: parseFloat(r.total_ventas_impagas || 0)
+                total_fiscal: parseFloat(r.total_fiscal || 0),
+                total_cotizaciones: parseFloat(r.total_cotizaciones || 0)
             };
 
         } catch (error:any) {
@@ -193,10 +182,9 @@ class EstadisticasRepository{
                 SELECT
                     v.idProceso,
                     pr.descripcion AS proceso,
+                    pr.abrev AS abrev,
                     COUNT(*) AS cantidad_ventas,
-                    SUM(v.total) AS monto_total,
-                    SUM(LEAST(IFNULL(p.entregado,0), v.total)) AS monto_pagas,
-                    SUM(GREATEST(v.total - IFNULL(p.entregado,0), 0)) AS monto_impagas
+                    SUM(v.total) AS monto_total
                 FROM ventas v
                 INNER JOIN procesos_venta pr 
                     ON pr.id = v.idProceso
@@ -217,10 +205,9 @@ class EstadisticasRepository{
             return  rows.map((r: any) => ({
                 idProceso: parseInt(r.idProceso),
                 proceso: r.proceso,
+                abrev: r.abrev,
                 cantidad_ventas: parseInt(r.cantidad_ventas),
                 monto_total: parseFloat(r.monto_total || 0),
-                monto_pagas: parseFloat(r.monto_pagas || 0),
-                monto_impagas: parseFloat(r.monto_impagas || 0)
             }));
 
 

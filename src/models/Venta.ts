@@ -123,12 +123,14 @@ import { Color, TallesProducto } from "./Producto";
     idMetodo? : number;
     metodo?: string;
     monto?: number;
+    idRecibo?:number;
   
     constructor(data?: any) {
       if (data) {
         this.idMetodo = data.idMetodo;
+        this.monto = data.monto;
+        this.idRecibo = data.idRecibo;
         this.metodo = data.metodo;
-        this.monto = data
       }
     }
   }

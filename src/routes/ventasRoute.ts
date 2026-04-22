@@ -27,6 +27,17 @@ router.get('/obtener-una/:idVenta', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
+router.get('/obtener-venta-cuenta/:idVenta', async (req:Request, res:Response) => {
+    try{ 
+        
+        res.json(await VentasRepo.ObtenerVenta(req.params.idVenta, true));
+
+    } catch(error:any){
+        let msg = "Error al obtener la venta.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 
 router.get('/obtener-proximo/:idProceso', async (req:Request, res:Response) => {
     try{ 

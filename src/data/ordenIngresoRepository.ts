@@ -107,127 +107,145 @@ class OrdenIngresoRepository{
                     r.total
                 FROM (
 
-                    -- ============================================================
-                    -- BLOQUE 1: RESUMEN (pedido / recibido / pendiente) por producto
-                    -- ============================================================
+                    -- BLOQUE 1: PEDIDO original
                     SELECT
-                        op.idProducto,
-                        op.idLineaTalle,
-                        op.talles,
-                        1                                               AS orden_bloque,
-                        'PEDIDO'                                        AS tipo,
-                        NULL                                            AS fecha,
-                        NULL                                            AS usuario,
-                        NULL                                            AS idRecepcion,
+                        op.idProducto, op.idLineaTalle, op.talles,
+                        1 AS orden_bloque,
+                        'PEDIDO' AS tipo,
+                        NULL AS fecha, NULL AS usuario, NULL AS idRecepcion,
                         op.t1, op.t2, op.t3, op.t4, op.t5,
                         op.t6, op.t7, op.t8, op.t9, op.t10,
                         COALESCE(op.t1,0)+COALESCE(op.t2,0)+COALESCE(op.t3,0)+
                         COALESCE(op.t4,0)+COALESCE(op.t5,0)+COALESCE(op.t6,0)+
                         COALESCE(op.t7,0)+COALESCE(op.t8,0)+COALESCE(op.t9,0)+
-                        COALESCE(op.t10,0)                              AS total
+                        COALESCE(op.t10,0) AS total
                     FROM ordenes_productos op
                     WHERE op.idOrden = ?
 
                     UNION ALL
 
-                    -- Subtotal recibido acumulado
+                    -- BLOQUE 2: RECIBIDO acumulado
                     SELECT
-                        op.idProducto,
-                        op.idLineaTalle,
-                        op.talles,
-                        2                                               AS orden_bloque,
-                        'RECIBIDO'                                      AS tipo,
+                        op.idProducto, op.idLineaTalle, op.talles,
+                        2 AS orden_bloque,
+                        'RECIBIDO' AS tipo,
                         NULL, NULL, NULL,
-                        SUM(CASE WHEN rtp.talle = 't1'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't2'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't3'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't4'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't5'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't6'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't7'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't8'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't9'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't10' THEN rtp.cantidad ELSE 0 END),
-                        SUM(rtp.cantidad)                               AS total
+                        SUM(CASE WHEN rtp.talle='t1'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t2'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t3'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t4'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t5'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t6'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t7'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t8'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t9'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t10' THEN rtp.cantidad ELSE 0 END),
+                        SUM(rtp.cantidad) AS total
                     FROM ordenes_productos op
                     JOIN recepciones r
                         ON r.idOrden = op.idOrden
                     JOIN recepciones_talles_producto rtp
-                        ON rtp.idRecepcion  = r.id
-                        AND rtp.idProducto  = op.idProducto
+                        ON  rtp.idRecepcion  = r.id
+                        AND rtp.idProducto   = op.idProducto
                         AND rtp.idLineaTalle = op.idLineaTalle
                     WHERE op.idOrden = ?
                     GROUP BY op.idProducto, op.idLineaTalle, op.talles
 
                     UNION ALL
 
-                    -- Pendiente (pedido - recibido)
+                    -- BLOQUE 3: PENDIENTE (pedido - recibido - bajas)
                     SELECT
-                        op.idProducto,
-                        op.idLineaTalle,
-                        op.talles,
-                        3                                               AS orden_bloque,
-                        'PENDIENTE'                                     AS tipo,
+                        op.idProducto, op.idLineaTalle, op.talles,
+                        3 AS orden_bloque,
+                        'PENDIENTE' AS tipo,
                         NULL, NULL, NULL,
-                        COALESCE(op.t1,0)  - SUM(CASE WHEN rtp.talle='t1'  THEN rtp.cantidad ELSE 0 END),
-                        COALESCE(op.t2,0)  - SUM(CASE WHEN rtp.talle='t2'  THEN rtp.cantidad ELSE 0 END),
-                        COALESCE(op.t3,0)  - SUM(CASE WHEN rtp.talle='t3'  THEN rtp.cantidad ELSE 0 END),
-                        COALESCE(op.t4,0)  - SUM(CASE WHEN rtp.talle='t4'  THEN rtp.cantidad ELSE 0 END),
-                        COALESCE(op.t5,0)  - SUM(CASE WHEN rtp.talle='t5'  THEN rtp.cantidad ELSE 0 END),
-                        COALESCE(op.t6,0)  - SUM(CASE WHEN rtp.talle='t6'  THEN rtp.cantidad ELSE 0 END),
-                        COALESCE(op.t7,0)  - SUM(CASE WHEN rtp.talle='t7'  THEN rtp.cantidad ELSE 0 END),
-                        COALESCE(op.t8,0)  - SUM(CASE WHEN rtp.talle='t8'  THEN rtp.cantidad ELSE 0 END),
-                        COALESCE(op.t9,0)  - SUM(CASE WHEN rtp.talle='t9'  THEN rtp.cantidad ELSE 0 END),
-                        COALESCE(op.t10,0) - SUM(CASE WHEN rtp.talle='t10' THEN rtp.cantidad ELSE 0 END),
-                        (
-                            COALESCE(op.t1,0)+COALESCE(op.t2,0)+COALESCE(op.t3,0)+
+                        GREATEST(0, COALESCE(op.t1,0)  - SUM(CASE WHEN rtp.talle='t1'  THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t1),0)),
+                        GREATEST(0, COALESCE(op.t2,0)  - SUM(CASE WHEN rtp.talle='t2'  THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t2),0)),
+                        GREATEST(0, COALESCE(op.t3,0)  - SUM(CASE WHEN rtp.talle='t3'  THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t3),0)),
+                        GREATEST(0, COALESCE(op.t4,0)  - SUM(CASE WHEN rtp.talle='t4'  THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t4),0)),
+                        GREATEST(0, COALESCE(op.t5,0)  - SUM(CASE WHEN rtp.talle='t5'  THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t5),0)),
+                        GREATEST(0, COALESCE(op.t6,0)  - SUM(CASE WHEN rtp.talle='t6'  THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t6),0)),
+                        GREATEST(0, COALESCE(op.t7,0)  - SUM(CASE WHEN rtp.talle='t7'  THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t7),0)),
+                        GREATEST(0, COALESCE(op.t8,0)  - SUM(CASE WHEN rtp.talle='t8'  THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t8),0)),
+                        GREATEST(0, COALESCE(op.t9,0)  - SUM(CASE WHEN rtp.talle='t9'  THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t9),0)),
+                        GREATEST(0, COALESCE(op.t10,0) - SUM(CASE WHEN rtp.talle='t10' THEN rtp.cantidad ELSE 0 END) - COALESCE(MAX(baja.t10),0)),
+                        GREATEST(0,
+                            (COALESCE(op.t1,0)+COALESCE(op.t2,0)+COALESCE(op.t3,0)+
                             COALESCE(op.t4,0)+COALESCE(op.t5,0)+COALESCE(op.t6,0)+
                             COALESCE(op.t7,0)+COALESCE(op.t8,0)+COALESCE(op.t9,0)+
-                            COALESCE(op.t10,0)
-                        ) - SUM(rtp.cantidad)                           AS total
+                            COALESCE(op.t10,0))
+                            - SUM(rtp.cantidad)
+                            - COALESCE(MAX(
+                                COALESCE(baja.t1,0)+COALESCE(baja.t2,0)+COALESCE(baja.t3,0)+
+                                COALESCE(baja.t4,0)+COALESCE(baja.t5,0)+COALESCE(baja.t6,0)+
+                                COALESCE(baja.t7,0)+COALESCE(baja.t8,0)+COALESCE(baja.t9,0)+
+                                COALESCE(baja.t10,0)
+                            ),0)
+                        ) AS total
                     FROM ordenes_productos op
                     JOIN recepciones r
                         ON r.idOrden = op.idOrden
                     JOIN recepciones_talles_producto rtp
-                        ON rtp.idRecepcion   = r.id
+                        ON  rtp.idRecepcion  = r.id
                         AND rtp.idProducto   = op.idProducto
                         AND rtp.idLineaTalle = op.idLineaTalle
+                    LEFT JOIN ordenes_productos_bajas baja
+                        ON  baja.idOrden      = op.idOrden
+                        AND baja.idProducto   = op.idProducto
+                        AND baja.idLineaTalle = op.idLineaTalle
                     WHERE op.idOrden = ?
                     GROUP BY
                         op.idProducto, op.idLineaTalle, op.talles,
                         op.t1, op.t2, op.t3, op.t4, op.t5,
                         op.t6, op.t7, op.t8, op.t9, op.t10
 
-                    -- ============================================================
-                    -- BLOQUE 2: RECEPCIONES cronológicas
-                    -- ============================================================
                     UNION ALL
 
+                    -- BLOQUE 4: BAJAS (después del pendiente)
                     SELECT
-                        op.idProducto,
-                        op.idLineaTalle,
-                        op.talles,
-                        4                                               AS orden_bloque,
-                        CONCAT('RECEPCION #', r.id)                     AS tipo,
-                        r.fecha,
-                        r.usuario,
-                        r.id                                            AS idRecepcion,
-                        SUM(CASE WHEN rtp.talle = 't1'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't2'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't3'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't4'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't5'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't6'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't7'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't8'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't9'  THEN rtp.cantidad ELSE 0 END),
-                        SUM(CASE WHEN rtp.talle = 't10' THEN rtp.cantidad ELSE 0 END),
-                        SUM(rtp.cantidad)                               AS total
+                        opb.idProducto, opb.idLineaTalle, op.talles,
+                        4 AS orden_bloque,
+                        CONCAT('BAJA - ', COALESCE(opb.obs, '')) AS tipo,
+                        opb.fechaBaja AS fecha,
+                        opb.usuarioBaja AS usuario,
+                        NULL AS idRecepcion,
+                        opb.t1, opb.t2, opb.t3, opb.t4, opb.t5,
+                        opb.t6, opb.t7, opb.t8, opb.t9, opb.t10,
+                        COALESCE(opb.t1,0)+COALESCE(opb.t2,0)+COALESCE(opb.t3,0)+
+                        COALESCE(opb.t4,0)+COALESCE(opb.t5,0)+COALESCE(opb.t6,0)+
+                        COALESCE(opb.t7,0)+COALESCE(opb.t8,0)+COALESCE(opb.t9,0)+
+                        COALESCE(opb.t10,0) AS total
+                    FROM ordenes_productos_bajas opb
+                    JOIN ordenes_productos op
+                        ON  op.idOrden      = opb.idOrden
+                        AND op.idProducto   = opb.idProducto
+                        AND op.idLineaTalle = opb.idLineaTalle
+                    WHERE opb.idOrden = ?
+
+                    UNION ALL
+
+                    -- BLOQUE 5: RECEPCIONES cronológicas
+                    SELECT
+                        op.idProducto, op.idLineaTalle, op.talles,
+                        5 AS orden_bloque,
+                        CONCAT('RECEPCION #', r.id) AS tipo,
+                        r.fecha, r.usuario, r.id AS idRecepcion,
+                        SUM(CASE WHEN rtp.talle='t1'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t2'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t3'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t4'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t5'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t6'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t7'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t8'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t9'  THEN rtp.cantidad ELSE 0 END),
+                        SUM(CASE WHEN rtp.talle='t10' THEN rtp.cantidad ELSE 0 END),
+                        SUM(rtp.cantidad) AS total
                     FROM ordenes_productos op
                     JOIN recepciones r
                         ON r.idOrden = op.idOrden
                     JOIN recepciones_talles_producto rtp
-                        ON rtp.idRecepcion   = r.id
+                        ON  rtp.idRecepcion  = r.id
                         AND rtp.idProducto   = op.idProducto
                         AND rtp.idLineaTalle = op.idLineaTalle
                     WHERE op.idOrden = ?
@@ -235,41 +253,14 @@ class OrdenIngresoRepository{
                         op.idProducto, op.idLineaTalle, op.talles,
                         r.id, r.fecha, r.usuario
 
-                    -- ============================================================
-                    -- BLOQUE 3: BAJAS (si existen)
-                    -- ============================================================
-                    UNION ALL
-
-                    SELECT
-                        opb.idProducto,
-                        opb.idLineaTalle,
-                        op.talles,
-                        5                                               AS orden_bloque,
-                        CONCAT('BAJA - ', COALESCE(opb.obs, ''))        AS tipo,
-                        opb.fechaBaja                                   AS fecha,
-                        opb.usuarioBaja                                 AS usuario,
-                        NULL                                            AS idRecepcion,
-                        opb.t1, opb.t2, opb.t3, opb.t4, opb.t5,
-                        opb.t6, opb.t7, opb.t8, opb.t9, opb.t10,
-                        COALESCE(opb.t1,0)+COALESCE(opb.t2,0)+COALESCE(opb.t3,0)+
-                        COALESCE(opb.t4,0)+COALESCE(opb.t5,0)+COALESCE(opb.t6,0)+
-                        COALESCE(opb.t7,0)+COALESCE(opb.t8,0)+COALESCE(opb.t9,0)+
-                        COALESCE(opb.t10,0)                             AS total
-                    FROM ordenes_productos_bajas opb
-                    JOIN ordenes_productos op
-                        ON  op.idOrden     = opb.idOrden
-                        AND op.idProducto  = opb.idProducto
-                        AND op.idLineaTalle = opb.idLineaTalle
-                    WHERE opb.idOrden = ?
-
                 ) AS r
                 LEFT JOIN productos p 
                     ON p.id = r.idProducto 
                 LEFT JOIN colores c 
                     ON c.id = p.idColor 
                 ORDER BY
-                    idProducto      ASC,
-                    idLineaTalle    ASC,
+                    nombreProducto  ASC,
+                    color           ASC,
                     orden_bloque    ASC,
                     fecha           ASC;
             `;

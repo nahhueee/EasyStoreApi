@@ -55,6 +55,7 @@ CREATE TABLE clientes (
     idCondicionPago INT,
     idCategoria INT,
     idListaPrecio INT,
+    inicial DECIMAL(10,2) DEFAULT 0,
     fechaAlta TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fechaBaja DATE
 )

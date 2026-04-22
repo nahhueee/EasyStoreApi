@@ -8,5 +8,15 @@
     "message": "Observación 10243: El campo Condicion IVA receptor no es valido para la clase de comprobante informado. Consular metodo FEParamGetCondicionIvaReceptor",
     "level": "error",
     "timestamp": "25-02-26 15:01"
+  },
+  {
+    "message": "ERR 600: ValidacionDeToken: No apareció CUIT en lista de relaciones: 30714907626",
+    "level": "error",
+    "timestamp": "09-04-26 13:54"
+  },
+  {
+    "message": "ERR 600: ValidacionDeToken: No apareció CUIT en lista de relaciones: 30714907626",
+    "level": "error",
+    "timestamp": "09-04-26 13:54"
   }
 ]

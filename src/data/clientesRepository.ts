@@ -70,6 +70,7 @@ class ClientesRepository{
         cliente.condicionPago = row['condicionPago'];
         cliente.idListaPrecio = row['idListaPrecio'];
         cliente.idCategoria = row['idCategoria'];
+        cliente.inicial = parseFloat(row['inicial']);
         cliente.fechaAlta = row['fechaAlta'];
         cliente.direcciones = await ObtenerDireccionesCliente(connection, row['id']);
         cliente.ultimoDescuento = await ObtenerUltimoDescuento(connection, row['id']);
@@ -127,9 +128,9 @@ class ClientesRepository{
             if(existe)//Verificamos si ya existe un cliente con el mismo nombre 
                 return "Ya existe un cliente con el mismo nombre.";
             
-            const consulta = "INSERT INTO clientes(nombre,razonSocial,telefono,celular,contacto,email,idCondIva,idTipoDocumento,documento,idCondicionPago,idCategoria,idListaPrecio,fechaAlta) " + 
-                             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-            const parametros = [cliente.nombre.toUpperCase(), cliente.razonSocial, cliente.telefono, cliente.celular, cliente.contacto, cliente.email, cliente.idCondicionIva, cliente.idTipoDocumento, cliente.documento, cliente.idCondicionPago, cliente.idCategoria, cliente.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss')];
+            const consulta = "INSERT INTO clientes(nombre,razonSocial,telefono,celular,contacto,email,idCondIva,idTipoDocumento,documento,idCondicionPago,idCategoria,inicial,idListaPrecio,fechaAlta) " + 
+                             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            const parametros = [cliente.nombre.toUpperCase(), cliente.razonSocial, cliente.telefono, cliente.celular, cliente.contacto, cliente.email, cliente.idCondicionIva, cliente.idTipoDocumento, cliente.documento, cliente.idCondicionPago, cliente.idCategoria, cliente.inicial, cliente.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss')];
             
             await connection.query(consulta, parametros);
 

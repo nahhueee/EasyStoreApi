@@ -292,11 +292,11 @@ class VentasRepository{
         }
     }
 
-    async ObtenerVenta(idVenta){
+    async ObtenerVenta(idVenta, desdeCuenta:boolean = false){
         const connection = await db.getConnection();
 
         try {
-            let queryRegistros = await ObtenerQuery({idVenta},false);
+            let queryRegistros = await ObtenerQuery({idVenta, desdeCuenta},false);
 
             const rows = await connection.query(queryRegistros);
             return await this.CompletarObjeto(connection, rows[0][0]);
@@ -460,10 +460,19 @@ class VentasRepository{
             }
 
             //insertamos los datos del pago de la venta
-            if(venta.pagos){
-                for (const element of venta.pagos) {
-                    element.idVenta = venta.id;
-                    await InsertPagoVenta(connection, element);
+            if(venta.pagos && venta.pagos.length > 0){
+                const totalPagado = venta.pagos.reduce((acc, p) => acc + p.monto!, 0);
+
+                const idRecibo = await InsertRecibo(connection, {
+                    idCliente: venta.cliente?.id,
+                    total: totalPagado
+                });
+
+                for (const pago of venta.pagos) {
+                    pago.idVenta = venta.id;
+                    pago.idRecibo = idRecibo;
+
+                    await InsertPagoVenta(connection, pago);
                 }
             }
            
@@ -821,6 +830,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
                 " WHERE 1 = 1 " +
                 filtro +
                 " GROUP BY v.id " +
+                ((filtros.desdeCuenta && filtros.desdeCuenta == true) ? ', p.entregado' : '') +
                 " ORDER BY v.fecha DESC, v.id DESC " +
                 paginado +
                 endCount;
@@ -1104,12 +1114,27 @@ async function InsertHistorialVenta(connection, historial):Promise<void>{
     }
 }
 
+async function InsertRecibo(connection, recibo) {
+    const consulta = `
+        INSERT INTO recibos 
+        (idCliente, fecha, hora, total)
+        VALUES (?, CURRENT_DATE, CURRENT_TIME, ?)
+    `;
+
+    const [result] = await connection.execute(consulta, [
+        recibo.idCliente,
+        recibo.total
+    ]);
+
+    return result.insertId;
+}
+
 async function InsertPagoVenta(connection, pago):Promise<void>{
     try {
-        const consulta = " INSERT INTO ventas_pagos(idVenta, idMetodo, monto) " +
-                         " VALUES(?, ?, ?) ";
+        const consulta = " INSERT INTO ventas_pagos(idVenta, idMetodo, idRecibo, monto) " +
+                         " VALUES(?, ?, ?, ?) ";
 
-        const parametros = [pago.idVenta, pago.idMetodo, pago.monto];
+        const parametros = [pago.idVenta, pago.idMetodo, pago.idRecibo, pago.monto];
         await connection.query(consulta, parametros);
         
     } catch (error) {
