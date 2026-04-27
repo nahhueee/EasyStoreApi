@@ -107,8 +107,8 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM empresas');
-            return [rows][0];
+            const rows = await connection.query('SELECT * FROM empresas');
+            return rows[0];
 
         } catch (error:any) {
             throw error;

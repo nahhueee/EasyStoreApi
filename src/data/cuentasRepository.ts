@@ -230,30 +230,33 @@ class CuentasRepository{
             const [rows]: any = await connection.query(
                 `
                 SELECT 
-                    (
-                        COALESCE(c.inicial, 0)
-                        +
-                        COALESCE((
-                            SELECT 
-                                SUM(
-                                    CASE 
-                                        WHEN v.idTComprobante NOT IN (3, 8, 13, 100)
-                                        THEN v.total
-                                        ELSE -v.total
-                                    END
-                                )
-                            FROM ventas v
-                            WHERE v.fechaBaja IS NULL
-                            AND v.idCliente = c.id
-                        ), 0)
-                        -
-                        COALESCE((
-                            SELECT SUM(r.total)
-                            FROM recibos r
-                            WHERE r.fechaBaja IS NULL
-                            AND r.idCliente = c.id
-                        ), 0)
-                    ) AS saldoFinal
+                (
+                    COALESCE(c.inicial, 0)
+
+                    + COALESCE((
+                        SELECT 
+                            SUM(
+                                CASE 
+                                    WHEN v.idTComprobante NOT IN (3, 8, 13, 100)
+                                    THEN v.total
+                                    ELSE -v.total
+                                END
+                            )
+                        FROM ventas v
+                        WHERE v.fechaBaja IS NULL
+                        AND v.idCliente = c.id
+                    ), 0)
+
+                    - COALESCE((
+                        SELECT SUM(vp.monto)
+                        FROM ventas_pagos vp
+                        JOIN recibos r ON r.id = vp.idRecibo
+                        WHERE r.fechaBaja IS NULL
+                        AND r.idCliente = c.id
+                        AND vp.idMetodo <> 8
+                    ), 0)
+
+                ) AS saldoFinal
 
                 FROM clientes c
                 WHERE c.id = ?
@@ -561,30 +564,67 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
             `WITH
+                -- 🟥 Ventas (deuda real)
                 ventas_totales AS (
                     SELECT 
                         idCliente,
                         SUM(total) AS totalVentas
                     FROM ventas
                     WHERE fechaBaja IS NULL
-                    AND idTComprobante NOT IN (3, 8, 13, 100)
+                    AND idTComprobante NOT IN (3,8,13,100)
                     GROUP BY idCliente
                 ),
 
+                -- 🟦 Notas de crédito
                 notas_credito AS (
                     SELECT 
                         idCliente,
                         SUM(total) AS totalNC
                     FROM ventas
                     WHERE fechaBaja IS NULL
-                    AND idTComprobante IN (3, 8, 13, 100)
+                    AND idTComprobante IN (3,8,13,100)
                     GROUP BY idCliente
                 ),
 
-                recibos_totales AS (
+                -- 💰 Pagos reales (EXCLUYE saldo a favor)
+                pagos_ventas AS (
+                    SELECT 
+                        v.idCliente,
+                        SUM(vp.monto) AS totalPagos
+                    FROM ventas_pagos vp
+                    JOIN ventas v ON v.id = vp.idVenta
+                    JOIN recibos r ON r.id = vp.idRecibo
+                    WHERE vp.idMetodo <> 8
+                    AND r.fechaBaja IS NULL
+                    GROUP BY v.idCliente
+                ),
+
+                -- 💚 Entregas (saldo a favor generado)
+                entregas AS (
+                    SELECT 
+                        r.idCliente,
+                        SUM(vp.monto) AS totalEntregas
+                    FROM ventas_pagos vp
+                    JOIN recibos r ON r.id = vp.idRecibo
+                    WHERE vp.idVenta IS NULL
+                    AND r.fechaBaja IS NULL
+                    GROUP BY r.idCliente
+                ),
+
+                -- 📅 Últimos movimientos
+                ult_ventas AS (
                     SELECT 
                         idCliente,
-                        SUM(total) AS totalRecibido
+                        MAX(TIMESTAMP(fecha, hora)) AS fechaVenta
+                    FROM ventas
+                    WHERE fechaBaja IS NULL
+                    GROUP BY idCliente
+                ),
+
+                ult_recibos AS (
+                    SELECT 
+                        idCliente,
+                        MAX(TIMESTAMP(fecha, hora)) AS fechaRecibo
                     FROM recibos
                     WHERE fechaBaja IS NULL
                     GROUP BY idCliente
@@ -594,75 +634,86 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
                     c.id AS idCliente,
                     c.nombre AS cliente,
 
-                    -- 🟥 DEBE (incluye inicial positivo)
-                    COALESCE(v.totalVentas, 0)
-                    + CASE WHEN c.inicial > 0 THEN c.inicial ELSE 0 END AS debe,
+                    -- 🧾 DEBE
+                    (
+                        COALESCE(v.totalVentas, 0)
+                        + CASE 
+                            WHEN COALESCE(c.inicial, 0) > 0 
+                            THEN c.inicial 
+                            ELSE 0 
+                        END
+                    ) AS debe,
 
-                    -- 🟩 HABER (incluye recibos + NC + inicial negativo)
-                    COALESCE(r.totalRecibido, 0)
-                    + COALESCE(nc.totalNC, 0)
-                    + CASE WHEN c.inicial < 0 THEN ABS(c.inicial) ELSE 0 END AS haber,
+                    -- 💰 HABER
+                    (
+                        COALESCE(pv.totalPagos, 0)
+                        + COALESCE(e.totalEntregas, 0)
+                        + COALESCE(nc.totalNC, 0)
+                        + CASE 
+                            WHEN COALESCE(c.inicial, 0) < 0 
+                            THEN ABS(c.inicial) 
+                            ELSE 0 
+                        END
+                    ) AS haber,
 
+                    -- 💥 SALDO FINAL (CORREGIDO)
                     (
                         COALESCE(c.inicial, 0)
                         + COALESCE(v.totalVentas, 0)
                         - COALESCE(nc.totalNC, 0)
-                        - COALESCE(r.totalRecibido, 0)
+                        - COALESCE(pv.totalPagos, 0)
+                        - COALESCE(e.totalEntregas, 0)
                     ) AS saldo,
 
+                    -- 🟢 ESTADO
                     CASE
                         WHEN (
                             COALESCE(c.inicial, 0)
                             + COALESCE(v.totalVentas, 0)
                             - COALESCE(nc.totalNC, 0)
-                            - COALESCE(r.totalRecibido, 0)
+                            - COALESCE(pv.totalPagos, 0)
+                            - COALESCE(e.totalEntregas, 0)
                         ) > 0 THEN 'Debe'
 
                         WHEN (
                             COALESCE(c.inicial, 0)
                             + COALESCE(v.totalVentas, 0)
                             - COALESCE(nc.totalNC, 0)
-                            - COALESCE(r.totalRecibido, 0)
+                            - COALESCE(pv.totalPagos, 0)
+                            - COALESCE(e.totalEntregas, 0)
                         ) < 0 THEN 'A Favor'
 
                         ELSE 'Al Día'
                     END AS estado,
 
+                    -- 📅 Último movimiento
                     GREATEST(
-                        COALESCE(v2.ultimaVenta, '1900-01-01'),
-                        COALESCE(r2.ultimoRecibo, '1900-01-01')
+                        COALESCE(uv.fechaVenta, '1900-01-01'),
+                        COALESCE(ur.fechaRecibo, '1900-01-01')
                     ) AS ultimoMovimiento
 
                 FROM clientes c
 
                 LEFT JOIN ventas_totales v ON v.idCliente = c.id
                 LEFT JOIN notas_credito nc ON nc.idCliente = c.id
-                LEFT JOIN recibos_totales r ON r.idCliente = c.id
-
-                LEFT JOIN (
-                    SELECT 
-                        idCliente, 
-                        MAX(TIMESTAMP(fecha, hora)) AS ultimaVenta
-                    FROM ventas
-                    WHERE fechaBaja IS NULL
-                    GROUP BY idCliente
-                ) v2 ON v2.idCliente = c.id
-
-                LEFT JOIN (
-                    SELECT 
-                        idCliente, 
-                        MAX(TIMESTAMP(fecha, hora)) AS ultimoRecibo
-                    FROM recibos
-                    WHERE fechaBaja IS NULL
-                    GROUP BY idCliente
-                ) r2 ON r2.idCliente = c.id
+                LEFT JOIN pagos_ventas pv ON pv.idCliente = c.id
+                LEFT JOIN entregas e ON e.idCliente = c.id
+                LEFT JOIN ult_ventas uv ON uv.idCliente = c.id
+                LEFT JOIN ult_recibos ur ON ur.idCliente = c.id
 
                 WHERE c.fechaBaja IS NULL
                 ${filtro}
 
                 GROUP BY 
-                    c.id, c.nombre, c.inicial,
-                    v.totalVentas, nc.totalNC, r.totalRecibido
+                    c.id,
+                    c.nombre,
+                    c.inicial,
+                    v.totalVentas,
+                    nc.totalNC,
+                    pv.totalPagos,
+                    e.totalEntregas,
+                    uv.fechaVenta,
+                    ur.fechaRecibo
 
                 ORDER BY c.nombre ASC
             ` +
@@ -765,7 +816,7 @@ async function ObtenerQueryVentasCliente(filtros:any,esTotal:boolean,esReporte:b
                             ELSE
                                 CONCAT(
                                     tp.descripcion, ' ',
-                                    LPAD(12, 4, '0'), '-',
+                                    LPAD(9999, 4, '0'), '-',
                                     LPAD(COALESCE(v.nroProceso, 0), 8, '0')
                                 )
                         END AS comprobante,
@@ -842,7 +893,7 @@ async function ObtenerQueryVentasCliente(filtros:any,esTotal:boolean,esReporte:b
 
                         CONCAT(
                             'RECIBO # ',
-                            LPAD(12, 4, '0'), '-',
+                            LPAD(r.ptoVenta, 4, '0'), '-',
                             LPAD(r.id, 8, '0')
                         ) AS descripcion,
 

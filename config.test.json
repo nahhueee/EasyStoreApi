@@ -5,6 +5,7 @@
     "idApp": 1,
     "web": true,
     "servidor": "/chazagolftest",
+    "cuilTest": "27411750723",
     "db": {
         "host": "127.0.0.1",
         "user": "chazagolftest",

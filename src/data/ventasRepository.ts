@@ -462,9 +462,11 @@ class VentasRepository{
             //insertamos los datos del pago de la venta
             if(venta.pagos && venta.pagos.length > 0){
                 const totalPagado = venta.pagos.reduce((acc, p) => acc + p.monto!, 0);
+                const ptoVenta = venta.factura ? venta.factura.ptoVenta : 9999;
 
                 const idRecibo = await InsertRecibo(connection, {
                     idCliente: venta.cliente?.id,
+                    ptoVenta,
                     total: totalPagado
                 });
 
@@ -1117,12 +1119,13 @@ async function InsertHistorialVenta(connection, historial):Promise<void>{
 async function InsertRecibo(connection, recibo) {
     const consulta = `
         INSERT INTO recibos 
-        (idCliente, fecha, hora, total)
-        VALUES (?, CURRENT_DATE, CURRENT_TIME, ?)
+        (idCliente, fecha, hora, ptoVenta, total)
+        VALUES (?, CURRENT_DATE, CURRENT_TIME, ?, ?)
     `;
 
     const [result] = await connection.execute(consulta, [
         recibo.idCliente,
+        recibo.ptoVenta,
         recibo.total
     ]);
 
