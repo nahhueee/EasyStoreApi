@@ -5,6 +5,7 @@ import { Color, TallesProducto } from "./Producto";
   
   export class Venta{
     id?:number;
+    idCaja?:number;
     idProceso?:number;
     nroProceso?:number;
     proceso?:string;

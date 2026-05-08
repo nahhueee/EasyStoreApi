@@ -1,6 +1,7 @@
 import {UsuariosRepo} from '../data/usuariosRepository';
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
+import { SesionServ } from '../services/sesionService';
 const router : Router  = Router();
 
 //#region OBTENER
@@ -54,6 +55,17 @@ router.get('/validar/:usuario', async (req:Request, res:Response) => {
 
     } catch(error:any){
         let msg = "Error al obtener el usuario nro " + req.params.id + ".";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.put('/guardar-sesion', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await SesionServ.GuardarSesion(req.body.id, req.body.usuario, req.body.nombre, req.body.cargo.nombre));
+
+    } catch(error:any){
+        let msg = "Error al intentar guardar la sesion.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

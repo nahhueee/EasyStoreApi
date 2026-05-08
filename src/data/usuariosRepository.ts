@@ -44,7 +44,7 @@ class UsuariosRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT id, nombre FROM usuarios');
+            const [rows] = await connection.query('SELECT id, usuario, nombre FROM usuarios');
             return [rows][0];
 
         } catch (error:any) {

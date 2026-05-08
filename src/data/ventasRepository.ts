@@ -8,6 +8,8 @@ import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
 import { query } from 'express';
 import { TipoComprobante } from '../models/objFacturar';
+import { MovimientoFondo } from '../models/MovimientoFondo';
+import { SesionServ } from '../services/sesionService';
 const moment = require('moment');
 
 class VentasRepository{
@@ -344,6 +346,7 @@ class VentasRepository{
         let venta:Venta = new Venta();
         venta.id = row['id'];
         venta.idProceso = row['idProceso'];
+        venta.idCaja = row['idCaja'];
         venta.proceso = row['proceso'];
         venta.nroProceso = row['nroProceso'];
         venta.idPunto = row['idPunto'];
@@ -427,12 +430,13 @@ class VentasRepository{
             await connection.beginTransaction();
 
             //Insertamos la venta
-            const consulta = " INSERT INTO ventas(idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga) " +
-                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?) ";
+            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga) " +
+                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?) ";
 
-            const parametros = [venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga];
+            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga];
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
             venta.id =  resultado.insertId;
+            console.log(venta)
 
             //Actualizamos el estado del relacionado
             if(venta.nroRelacionado != 0){
@@ -460,23 +464,48 @@ class VentasRepository{
             }
 
             //insertamos los datos del pago de la venta
-            if(venta.pagos && venta.pagos.length > 0){
-                const totalPagado = venta.pagos.reduce((acc, p) => acc + p.monto!, 0);
-                const ptoVenta = venta.factura ? venta.factura.ptoVenta : 9999;
+            const usuarioActivo = SesionServ.LeerSesion().usuario;
+            let pagosProcesados = [...(venta.pagos || [])];
 
-                const idRecibo = await InsertRecibo(connection, {
-                    idCliente: venta.cliente?.id,
-                    ptoVenta,
-                    total: totalPagado
-                });
+            if(venta.idProceso === 3) //Notas de credito
+            {
+                await this.RegistrarMovimientoNotaCredito(connection, pagosProcesados, venta, usuarioActivo);
+            }else{
+                const totalPagado = pagosProcesados.reduce((acc, p) => acc + (p.monto || 0), 0);
+                const pendiente = venta.total! - totalPagado;
 
-                for (const pago of venta.pagos) {
-                    pago.idVenta = venta.id;
-                    pago.idRecibo = idRecibo;
+                if (pendiente > 0) {
+                    pagosProcesados.push(new PagosVenta({
+                        idMetodo: 9,
+                        metodo: 'CUENTA CORRIENTE',
+                        monto: pendiente
+                    }));
+                }
+                
+                if (pagosProcesados.length > 0) {
+                    const ptoVenta = venta.factura ? venta.factura.ptoVenta : 9999;
 
-                    await InsertPagoVenta(connection, pago);
+                    const idRecibo = await InsertRecibo(connection, {
+                        idCliente: venta.cliente?.id,
+                        ptoVenta,
+                        total: totalPagado
+                    });
+
+                    for (const pago of pagosProcesados) {
+                        pago.idVenta = venta.id;
+                        pago.idRecibo = pago.idMetodo == 9 ? null : idRecibo;
+
+                        await InsertPagoVenta(connection, pago);
+                    }
+
+                    //Insertamos el movimiento en el saldo
+                    await this.RegistrarMovimientosVenta(connection, {
+                        ...venta,
+                        pagos: pagosProcesados
+                    }, usuarioActivo);
                 }
             }
+            
            
             //insertamos los productos de la venta
             if(venta.productos){
@@ -528,7 +557,7 @@ class VentasRepository{
                     await connection.query("UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ", [estado, venta.nroRelacionado, nroProceso]);
                 }
             }
-            
+
             //Mandamos la transaccion
             await connection.commit();
             return venta.id.toString();
@@ -540,6 +569,78 @@ class VentasRepository{
         } finally{
             connection.release();
         }
+    }
+
+    async RegistrarMovimientosVenta(connection, venta, usuario) {
+        for (const pago of venta.pagos) {
+
+            const idFondo = await GetFondoByMetodoPago(connection, pago.idMetodo);
+            const esSaldoAFavor = pago.idMetodo === 8;
+
+            const movimiento:MovimientoFondo = {
+                idCaja: venta.idCaja,
+                idFondo,
+                tipo: esSaldoAFavor ? 'EGRESO' : 'INGRESO',
+                origen: 'VENTA',
+                idReferencia: venta.id,
+                monto: pago.monto,
+                descripcion: `Venta #${venta.id} - ${pago.metodo}`,
+                usuario
+            };
+
+            await InsertMovimientoFondo(connection, movimiento);
+        }
+    }
+
+    async RegistrarMovimientoNotaCredito(connection, pagosOriginales, notaCredito, usuario) {
+        const totalOriginal = pagosOriginales.reduce(
+            (acc, p) => acc + Number(p.monto),
+            0
+        );
+
+        let acumulado = 0;
+
+        for (let i = 0; i < pagosOriginales.length; i++) {
+            const pago = pagosOriginales[i];
+
+            const proporcion = Number(pago.monto) / totalOriginal;
+
+            let montoMovimiento =
+                i === pagosOriginales.length - 1
+                    ? notaCredito.total - acumulado
+                    : Number(
+                        (notaCredito.total * proporcion).toFixed(2)
+                    );
+
+            acumulado += montoMovimiento;
+
+            const idFondo = await GetFondoByMetodoPago(
+                connection,
+                pago.idMetodo
+            );
+
+            await InsertMovimientoFondo(connection, {
+                idCaja: notaCredito.idCaja,
+                idFondo,
+                tipo: 'EGRESO',
+                origen: 'NOTA_CREDITO',
+                idReferencia: notaCredito.id,
+                monto: montoMovimiento,
+                descripcion: `NC #${notaCredito.id}`,
+                usuario
+            });
+        }
+
+        await InsertMovimientoFondo(connection, {
+            idCaja: notaCredito.idCaja,
+            idFondo: 5,
+            tipo: 'INGRESO',
+            origen: 'NOTA_CREDITO',
+            idReferencia: notaCredito.id,
+            monto: notaCredito.total,
+            descripcion: `Saldo a favor NC #${notaCredito.id}`,
+            usuario
+        });
     }
 
     async Modificar(venta:Venta): Promise<string>{
@@ -802,6 +903,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             adicional += " LEFT JOIN (" +
                         " SELECT idVenta, SUM(monto) AS entregado" +
                         " FROM ventas_pagos " +
+                        " WHERE idMetodo <> 9 " +
                         " GROUP BY idVenta " +
                         " ) p ON p.idVenta = v.id ";
         }
@@ -1075,6 +1177,49 @@ async function UpdateVenta(connection, venta):Promise<void>{
         
     } catch (error) {
         throw error; 
+    }
+}
+
+async function GetFondoByMetodoPago(connection, idMetodoPago) {
+   const [rows] = await connection.query(
+      'SELECT idFondo FROM metodos_pago WHERE id = ?',
+      [idMetodoPago]
+   );
+
+   return rows[0].idFondo;
+}
+async function InsertMovimientoFondo(connection, movimiento:MovimientoFondo): Promise<void> {
+    try {
+        const consulta = `
+            INSERT INTO movimientos_fondos
+            (
+                idCaja,
+                idFondo,
+                tipo,
+                origen,
+                idReferencia,
+                monto,
+                descripcion,
+                usuario
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+
+        const parametros = [
+            movimiento.idCaja,
+            movimiento.idFondo,
+            movimiento.tipo,
+            movimiento.origen,
+            movimiento.idReferencia ?? null,
+            movimiento.monto,
+            movimiento.descripcion ?? null,
+            movimiento.usuario ?? null
+        ];
+
+        await connection.query(consulta, parametros);
+
+    } catch (error) {
+        throw error;
     }
 }
 

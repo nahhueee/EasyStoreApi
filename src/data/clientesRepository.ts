@@ -128,9 +128,9 @@ class ClientesRepository{
             if(existe)//Verificamos si ya existe un cliente con el mismo nombre 
                 return "Ya existe un cliente con el mismo nombre.";
             
-            const consulta = "INSERT INTO clientes(nombre,razonSocial,telefono,celular,contacto,email,idCondIva,idTipoDocumento,documento,idCondicionPago,idCategoria,inicial,idListaPrecio,fechaAlta) " + 
-                             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-            const parametros = [cliente.nombre.toUpperCase(), cliente.razonSocial, cliente.telefono, cliente.celular, cliente.contacto, cliente.email, cliente.idCondicionIva, cliente.idTipoDocumento, cliente.documento, cliente.idCondicionPago, cliente.idCategoria, cliente.inicial, cliente.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss')];
+            const consulta = "INSERT INTO clientes(nombre,razonSocial,telefono,celular,contacto,email,idCondIva,idTipoDocumento,documento,idCondicionPago,idCategoria,inicial,inicialHistorico,idListaPrecio,fechaAlta) " + 
+                             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            const parametros = [cliente.nombre.toUpperCase(), cliente.razonSocial, cliente.telefono, cliente.celular, cliente.contacto, cliente.email, cliente.idCondicionIva, cliente.idTipoDocumento, cliente.documento, cliente.idCondicionPago, cliente.idCategoria, cliente.inicial, cliente.inicial, cliente.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss')];
             
             await connection.query(consulta, parametros);
 

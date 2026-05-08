@@ -217,7 +217,8 @@ class MiscRepository{
         const connection = await db.getConnection();
         
         try {
-            const [rows] = await connection.query('SELECT * FROM metodos_pago ORDER BY descripcion ASC');
+            //Todos los metodos de pago menos cuenta corriente
+            const [rows] = await connection.query('SELECT * FROM metodos_pago WHERE id <> 9 ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {

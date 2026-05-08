@@ -21,8 +21,6 @@ class FacturacionService{
         const datosFacturacion = await EmpresasRepo.ObtenerEmpresa(objFactura.idEmpresa!);
         const afip = await ObtenerInstanciaAfip(datosFacturacion.cuil);
 
-        console.log(objFactura)
-        console.log(datosFacturacion)
         //Verificamos el estado del servidor ARCA
         const serverStatus = await afip.electronicBillingService.getServerStatus();
         if (
@@ -251,19 +249,19 @@ async function ObtenerInstanciaAfip(cuilTitular): Promise<Afip> {
     const cert = fs.readFileSync(certPath, 'utf8').trim();
     const key  = fs.readFileSync(keyPath, 'utf8').trim();
 
-    const ticketPath = path.resolve(__dirname, `../tokens/TA-${cuilTitular}.json`);
+    const isProd = config.produccion;
+    const cuilCertificado = isProd ? cuilTitular : config.cuilTest;
+
+    // IMPORTANTE: En test, usamos un nombre de archivo fijo para que no haya colisiones
+    const fileName = isProd ? `TA-${cuilTitular}.json` : `TA-MODO-TEST.json`;
+    const ticketPath = path.resolve(__dirname, `../tokens/${fileName}`);
+
     fs.mkdirSync(path.dirname(ticketPath), { recursive: true });
-    //#endregion
-
-    //Usa un CUIT para pruebas si no es produccion
-    //Tiene que coincidir con los certificados de test
-    const cuil = config.produccion ? cuilTitular : config.cuilTest;
-
     const afip = new Afip({
         key,
         cert,
-        cuit: cuil,
-        production: config.produccion,
+        cuit: cuilCertificado, // El CUIT que autoriza el certificado
+        production: isProd,
         ticketPath
     });
 

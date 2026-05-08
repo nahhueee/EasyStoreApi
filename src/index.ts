@@ -63,6 +63,7 @@ import miscRuta from './routes/miscRoute';
 import direccionesRuta from './routes/direccionesRoute';
 import serviciosRuta from './routes/serviciosRoute';
 import ordenIngresoRuta from './routes/ordenIngresoRoute';
+import fondosRuta from './routes/fondosRoute';
 
 const base = config.servidor;
 app.use(`${base}/update`, actualizacionRuta)
@@ -83,6 +84,7 @@ app.use(`${base}/misc`, miscRuta);
 app.use(`${base}/direcciones`, direccionesRuta);
 app.use(`${base}/servicios`, serviciosRuta);
 app.use(`${base}/orden-ingreso`, ordenIngresoRuta);
+app.use(`${config.servidor}/fondos`, fondosRuta);
 
 // AdminServer Route
 import adminServerRuta from './routes/adminRoute';

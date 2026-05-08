@@ -2,6 +2,8 @@ import moment from 'moment';
 import db from '../db';
 import { ResultSetHeader } from 'mysql2';
 import { CuentaCorriente, VentasClienteCuenta } from '../models/CuentaCorriente';
+import { MovimientoFondo } from '../models/MovimientoFondo';
+import { SesionServ } from '../services/sesionService';
 
 interface pagoDTO {
   idMetodo: number;
@@ -9,6 +11,7 @@ interface pagoDTO {
 }
 
 interface EntregaDineroVentaDTO {
+  idCaja:number;
   idCliente: number;
   idVenta: number;
   totalDeuda: number;
@@ -16,6 +19,7 @@ interface EntregaDineroVentaDTO {
 }
 
 interface EntregaDineroDTO {
+  idCaja:number;
   idCliente: number;
   idMetodo: number;
   monto: number;
@@ -162,8 +166,11 @@ class CuentasRepository{
                     r.hora,
                     c.nombre AS cliente,
 
-                    mp.descripcion AS metodo,
-                    vp.monto,
+                    mp.descripcion AS metodoPago,
+                    vp.monto AS montoPago,
+
+                    ved.montoAplicado,
+                    ved.tipoAplicacion,
 
                     v.id AS idVenta,
                     v.nroProceso,
@@ -173,16 +180,27 @@ class CuentasRepository{
 
                 FROM recibos r
                 JOIN clientes c ON c.id = r.idCliente
-                JOIN ventas_pagos vp ON vp.idRecibo = r.id
-                JOIN metodos_pago mp ON mp.id = vp.idMetodo
-                LEFT JOIN ventas v ON v.id = vp.idVenta
-                LEFT JOIN procesos_venta pv ON pv.id = v.idProceso
 
-                WHERE r.id = ?;
+                LEFT JOIN ventas_entrega_detalle ved 
+                    ON ved.idRecibo = r.id
+
+                LEFT JOIN ventas_pagos vp 
+                    ON vp.idRecibo = r.id
+
+                LEFT JOIN metodos_pago mp 
+                    ON mp.id = COALESCE(ved.idMetodoAplicado, vp.idMetodo)
+
+                LEFT JOIN ventas v 
+                    ON v.id = COALESCE(ved.idVenta, vp.idVenta)
+
+                LEFT JOIN procesos_venta pv 
+                    ON pv.id = v.idProceso
+
+                WHERE r.id = ?
             `;
             
             const [rows]: any = await connection.query(consulta, [idRecibo]);
-
+            console.log([rows])
             const recibo = {
                 id: rows[0].id,
                 cliente: rows[0].cliente,
@@ -190,13 +208,46 @@ class CuentasRepository{
                 hora: rows[0].hora,
                 total: Number(rows[0].total),
 
-                // pagos
-                pagos: rows.map(r => ({
-                    metodo: r.metodo,
-                    monto: Number(r.monto)
-                })),
+                pagos: Object.values(
+                    rows.reduce((acc, r) => {
+                        if (!r.metodoPago) return acc;
 
-                // ventas 
+                        if (!acc[r.metodoPago]) {
+                            acc[r.metodoPago] = {
+                                metodo: r.metodoPago,
+                                monto: 0
+                            };
+                        }
+
+                        acc[r.metodoPago].monto += Number(
+                            r.montoPago ?? r.montoAplicado ?? 0
+                        );
+                        return acc;
+                    }, {})
+                ),
+
+                detalles: Object.values(
+                    rows.reduce((acc, r, index) => {
+
+                        const key = `${r.tipoAplicacion}_${r.idVenta || index}`;
+
+                        if (!r.tipoAplicacion) return acc;
+
+                        if (!acc[key]) {
+                            acc[key] = {
+                                tipoAplicacion: r.tipoAplicacion,
+                                montoAplicado: Number(r.montoAplicado),
+
+                                idVenta: r.idVenta || null,
+                                nroProceso: r.nroProceso || null,
+                                proceso: r.proceso || null
+                            };
+                        }
+
+                        return acc;
+
+                    }, {})
+                ),
                 ventas: Object.values(
                     rows.reduce((acc, r) => {
                         if (!r.idVenta) return acc;
@@ -279,13 +330,25 @@ class CuentasRepository{
     async EntregaDinero(data: EntregaDineroDTO): Promise<string> {
         const connection = await db.getConnection();
 
+        //Obtengo el inicial del cliente para cancelarlo primero
+        const [[cliente]]: any = await connection.query(
+            `
+            SELECT inicial
+            FROM clientes
+            WHERE id = ?
+            `,
+            [data.idCliente]
+        );
+
         try {
             await connection.beginTransaction();
 
             // Obtener ventas a cancelar
-            let resultados = await ObtenerVentasImpagas(connection, data.idCliente);
+            let ventasImpagas = await ObtenerVentasImpagas(connection, data.idCliente);
+            const usuarioActivo = SesionServ.LeerSesion().usuario;
 
-            // Cabecera entrega
+
+            // Registro de la Cabecera de entrega
             const [res] = await connection.query<ResultSetHeader>(
                 `
                 INSERT INTO ventas_entrega (idCliente, monto, fecha)
@@ -293,9 +356,10 @@ class CuentasRepository{
                 `,
                 [data.idCliente, data.monto]
             );
-
             const idEntrega = res.insertId;
+            //=====================================
 
+            // Registro del recibo
             const [resRecibo] = await connection.query<ResultSetHeader>(
                 `
                 INSERT INTO recibos 
@@ -305,11 +369,84 @@ class CuentasRepository{
                 [data.idCliente, data.monto, data.observaciones]
             );
             const idRecibo = resRecibo.insertId;
+            //=====================================
 
-
+            //Definicion del monto
             let montoRestante = data.monto;
-            // Aplicar el dinero
-            for (const venta of resultados) {
+
+            //Cancelación de deuda inicial
+            if (cliente.inicial > 0 && montoRestante > 0) {
+
+                const aplicadoInicial = Math.min(
+                    cliente.inicial,
+                    montoRestante
+                );
+
+                await connection.query(
+                    `
+                    UPDATE clientes
+                    SET inicial = inicial - ?
+                    WHERE id = ?
+                    `,
+                    [aplicadoInicial, data.idCliente]
+                );
+
+                //Agregamos un registro de detalle
+                await connection.query(
+                    `
+                    INSERT INTO ventas_entrega_detalle
+                    (
+                        idEntrega,
+                        idRecibo,
+                        idVenta,
+                        idMetodoAplicado,
+                        montoAplicado,
+                        tipoAplicacion
+                    )
+                    VALUES (?, ?, NULL, ?, ?, 'SALDO_INICIAL')
+                    `,
+                    [
+                        idEntrega,
+                        idRecibo,
+                        data.idMetodo,
+                        aplicadoInicial
+                    ]
+                );
+
+                const idFondoDestino = await GetFondoByMetodoPago(
+                    connection,
+                    data.idMetodo
+                );
+
+                // Sale de cuenta corriente
+                await InsertMovimientoFondo(connection, {
+                    idCaja: data.idCaja,
+                    idFondo: 4,
+                    tipo: 'EGRESO',
+                    origen: 'COBRO_CC',
+                    idReferencia: null,
+                    monto: aplicadoInicial,
+                    descripcion: `Cancelación saldo inicial cliente ${data.idCliente}`,
+                    usuario: usuarioActivo
+                });
+
+                // Entra al fondo real
+                await InsertMovimientoFondo(connection, {
+                    idCaja: data.idCaja,
+                    idFondo: idFondoDestino,
+                    tipo: 'INGRESO',
+                    origen: 'COBRO_CC',
+                    idReferencia: null,
+                    monto: aplicadoInicial,
+                    descripcion: `Cobro saldo inicial cliente ${data.idCliente}`,
+                    usuario: usuarioActivo
+                });
+
+                montoRestante -= aplicadoInicial;
+            }
+
+            // Recorrer ventas impagas para cancelarlas
+            for (const venta of ventasImpagas) {
                 if (montoRestante <= 0) break;
 
                 const deuda = venta.total - venta.pagado;
@@ -317,7 +454,7 @@ class CuentasRepository{
 
                 const montoAplicado = Math.min(deuda, montoRestante);
                 
-                // Pago
+                // Registro del Pago
                 await connection.query(
                     `
                     INSERT INTO ventas_pagos (idVenta, idMetodo, monto, idEntrega, idRecibo)
@@ -330,10 +467,10 @@ class CuentasRepository{
                 await connection.query(
                     `
                     INSERT INTO ventas_entrega_detalle
-                    (idEntrega, idVenta, idMetodoAplicado, montoAplicado)
-                    VALUES (?, ?, ?, ?)
+                    (idEntrega, idRecibo, idVenta, idMetodoAplicado, montoAplicado)
+                    VALUES (?, ?, ?, ?, ?)
                     `,
-                    [idEntrega, venta.id, data.idMetodo, montoAplicado]
+                    [idEntrega, idRecibo, venta.id, data.idMetodo, montoAplicado]
                 );
 
                 // ¿Quedó saldada?
@@ -344,9 +481,41 @@ class CuentasRepository{
                     );
                 }
 
+                //Obtener id del fondo
+                const idFondoDestino = await GetFondoByMetodoPago(
+                    connection,
+                    data.idMetodo
+                );
+
+                // Sale de cuenta corriente
+                await InsertMovimientoFondo(connection, {
+                    idCaja: data.idCaja,
+                    idFondo: 4,
+                    tipo: 'EGRESO',
+                    origen: 'COBRO_CC',
+                    idReferencia: venta.id,
+                    monto: montoAplicado,
+                    descripcion: `Cancelación deuda venta #${venta.id}`,
+                    usuario: usuarioActivo
+                });
+
+                // Entra al fondo real
+                await InsertMovimientoFondo(connection, {
+                    idCaja: data.idCaja,
+                    idFondo: idFondoDestino,
+                    tipo: 'INGRESO',
+                    origen: 'COBRO_CC',
+                    idReferencia: venta.id,
+                    monto: montoAplicado,
+                    descripcion: `Cobro deuda venta #${venta.id}`,
+                    usuario: usuarioActivo
+                });
+
                 montoRestante -= montoAplicado;
             }
 
+            //Queda saldo pendiente?
+            //Se guarda en saldo a favor del cliente
             if (montoRestante > 0) {
                 await connection.query(
                     `
@@ -355,6 +524,57 @@ class CuentasRepository{
                     `,
                     [data.idMetodo, montoRestante, idEntrega, idRecibo]
                 );
+
+                //Insertamos un registro de detalle
+                await connection.query(
+                    `
+                    INSERT INTO ventas_entrega_detalle
+                    (
+                        idEntrega,
+                        idRecibo,
+                        idVenta,
+                        idMetodoAplicado,
+                        montoAplicado,
+                        tipoAplicacion
+                    )
+                    VALUES (?, ?, NULL, ?, ?, 'SALDO_A_FAVOR')
+                    `,
+                    [
+                        idEntrega,
+                        idRecibo,
+                        data.idMetodo,
+                        montoRestante
+                    ]
+                );
+
+                const idFondoDestino = await GetFondoByMetodoPago(
+                    connection,
+                    data.idMetodo
+                );
+
+                // Ingresa plata real
+                await InsertMovimientoFondo(connection, {
+                    idCaja: data.idCaja,
+                    idFondo: idFondoDestino,
+                    tipo: 'INGRESO',
+                    origen: 'INGRESO_MANUAL',
+                    idReferencia: idEntrega,
+                    monto: montoRestante,
+                    descripcion: `Entrega excedente cliente ${data.idCliente}`,
+                    usuario: usuarioActivo
+                });
+
+                // Genera saldo a favor
+                await InsertMovimientoFondo(connection, {
+                    idCaja: data.idCaja,
+                    idFondo: 5,
+                    tipo: 'INGRESO',
+                    origen: 'AJUSTE',
+                    idReferencia: idEntrega,
+                    monto: montoRestante,
+                    descripcion: `Saldo a favor cliente ${data.idCliente}`,
+                    usuario: usuarioActivo
+                });
             }
 
             await connection.commit();
@@ -453,6 +673,7 @@ class CuentasRepository{
             if (!entrega.pagos || entrega.pagos.length === 0) {
                 throw new Error("No hay pagos para aplicar");
             }
+            
             let deudaCancelada:number = entrega.pagos?.reduce((acc, i) => acc + (i.monto || 0), 0) || 0;
              if (deudaCancelada > entrega.totalDeuda) {
                 throw new Error("El monto entregado supera la deuda");
@@ -481,6 +702,7 @@ class CuentasRepository{
                 ]
             );
             const idRecibo = reciboRes.insertId;
+            const usuarioActivo = SesionServ.LeerSesion().usuario;
 
             for (const element of entrega.pagos) {
                 //Insertamos los nuevos pagos
@@ -498,12 +720,38 @@ class CuentasRepository{
                     `,
                     [idEntrega, entrega.idVenta, element.idMetodo, element.monto]
                 );
+
+                const idFondoDestino = await GetFondoByMetodoPago(
+                    connection,
+                    element.idMetodo
+                );
+
+                // Sale de cuenta corriente
+                await InsertMovimientoFondo(connection, {
+                    idCaja: entrega.idCaja,
+                    idFondo: 4,
+                    tipo: 'EGRESO',
+                    origen: 'COBRO_CC',
+                    idReferencia: entrega.idVenta,
+                    monto: element.monto,
+                    descripcion: `Cancelación deuda venta #${entrega.idVenta}`,
+                    usuario: usuarioActivo
+                });
+
+                // Entra al fondo real
+                await InsertMovimientoFondo(connection, {
+                    idCaja: entrega.idCaja,
+                    idFondo: idFondoDestino,
+                    tipo: 'INGRESO',
+                    origen: 'COBRO_CC',
+                    idReferencia: entrega.idVenta,
+                    monto: element.monto,
+                    descripcion: `Cobro deuda venta #${entrega.idVenta}`,
+                    usuario: usuarioActivo
+                });
             };
 
-            if (deudaCancelada > entrega.totalDeuda) {
-                throw new Error("El monto entregado supera la deuda");
-            }
-          
+           
             if(entrega.totalDeuda == deudaCancelada){
                  //Actualizamos el estado de la venta
                 const actualizar = " UPDATE ventas SET " +
@@ -523,6 +771,49 @@ class CuentasRepository{
         } finally{
             connection.release();
         }
+    }
+}
+
+async function GetFondoByMetodoPago(connection, idMetodoPago) {
+   const [rows] = await connection.query(
+      'SELECT idFondo FROM metodos_pago WHERE id = ?',
+      [idMetodoPago]
+   );
+
+   return rows[0].idFondo;
+}
+async function InsertMovimientoFondo(connection, movimiento:MovimientoFondo): Promise<void> {
+    try {
+        const consulta = `
+            INSERT INTO movimientos_fondos
+            (
+                idCaja,
+                idFondo,
+                tipo,
+                origen,
+                idReferencia,
+                monto,
+                descripcion,
+                usuario
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+
+        const parametros = [
+            movimiento.idCaja,
+            movimiento.idFondo,
+            movimiento.tipo,
+            movimiento.origen,
+            movimiento.idReferencia ?? null,
+            movimiento.monto,
+            movimiento.descripcion ?? null,
+            movimiento.usuario ?? null
+        ];
+
+        await connection.query(consulta, parametros);
+
+    } catch (error) {
+        throw error;
     }
 }
 
@@ -778,16 +1069,16 @@ async function ObtenerQueryVentasCliente(filtros:any,esTotal:boolean,esReporte:b
                         'INICIAL' AS tipo,
 
                         CASE 
-                            WHEN c.inicial > 0 THEN c.inicial
+                            WHEN c.inicialHIstorico > 0 THEN c.inicialHIstorico
                             ELSE 0
                         END AS debe,
 
                         CASE 
-                            WHEN c.inicial < 0 THEN ABS(c.inicial)
+                            WHEN c.inicialHIstorico < 0 THEN ABS(c.inicialHIstorico)
                             ELSE 0
                         END AS haber,
 
-                        c.inicial AS saldo,
+                        c.inicialHIstorico AS saldo,
 
                         'INICIAL' AS estado,
                         '' AS referencia,
@@ -836,8 +1127,11 @@ async function ObtenerQueryVentasCliente(filtros:any,esTotal:boolean,esReporte:b
                     LEFT JOIN tipos_comprobantes tc ON tc.id = v.idTComprobante
                     LEFT JOIN procesos_venta tp ON tp.id = v.idProceso 
                     LEFT JOIN (
-                        SELECT idVenta, SUM(monto) AS totalPagos
+                        SELECT 
+                            idVenta, 
+                            SUM(monto) AS totalPagos
                         FROM ventas_pagos
+                        WHERE idMetodo <> 9
                         GROUP BY idVenta
                     ) p ON p.idVenta = v.id
                     WHERE v.fechaBaja IS NULL
