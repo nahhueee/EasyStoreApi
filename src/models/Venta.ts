@@ -42,7 +42,8 @@ import { Color, TallesProducto } from "./Producto";
     impaga:number = 0;
     entregado:number = 0;
     deuda:number = 0;
-  }
+    ajuste:number = 0;
+}
 
   export class ProductosVenta{
     idVenta?:number;

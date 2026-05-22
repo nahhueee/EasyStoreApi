@@ -203,20 +203,12 @@ class FondosRepository{
 
             if (filtros.fechaDesde) {
                 condiciones.push('DATE(mf.fecha) >= ?');
-                params.push(
-                    new Date(filtros.fechaDesde)
-                        .toISOString()
-                        .split('T')[0]
-                );
+                params.push(filtros.fechaDesde);
             }
 
             if (filtros.fechaHasta) {
                 condiciones.push('DATE(mf.fecha) <= ?');
-                params.push(
-                    new Date(filtros.fechaHasta)
-                        .toISOString()
-                        .split('T')[0]
-                );
+                params.push(filtros.fechaHasta);
             }
 
             if (filtros.usuario) {
@@ -255,7 +247,6 @@ class FondosRepository{
             `;
 
             const [rows]: any = await connection.query(query, params);
-
             return rows.map((fondo: any) => ({
                 id: fondo.id,
                 nombre: fondo.nombre,
@@ -292,6 +283,84 @@ class FondosRepository{
         } catch (error:any) {
             throw error;
         } finally{
+            connection.release();
+        }
+    }
+
+    async ObtenerMovimientosFondo(filtros: FiltrosFondos){
+        const connection = await db.getConnection();
+        try {
+            const condiciones: string[] = [];
+            const params: any[] = [];
+
+            if (filtros.idFondo) {
+                condiciones.push('mf.idFondo = ?');
+                params.push(filtros.idFondo);
+            }
+
+            if (filtros.fechaDesde) {
+                condiciones.push('DATE(mf.fecha) >= ?');
+                params.push(filtros.fechaDesde);
+            }
+
+            if (filtros.fechaHasta) {
+                condiciones.push('DATE(mf.fecha) <= ?');
+                params.push(filtros.fechaHasta);
+            }
+
+            if (filtros.usuario) {
+                condiciones.push('mf.usuario = ?');
+                params.push(filtros.usuario);
+            }
+
+            const filtrosJoin = condiciones.length
+                ? `AND ${condiciones.join(' AND ')}`
+                : '';
+
+            const query = `
+                SELECT
+                    b.id,
+                    b.nombre AS banco,
+                    SUM(
+                        CASE
+                            WHEN mp.tipo = 'CREDITO'
+                            THEN vp.monto
+                            ELSE 0
+                        END
+                    ) AS total_credito,
+                    SUM(
+                        CASE
+                            WHEN mp.tipo = 'DEBITO'
+                            THEN vp.monto
+                            ELSE 0
+                        END
+                    ) AS total_debito,
+                    SUM(
+                        CASE
+                            WHEN mp.tipo = 'TRANSFERENCIA'
+                            THEN vp.monto
+                            ELSE 0
+                        END
+                    ) AS total_transferencia,
+                    SUM(vp.monto) AS total_general
+
+                FROM movimientos_fondos mf
+                INNER JOIN ventas v ON v.id = mf.idReferencia
+                INNER JOIN ventas_pagos vp ON vp.idVenta = v.id
+                INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo
+                INNER JOIN bancos b ON b.id = mp.idBanco
+
+                WHERE mf.origen = 'VENTA' AND mf.tipo = 'INGRESO'
+                ${filtrosJoin}
+
+                GROUP BY b.id, b.nombre
+                ORDER BY total_general DESC;
+            `;
+
+            const [rows]: any = await connection.query(query, params);
+            return rows;
+
+        } finally {
             connection.release();
         }
     }
@@ -357,20 +426,12 @@ class FondosRepository{
 
         if (filtros.fechaDesde) {
             condiciones.push('DATE(fecha) >= ?');
-            params.push(
-                new Date(filtros.fechaDesde)
-                    .toISOString()
-                    .split('T')[0]
-            );
+            params.push(filtros.fechaDesde);
         }
 
         if (filtros.fechaHasta) {
             condiciones.push('DATE(fecha) <= ?');
-            params.push(
-                new Date(filtros.fechaHasta)
-                    .toISOString()
-                    .split('T')[0]
-            );
+            params.push(filtros.fechaHasta);
         }
 
         if (filtros.usuario) {
@@ -395,6 +456,7 @@ class FondosRepository{
         return { where, params };
     }
 }
+
 
 async function ObtenerQueryMovimientos(
     filtros: any,
@@ -426,23 +488,13 @@ async function ObtenerQueryMovimientos(
         }
 
         if (filtros.fechaDesde) {
-
-            const fechaDesde = new Date(filtros.fechaDesde)
-                .toISOString()
-                .split('T')[0];
-
             condiciones.push('DATE(mf.fecha) >= ?');
-            params.push(fechaDesde);
+            params.push(filtros.fechaDesde);
         }
 
         if (filtros.fechaHasta) {
-
-            const fechaHasta = new Date(filtros.fechaHasta)
-                .toISOString()
-                .split('T')[0];
-
             condiciones.push('DATE(mf.fecha) <= ?');
-            params.push(fechaHasta);
+            params.push(filtros.fechaHasta);
         }
 
         if (filtros.usuario) {

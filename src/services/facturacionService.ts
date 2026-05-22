@@ -234,7 +234,7 @@ async function ObtenerInstanciaAfip(cuilTitular): Promise<Afip> {
     }
     //#endregion
 
-    //#region Certificados y Token TA
+   //#region Certificados y Token TA
     const certPath = path.join(certFolder, 'cert');
     const keyPath  = path.join(certFolder, 'key');
 
@@ -252,18 +252,22 @@ async function ObtenerInstanciaAfip(cuilTitular): Promise<Afip> {
     const isProd = config.produccion;
     const cuilCertificado = isProd ? cuilTitular : config.cuilTest;
 
-    // IMPORTANTE: En test, usamos un nombre de archivo fijo para que no haya colisiones
-    const fileName = isProd ? `TA-${cuilTitular}.json` : `TA-MODO-TEST.json`;
-    const ticketPath = path.resolve(__dirname, `../tokens/${fileName}`);
+    // La lib afip.js usa ticketPath como directorio base, no como archivo
+    // Estructura resultante: tokens/test/ o tokens/{cuit}/
+    const ticketPath = isProd
+        ? path.resolve(__dirname, `../tokens/${cuilTitular}`)
+        : path.resolve(__dirname, `../tokens/test`);
 
-    fs.mkdirSync(path.dirname(ticketPath), { recursive: true });
+    fs.mkdirSync(ticketPath, { recursive: true });
+
     const afip = new Afip({
         key,
         cert,
-        cuit: cuilCertificado, // El CUIT que autoriza el certificado
+        cuit: cuilCertificado,
         production: isProd,
         ticketPath
     });
+    //#endregion
 
     afipInstances[cuilTitular] = afip;
     return afip;

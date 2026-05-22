@@ -37,15 +37,42 @@ class VentasRepository{
 
         try {
             //Obtengo la query segun los filtros
-            let query = "SELECT mp.descripcion AS metodo_pago, SUM(vp.monto) AS total_acumulado " +
-            " FROM ventas v " +
-            " INNER JOIN ventas_pagos vp ON vp.idVenta = v.id " +
-            " INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo " +
-            " WHERE  v.fechaBaja IS NULL " +
-            " AND (v.estado = 'Finalizada' OR v.estado = 'Facturada') " +
-            filtro +
-            " GROUP BY mp.id, mp.descripcion " +
-            " ORDER BY total_acumulado DESC";
+            let query = `
+            SELECT 
+                mp.id,
+                CASE
+                    WHEN mp.tipo = 'CREDITO'
+                        THEN CONCAT(b.nombre, ' - Crédito')
+
+                    WHEN mp.tipo = 'DEBITO'
+                        THEN CONCAT(b.nombre, ' - Débito')
+
+                    WHEN mp.tipo = 'TRANSFERENCIA'
+                        THEN CONCAT(b.nombre, ' - Transferencia')
+
+                    ELSE b.nombre
+                END AS metodo_pago,
+                SUM(vp.monto) AS total_acumulado
+
+            FROM ventas v
+            INNER JOIN ventas_pagos vp 
+                ON vp.idVenta = v.id
+            INNER JOIN metodos_pago mp 
+                ON mp.id = vp.idMetodo
+            INNER JOIN bancos b
+                ON b.id = mp.idBanco
+            WHERE v.fechaBaja IS NULL
+                AND (
+                    v.estado = 'Finalizada'
+                    OR v.estado = 'Facturada'
+                )
+            ${filtro}
+            GROUP BY 
+                mp.id,
+                b.nombre,
+                mp.tipo
+            ORDER BY total_acumulado DESC
+        `;
 
             const [rows] = await connection.query<RowDataPacket[]>(query);
             return rows.map(r => ({ ...r }));
@@ -370,6 +397,7 @@ class VentasRepository{
         venta.impaga = row['impaga'];
         venta.entregado = parseFloat(row['entregado'] ?? 0);
         venta.deuda = parseFloat(row['deuda']) ?? 0;
+        venta.ajuste = parseFloat(row['ajusteTransf']) ?? 0;
 
         venta.cliente = new Cliente();
         venta.cliente.id = row['idCliente'];
@@ -385,8 +413,7 @@ class VentasRepository{
         venta.productos = await ObtenerProductosVenta(connection, venta.id!, venta.idProceso!);
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
         venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!);
-
-       return venta;
+        return venta;
     }
 
     async ObtenerProximoNroProceso(idProceso){
@@ -430,10 +457,10 @@ class VentasRepository{
             await connection.beginTransaction();
 
             //Insertamos la venta
-            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga) " +
-                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?) ";
+            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf) " +
+                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?) ";
 
-            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga];
+            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste];
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
             venta.id =  resultado.insertId;
             console.log(venta)
@@ -471,25 +498,22 @@ class VentasRepository{
             {
                 await this.RegistrarMovimientoNotaCredito(connection, pagosProcesados, venta, usuarioActivo);
             }else{
-                const totalPagado = pagosProcesados.reduce((acc, p) => acc + (p.monto || 0), 0);
-                const pendiente = venta.total! - totalPagado;
-
-                if (pendiente > 0) {
-                    pagosProcesados.push(new PagosVenta({
-                        idMetodo: 9,
-                        metodo: 'CUENTA CORRIENTE',
-                        monto: pendiente
-                    }));
-                }
+                const totalPagado = pagosProcesados
+                                    .filter(p => p.idMetodo !== 9)
+                                    .reduce((acc, p) => acc + (p.monto || 0), 0);
+              
                 
                 if (pagosProcesados.length > 0) {
                     const ptoVenta = venta.factura ? venta.factura.ptoVenta : 9999;
 
-                    const idRecibo = await InsertRecibo(connection, {
-                        idCliente: venta.cliente?.id,
-                        ptoVenta,
-                        total: totalPagado
-                    });
+                    let idRecibo;
+                    if(totalPagado > 0){
+                        idRecibo = await InsertRecibo(connection, {
+                            idCliente: venta.cliente?.id,
+                            ptoVenta,
+                            total: totalPagado
+                        });
+                    }                    
 
                     for (const pago of pagosProcesados) {
                         pago.idVenta = venta.id;
@@ -947,9 +971,28 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 
 async function ObtenerPagosVenta(connection, idVenta:number){
     try {
-        const consulta = "SELECT vp.*, mp.descripcion FROM ventas_pagos vp " + 
-                         "LEFT JOIN metodos_pago mp ON mp.id = vp.idMetodo " +
-                         "WHERE vp.idVenta = ?"
+        const consulta = `
+            SELECT 
+                vp.*,
+                CASE
+                    WHEN mp.tipo = 'CREDITO'
+                        THEN CONCAT(b.nombre, ' - Crédito')
+
+                    WHEN mp.tipo = 'DEBITO'
+                        THEN CONCAT(b.nombre, ' - Débito')
+
+                    WHEN mp.tipo = 'TRANSFERENCIA'
+                        THEN CONCAT(b.nombre, ' - Transferencia')
+
+                    ELSE b.nombre
+                END AS metodo_pago
+            FROM ventas_pagos vp
+            LEFT JOIN metodos_pago mp 
+                ON mp.id = vp.idMetodo
+            LEFT JOIN bancos b
+                ON b.id = mp.idBanco
+            WHERE vp.idVenta = ?
+        `;
 
         const [rows] = await connection.query(consulta, [idVenta]);
         const pagos:PagosVenta[] = [];
@@ -962,7 +1005,7 @@ async function ObtenerPagosVenta(connection, idVenta:number){
                 pago.id = row['id'];
                 pago.idVenta = row['idVenta'];
                 pago.idMetodo = row['idMetodo'];
-                pago.metodo = row['descripcion'];
+                pago.metodo = row['metodo_pago'];
                 pago.monto = parseFloat(row['monto']);
                 pagos.push(pago);
               }

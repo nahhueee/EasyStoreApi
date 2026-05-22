@@ -10,7 +10,7 @@ class OrdenIngresoRepository{
         const connection = await db.getConnection();
         
         try {
-             //Obtengo la query segun los filtros
+            //Obtengo la query segun los filtros
             let queryRegistros = await ObtenerQuery(filtros,false);
             let queryTotal = await ObtenerQuery(filtros,true);
 
@@ -59,11 +59,16 @@ class OrdenIngresoRepository{
         orden.observaciones = row['observaciones'];
         orden.usuario = row['usuario'];
         orden.alta = row['alta'];
-        orden.actualizacion = row['actualizacion'];
+        orden.baja = row['baja'];
+        orden.actualizacion = orden.baja ? row['baja'] : row['actualizacion'];
        
         const resultadoProductos = await ObtenerProductosOrden(connection, row['id'], unico);
         orden.productos = resultadoProductos.productos;
         orden.estado = resultadoProductos.estado;
+
+        if(orden.baja){
+            orden.estado = "Anulada";
+        }
 
         return orden;
     }
@@ -372,7 +377,7 @@ class OrdenIngresoRepository{
         const connection = await db.getConnection();
         
         try {
-            await connection.query("UPDATE clientes SET fechaBaja = ? WHERE id = ?", [new Date(), id]);
+            await connection.query("UPDATE ordenes_ingreso SET baja = NOW() WHERE id = ?", [id]);
             return "OK";
 
         } catch (error:any) {

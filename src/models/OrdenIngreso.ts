@@ -7,6 +7,7 @@ export class OrdenIngreso{
   usuario: string = "";
   actualizacion: Date = new Date();
   alta: Date = new Date();
+  baja: Date = new Date();
   estado: string = "";
   productos: ProductoOrden[] = [];
   recepcionesRevertir:any[]=[];
@@ -20,6 +21,7 @@ export class OrdenIngreso{
       this.corte = data.corte;
       this.usuario = data.usuario;
       this.alta = data.alta;
+      this.baja = data.baja;
       this.productos = data.productos;
       this.actualizacion = data.actualizacion;
     }

@@ -33,6 +33,16 @@ router.post('/resumen-fondos', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
+router.post('/resumen-fondo-bancos', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await FondosRepo.ObtenerMovimientosFondo(req.body));
+
+    } catch(error:any){
+        let msg = "Error al obtener la sección de resumen de bancos del fondo.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 router.post('/movimientos', async (req:Request, res:Response) => {
     try{ 
         res.json(await FondosRepo.ObtenerMovimientos(req.body));

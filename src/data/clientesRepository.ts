@@ -83,10 +83,16 @@ class ClientesRepository{
                 cliente.listaPrecio = "LISTA 3"
                 break;
             case 3:
+                cliente.listaPrecio = "LISTA 3.5"
+                break;
+            case 4:
                 cliente.listaPrecio = "LISTA 4"
                 break;
-                case 4:
-            cliente.listaPrecio = "LISTA 5"
+            case 5:
+                cliente.listaPrecio = "LISTA 4.5"
+                break;
+            case 6:
+                cliente.listaPrecio = "LISTA 5"
                 break;
         }
 

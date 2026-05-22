@@ -333,7 +333,8 @@ CREATE TABLE lineas_talle (
 DROP TABLE IF EXISTS metodos_pago;
 CREATE TABLE metodos_pago (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    descripcion VARCHAR(50)
+    descripcion VARCHAR(50),
+    idFondo INT 
 );
 
 DROP TABLE IF EXISTS colores_producto;

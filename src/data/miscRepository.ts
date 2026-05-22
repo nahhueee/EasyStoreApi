@@ -213,12 +213,33 @@ class MiscRepository{
         }
     }
 
-    async MetodosPagoSelector(){
+    async MetodosPagoSelector(idEmpresa:any){
         const connection = await db.getConnection();
         
         try {
-            //Todos los metodos de pago menos cuenta corriente
-            const [rows] = await connection.query('SELECT * FROM metodos_pago WHERE id <> 9 ORDER BY descripcion ASC');
+            const query =
+            `
+            SELECT 
+                mp.id,
+                CASE
+                    WHEN mp.tipo = 'CREDITO'
+                        THEN CONCAT(b.nombre, ' - Crédito')
+
+                    WHEN mp.tipo = 'DEBITO'
+                        THEN CONCAT(b.nombre, ' - Débito')
+
+                    WHEN mp.tipo = 'TRANSFERENCIA'
+                        THEN CONCAT(b.nombre, ' - Transferencia')
+
+                    ELSE b.nombre
+                END AS descripcion
+
+            FROM metodos_pago mp
+            INNER JOIN bancos b
+                ON b.id = mp.idBanco
+            WHERE mp.idEmpresa = ?
+            `
+            const [rows] = await connection.query(query, [idEmpresa]);
             return [rows][0];
 
         } catch (error:any) {

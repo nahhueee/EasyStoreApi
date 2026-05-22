@@ -159,9 +159,9 @@ router.get('/comprobantes/:empresa/:condicionIva', async (req:Request, res:Respo
     }
 });
 
-router.get('/metodos-pago', async (req:Request, res:Response) => {
+router.get('/metodos-pago/:idEmpresa', async (req:Request, res:Response) => {
     try{ 
-        res.json(await MiscRepo.MetodosPagoSelector());
+        res.json(await MiscRepo.MetodosPagoSelector(req.params.idEmpresa));
 
     } catch(error:any){
         let msg = "Error al obtener el listado de metodos de pago.";
