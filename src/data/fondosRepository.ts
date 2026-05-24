@@ -1,3 +1,4 @@
+import moment from 'moment';
 import db from '../db';
 import { MovimientoFondo } from '../models/MovimientoFondo';
 
@@ -25,6 +26,58 @@ class FondosRepository{
         try {
             const [rows] = await connection.query('SELECT * FROM cajas');
             return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async ObtenerCajas(){
+        const connection = await db.getConnection();
+        
+        try {
+            const result: any = await connection.query(`
+            SELECT
+                c.id        AS idCaja,
+                c.nombre    AS cajaNombre,
+                f.id        AS idFondo,
+                f.nombre    AS fondoNombre,
+                f.tipo      AS fondoTipo,
+                f.icono     AS icono,
+                COALESCE(SUM(
+                CASE WHEN mf.tipo = 'INGRESO' THEN mf.monto ELSE -mf.monto END
+                ), 0) AS saldo
+            FROM cajas c
+            JOIN caja_fondos cf ON cf.idCaja = c.id AND cf.activo = 1 AND cf.id <> 4 AND cf.id <> 5
+            JOIN fondos f       ON f.id = cf.idFondo AND f.activo = 1
+            LEFT JOIN movimientos_fondos mf ON mf.idCaja = c.id AND mf.idFondo = f.id
+            WHERE c.activa = 1
+            GROUP BY c.id, c.nombre, f.id, f.nombre, f.tipo
+            ORDER BY c.nombre, f.nombre
+            `);
+
+            const rows = result[0];
+            const cajasMap = new Map<number, any>();
+            rows.forEach((row: any) => {
+            if (!cajasMap.has(row.idCaja)) {
+                cajasMap.set(row.idCaja, {
+                    id:     row.idCaja,
+                    nombre: row.cajaNombre,
+                    fondos: []
+                    });
+                }
+                cajasMap.get(row.idCaja).fondos.push({
+                    idFondo: row.idFondo,
+                    nombre:  row.fondoNombre,
+                    tipo:    row.fondoTipo,
+                    saldo:   parseFloat(row.saldo),
+                    icono:   row.icono
+                });
+            });
+
+            return Array.from(cajasMap.values());
 
         } catch (error:any) {
             throw error;
@@ -224,7 +277,7 @@ class FondosRepository{
                 SELECT
                     f.id,
                     f.nombre,
-
+                    f.icono,
                     COALESCE(SUM(
                         CASE
                             WHEN mf.tipo = 'INGRESO' THEN mf.monto
@@ -251,7 +304,8 @@ class FondosRepository{
                 id: fondo.id,
                 nombre: fondo.nombre,
                 saldo: Number(fondo.saldo),
-                movimientos: Number(fondo.movimientos)
+                movimientos: Number(fondo.movimientos),
+                icono: fondo.icono
             }));
 
         } finally {
@@ -415,6 +469,89 @@ class FondosRepository{
             connection.release();
         }
     }
+
+    async CrearTransferencia(datos: {
+        idCajaOrigen: number;
+        idFondoOrigen: number;
+        idCajaDestino: number;
+        idFondoDestino: number;
+        monto: number;
+        descripcion?: string;
+        usuario?: string;
+        }) {
+
+        const { idCajaOrigen, idFondoOrigen, idCajaDestino, idFondoDestino, monto, descripcion, usuario } = datos;
+
+        // Validaciones previas a la transacción
+        if (idCajaOrigen === idCajaDestino && idFondoOrigen === idFondoDestino) {
+            throw { status: 400, message: 'El origen y destino no pueden ser iguales.' };
+        }
+        if (!monto || monto <= 0) {
+            throw { status: 400, message: 'El monto debe ser mayor a cero.' };
+        }
+
+        const connection = await db.getConnection();
+
+        try {
+            await connection.beginTransaction();
+
+            // Verificar si el fondo permite negativo
+            const [[fondo]]: any = await connection.query(
+            `SELECT permiteNegativo FROM fondos WHERE id = ?`,
+            [idFondoOrigen]
+            );
+            if (!fondo) throw { status: 404, message: 'Fondo origen no encontrado.' };
+
+            // Validar saldo si el fondo no permite negativo
+            if (!fondo.permiteNegativo) {
+            const [[{ saldo }]]: any = await connection.query(
+                `SELECT COALESCE(SUM(CASE WHEN tipo = 'INGRESO' THEN monto ELSE -monto END), 0) AS saldo
+                FROM movimientos_fondos
+                WHERE idCaja = ? AND idFondo = ?`,
+                [idCajaOrigen, idFondoOrigen]
+            );
+            if (parseFloat(saldo) < monto) {
+                throw { status: 400, message: `Saldo insuficiente. Disponible: $${parseFloat(saldo).toFixed(2)}` };
+            }
+            }
+
+            const fecha = moment().format('YYYY-MM-DD HH:mm:ss');
+
+            // 1. Registrar la transferencia
+            const [tfResult]: any = await connection.query(
+            `INSERT INTO transferencias_fondos
+                (idCajaOrigen, idFondoOrigen, idCajaDestino, idFondoDestino, monto, descripcion, fecha, usuario)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [idCajaOrigen, idFondoOrigen, idCajaDestino, idFondoDestino, monto, descripcion ?? '', fecha, usuario ?? '']
+            );
+            const idTransferencia = tfResult.insertId;
+
+            // 2. Egreso en origen
+            await connection.query(
+            `INSERT INTO movimientos_fondos
+                (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, fecha, usuario)
+            VALUES (?, ?, 'EGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?)`,
+            [idCajaOrigen, idFondoOrigen, idTransferencia, monto, descripcion ?? '', fecha, usuario ?? '']
+            );
+
+            // 3. Ingreso en destino
+            await connection.query(
+            `INSERT INTO movimientos_fondos
+                (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, fecha, usuario)
+            VALUES (?, ?, 'INGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?)`,
+            [idCajaDestino, idFondoDestino, idTransferencia, monto, descripcion ?? '', fecha, usuario ?? '']
+            );
+
+            await connection.commit();
+            return "OK";
+
+        } catch (error: any) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+        }
 
     private construirWhere(filtros: FiltrosFondos) {
         const condiciones: string[] = [];

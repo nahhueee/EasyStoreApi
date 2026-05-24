@@ -1,6 +1,7 @@
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
 import { FondosRepo } from '../data/fondosRepository';
+
 const router : Router  = Router();
 
 router.get('/cajas', async (req:Request, res:Response) => {
@@ -8,11 +9,22 @@ router.get('/cajas', async (req:Request, res:Response) => {
         res.json(await FondosRepo.SelectorCajas());
 
     } catch(error:any){
+        let msg = "Error al obtener el selector de cajas.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+router.get('/obtener-cajas', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await FondosRepo.ObtenerCajas());
+
+    } catch(error:any){
         let msg = "Error al obtener el listado de cajas.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }
 });
+
 router.post('/resumen', async (req:Request, res:Response) => {
     try{ 
         res.json(await FondosRepo.ObtenerSeccionResumen(req.body));
@@ -64,5 +76,15 @@ router.post('/registrar-movimiento', async (req:Request, res:Response) => {
     }
 });
 
+router.post('/registrar-transferencia', async (req:Request, res:Response) => {
+    try{ 
+        res.json(await FondosRepo.CrearTransferencia(req.body));
+
+    } catch(error:any){
+        let msg = "Error al intentar registrar movimiento.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 // Export the router
 export default router; 

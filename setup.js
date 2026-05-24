@@ -30,6 +30,7 @@ async function setup() {
       "package.json",
       ".env",
       "knexfile.js",
+      "nodemon.json",
       "src/db/script.sql",
       "src/db/script.sql",
       "src/json/calles.json",

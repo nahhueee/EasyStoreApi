@@ -89,17 +89,34 @@ class EstadisticasRepository{
             const consulta = `
                 SELECT
                     vp.idMetodo,
-                    mp.descripcion,
+                    CASE
+                        WHEN mp.tipo = 'CREDITO' THEN CONCAT(b.nombre, ' - Crédito')
+                        WHEN mp.tipo = 'DEBITO' THEN CONCAT(b.nombre, ' - Débito')
+                        WHEN mp.tipo = 'TRANSFERENCIA' THEN CONCAT(b.nombre, ' - Transferencia')
+                        ELSE b.nombre
+                    END AS label,
+
+                    mp.tipo,
+                    b.nombre AS banco,
                     SUM(vp.monto) AS total_por_metodo,
                     COUNT(DISTINCT vp.idVenta) AS cantidad_ventas
+
                 FROM ventas_pagos vp
                 INNER JOIN ventas v ON v.id = vp.idVenta
                 INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo
-                WHERE v.idCliente = ?
-                ${filtroFecha}    
-                AND v.fechaBaja IS NULL
-                GROUP BY vp.idMetodo, mp.descripcion
-                ORDER BY vp.idMetodo
+                LEFT JOIN bancos b ON b.id = mp.idBanco
+
+                WHERE
+                    v.idCliente = ?
+                    ${filtroFecha}
+                    AND v.fechaBaja IS NULL
+
+                GROUP BY
+                    vp.idMetodo,
+                    mp.tipo,
+                    b.nombre
+
+                ORDER BY label
             `;
 
             const [rows] = await connection.query<RowDataPacket[]>(consulta, [parseInt(filtros.idCliente)]);
@@ -109,7 +126,7 @@ class EstadisticasRepository{
 
             return rows.map(r => ({
                 idMetodo: toInt(r.idMetodo),
-                descripcion: r.descripcion,
+                descripcion: r.label,
                 total_por_metodo: toFloat(r.total_por_metodo),
                 cantidad_ventas: toInt(r.cantidad_ventas)
             }));
