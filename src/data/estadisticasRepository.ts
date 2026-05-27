@@ -90,21 +90,20 @@ class EstadisticasRepository{
                 SELECT
                     vp.idMetodo,
                     CASE
-                        WHEN mp.tipo = 'CREDITO' THEN CONCAT(b.nombre, ' - Crédito')
-                        WHEN mp.tipo = 'DEBITO' THEN CONCAT(b.nombre, ' - Débito')
-                        WHEN mp.tipo = 'TRANSFERENCIA' THEN CONCAT(b.nombre, ' - Transferencia')
-                        ELSE b.nombre
+                        WHEN mp.tipo = 'CREDITO' THEN CONCAT(f.nombre, ' - Crédito')
+                        WHEN mp.tipo = 'DEBITO' THEN CONCAT(f.nombre, ' - Débito')
+                        WHEN mp.tipo = 'TRANSFERENCIA' THEN CONCAT(f.nombre, ' - Transferencia')
+                        ELSE mp.nombre
                     END AS label,
 
                     mp.tipo,
-                    b.nombre AS banco,
                     SUM(vp.monto) AS total_por_metodo,
                     COUNT(DISTINCT vp.idVenta) AS cantidad_ventas
 
                 FROM ventas_pagos vp
                 INNER JOIN ventas v ON v.id = vp.idVenta
                 INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo
-                LEFT JOIN bancos b ON b.id = mp.idBanco
+                LEFT JOIN fondos f ON f.id = mp.idFondo
 
                 WHERE
                     v.idCliente = ?
@@ -114,7 +113,7 @@ class EstadisticasRepository{
                 GROUP BY
                     vp.idMetodo,
                     mp.tipo,
-                    b.nombre
+                    f.nombre
 
                 ORDER BY label
             `;

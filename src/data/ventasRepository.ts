@@ -976,21 +976,19 @@ async function ObtenerPagosVenta(connection, idVenta:number){
                 vp.*,
                 CASE
                     WHEN mp.tipo = 'CREDITO'
-                        THEN CONCAT(b.nombre, ' - Crédito')
+                        THEN CONCAT(f.nombre, ' - Crédito')
 
                     WHEN mp.tipo = 'DEBITO'
-                        THEN CONCAT(b.nombre, ' - Débito')
+                        THEN CONCAT(f.nombre, ' - Débito')
 
                     WHEN mp.tipo = 'TRANSFERENCIA'
-                        THEN CONCAT(b.nombre, ' - Transferencia')
+                        THEN CONCAT(f.nombre, ' - Transferencia')
 
-                    ELSE b.nombre
+                    ELSE mp.nombre
                 END AS metodo_pago
             FROM ventas_pagos vp
-            LEFT JOIN metodos_pago mp 
-                ON mp.id = vp.idMetodo
-            LEFT JOIN bancos b
-                ON b.id = mp.idBanco
+            LEFT JOIN metodos_pago mp ON mp.id = vp.idMetodo
+            LEFT JOIN fondos f        ON f.id  = mp.idFondo
             WHERE vp.idVenta = ?
         `;
 

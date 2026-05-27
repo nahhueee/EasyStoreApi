@@ -34,11 +34,12 @@ class FondosRepository{
         }
     }
 
-    async ObtenerCajas(){
+     async ObtenerCajasConFondos(){
         const connection = await db.getConnection();
         
         try {
-            const result: any = await connection.query(`
+            const query = 
+            `
             SELECT
                 c.id        AS idCaja,
                 c.nombre    AS cajaNombre,
@@ -47,33 +48,35 @@ class FondosRepository{
                 f.tipo      AS fondoTipo,
                 f.icono     AS icono,
                 COALESCE(SUM(
-                CASE WHEN mf.tipo = 'INGRESO' THEN mf.monto ELSE -mf.monto END
+                    CASE WHEN mf.tipo = 'INGRESO' THEN mf.monto ELSE -mf.monto END
                 ), 0) AS saldo
-            FROM cajas c
-            JOIN caja_fondos cf ON cf.idCaja = c.id AND cf.activo = 1 AND cf.id <> 4 AND cf.id <> 5
-            JOIN fondos f       ON f.id = cf.idFondo AND f.activo = 1
+                FROM cajas c
+            JOIN caja_fondos cf ON cf.idCaja = c.id AND cf.activo = 1
+            JOIN fondos f       ON f.id = cf.idFondo AND f.activo = 1 AND f.mostrar = 1
             LEFT JOIN movimientos_fondos mf ON mf.idCaja = c.id AND mf.idFondo = f.id
             WHERE c.activa = 1
-            GROUP BY c.id, c.nombre, f.id, f.nombre, f.tipo
-            ORDER BY c.nombre, f.nombre
-            `);
-
+            GROUP BY c.id, c.nombre, f.id, f.nombre, f.tipo, f.icono
+            ORDER BY c.nombre, f.tipo, f.nombre
+            `
+            const result:any = await connection.query(query);
             const rows = result[0];
+            
             const cajasMap = new Map<number, any>();
+
             rows.forEach((row: any) => {
-            if (!cajasMap.has(row.idCaja)) {
+                if (!cajasMap.has(row.idCaja)) {
                 cajasMap.set(row.idCaja, {
                     id:     row.idCaja,
                     nombre: row.cajaNombre,
                     fondos: []
-                    });
+                });
                 }
                 cajasMap.get(row.idCaja).fondos.push({
-                    idFondo: row.idFondo,
-                    nombre:  row.fondoNombre,
-                    tipo:    row.fondoTipo,
-                    saldo:   parseFloat(row.saldo),
-                    icono:   row.icono
+                idFondo: row.idFondo,
+                nombre:  row.fondoNombre,
+                tipo:    row.fondoTipo,
+                icono:   row.icono,
+                saldo:   parseFloat(row.saldo)
                 });
             });
 
@@ -86,7 +89,119 @@ class FondosRepository{
         }
     }
 
-   async ObtenerSeccionResumen(filtros: FiltrosFondos): Promise<ResumenFondos> {
+    async ObtenerResumenFondosPorCaja(filtros: FiltrosFondos): Promise<any[]> {
+        const connection = await db.getConnection();
+        try {
+            // condiciones y params del período (sin prefijo de alias)
+            const condicionesPeriodo: string[] = [];
+            const paramsPeriodo: any[] = [];
+
+            if (filtros.fechaDesde) {
+                condicionesPeriodo.push('DATE(fecha) >= ?');
+                paramsPeriodo.push(filtros.fechaDesde);
+            }
+            if (filtros.fechaHasta) {
+                condicionesPeriodo.push('DATE(fecha) <= ?');
+                paramsPeriodo.push(filtros.fechaHasta);
+            }
+            if (filtros.usuario) {
+                condicionesPeriodo.push('usuario = ?');
+                paramsPeriodo.push(filtros.usuario);
+            }
+
+            const filtroPeriodo = condicionesPeriodo.length
+                ? `AND ${condicionesPeriodo.join(' AND ')}`
+                : '';
+
+            const [rows]: any = await connection.query(`
+                SELECT
+                    f.id,
+                    f.nombre,
+                    f.tipo,
+                    f.icono,
+
+                    -- saldo histórico total
+                    COALESCE((
+                        SELECT SUM(
+                            CASE
+                                WHEN tipo = 'INGRESO' THEN  monto
+                                WHEN tipo = 'EGRESO'  THEN -monto
+                                ELSE 0
+                            END
+                        )
+                        FROM movimientos_fondos
+                        WHERE idFondo = f.id AND idCaja = ?
+                    ), 0) AS saldoTotal,
+
+                    -- ingresos del período
+                    COALESCE((
+                        SELECT SUM(monto)
+                        FROM movimientos_fondos
+                        WHERE idFondo = f.id
+                        AND idCaja  = ?
+                        AND tipo    = 'INGRESO'
+                        ${filtroPeriodo}
+                    ), 0) AS ingresosPeriodo,
+
+                    -- egresos del período
+                    COALESCE((
+                        SELECT SUM(monto)
+                        FROM movimientos_fondos
+                        WHERE idFondo = f.id
+                        AND idCaja  = ?
+                        AND tipo    = 'EGRESO'
+                        ${filtroPeriodo}
+                    ), 0) AS egresosPeriodo,
+
+                    -- cantidad de movimientos del período
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM movimientos_fondos
+                        WHERE idFondo = f.id
+                        AND idCaja  = ?
+                        ${filtroPeriodo}
+                    ), 0) AS movimientos
+
+                FROM fondos f
+                JOIN caja_fondos cf
+                    ON cf.idFondo = f.id
+                    AND cf.activo = 1
+                    AND cf.idCaja = ?
+
+                WHERE f.activo = 1 AND f.mostrar = 1
+                GROUP BY f.id, f.nombre, f.tipo, f.icono
+                ORDER BY f.tipo, f.nombre
+            `, [
+                // saldoTotal
+                filtros.idCaja,
+                // ingresosPeriodo
+                filtros.idCaja, ...paramsPeriodo,
+                // egresosPeriodo
+                filtros.idCaja, ...paramsPeriodo,
+                // movimientos
+                filtros.idCaja, ...paramsPeriodo,
+                // JOIN caja_fondos
+                filtros.idCaja
+            ]);
+
+            return rows.map((f: any) => ({
+                id:              f.id,
+                nombre:          f.nombre,
+                tipo:            f.tipo,
+                icono:           f.icono,
+                saldoTotal:      parseFloat(f.saldoTotal),
+                ingresosPeriodo: parseFloat(f.ingresosPeriodo),
+                egresosPeriodo:  parseFloat(f.egresosPeriodo),
+                netoPeriodo:     parseFloat(f.ingresosPeriodo) - parseFloat(f.egresosPeriodo),
+                movimientos:     parseInt(f.movimientos)
+            }));
+
+        } finally {
+            connection.release();
+        }
+    }
+        
+    async ObtenerSeccionResumen(filtros: FiltrosFondos): Promise<ResumenFondos> {
 
         const connection = await db.getConnection();
 
@@ -183,7 +298,7 @@ class FondosRepository{
                     SELECT 
                         c.id,
                         (
-                            COALESCE(c.inicial, 0)
+                            COALESCE(c.inicialAplicado, 0)
 
                             + COALESCE((
                                 SELECT SUM(
@@ -242,76 +357,76 @@ class FondosRepository{
             connection.release();
         }
     }
-    async ObtenerResumenFondos(filtros: FiltrosFondos): Promise<any[]> {
-        const connection = await db.getConnection();
+    // async ObtenerResumenFondos(filtros: FiltrosFondos): Promise<any[]> {
+    //     const connection = await db.getConnection();
 
-        try {
-            const condiciones: string[] = [];
-            const params: any[] = [];
+    //     try {
+    //         const condiciones: string[] = [];
+    //         const params: any[] = [];
 
-            if (filtros.idCaja) {
-                condiciones.push('mf.idCaja = ?');
-                params.push(filtros.idCaja);
-            }
+    //         if (filtros.idCaja) {
+    //             condiciones.push('mf.idCaja = ?');
+    //             params.push(filtros.idCaja);
+    //         }
 
-            if (filtros.fechaDesde) {
-                condiciones.push('DATE(mf.fecha) >= ?');
-                params.push(filtros.fechaDesde);
-            }
+    //         if (filtros.fechaDesde) {
+    //             condiciones.push('DATE(mf.fecha) >= ?');
+    //             params.push(filtros.fechaDesde);
+    //         }
 
-            if (filtros.fechaHasta) {
-                condiciones.push('DATE(mf.fecha) <= ?');
-                params.push(filtros.fechaHasta);
-            }
+    //         if (filtros.fechaHasta) {
+    //             condiciones.push('DATE(mf.fecha) <= ?');
+    //             params.push(filtros.fechaHasta);
+    //         }
 
-            if (filtros.usuario) {
-                condiciones.push('mf.usuario = ?');
-                params.push(filtros.usuario);
-            }
+    //         if (filtros.usuario) {
+    //             condiciones.push('mf.usuario = ?');
+    //             params.push(filtros.usuario);
+    //         }
 
-            const filtrosJoin = condiciones.length
-                ? `AND ${condiciones.join(' AND ')}`
-                : '';
+    //         const filtrosJoin = condiciones.length
+    //             ? `AND ${condiciones.join(' AND ')}`
+    //             : '';
 
-            const query = `
-                SELECT
-                    f.id,
-                    f.nombre,
-                    f.icono,
-                    COALESCE(SUM(
-                        CASE
-                            WHEN mf.tipo = 'INGRESO' THEN mf.monto
-                            WHEN mf.tipo = 'EGRESO' THEN -mf.monto
-                            ELSE 0
-                        END
-                    ),0) as saldo,
+    //         const query = `
+    //             SELECT
+    //                 f.id,
+    //                 f.nombre,
+    //                 f.icono,
+    //                 COALESCE(SUM(
+    //                     CASE
+    //                         WHEN mf.tipo = 'INGRESO' THEN mf.monto
+    //                         WHEN mf.tipo = 'EGRESO' THEN -mf.monto
+    //                         ELSE 0
+    //                     END
+    //                 ),0) as saldo,
 
-                    COUNT(mf.id) as movimientos
+    //                 COUNT(mf.id) as movimientos
 
-                FROM fondos f
+    //             FROM fondos f
 
-                LEFT JOIN movimientos_fondos mf
-                    ON mf.idFondo = f.id
-                    ${filtrosJoin}
+    //             LEFT JOIN movimientos_fondos mf
+    //                 ON mf.idFondo = f.id
+    //                 ${filtrosJoin}
 
-                GROUP BY f.id, f.nombre
+    //             GROUP BY f.id, f.nombre
 
-                ORDER BY f.id ASC
-            `;
+    //             ORDER BY f.id ASC
+    //         `;
 
-            const [rows]: any = await connection.query(query, params);
-            return rows.map((fondo: any) => ({
-                id: fondo.id,
-                nombre: fondo.nombre,
-                saldo: Number(fondo.saldo),
-                movimientos: Number(fondo.movimientos),
-                icono: fondo.icono
-            }));
+    //         const [rows]: any = await connection.query(query, params);
+    //         return rows.map((fondo: any) => ({
+    //             id: fondo.id,
+    //             nombre: fondo.nombre,
+    //             saldo: Number(fondo.saldo),
+    //             movimientos: Number(fondo.movimientos),
+    //             icono: fondo.icono
+    //         }));
 
-        } finally {
-            connection.release();
-        }
-    }
+    //     } finally {
+    //         connection.release();
+    //     }
+    // }
 
     async ObtenerMovimientos(filtros: FiltrosFondos) {
         const connection = await db.getConnection();
@@ -341,79 +456,72 @@ class FondosRepository{
         }
     }
 
-    async ObtenerMovimientosFondo(filtros: FiltrosFondos){
+    async ObtenerDetalleMetodosPago(filtros: FiltrosFondos): Promise<any[]> {
         const connection = await db.getConnection();
         try {
-            const condiciones: string[] = [];
+            const condiciones: string[] = ['mf.origen = \'VENTA\'', 'mf.tipo = \'INGRESO\''];
             const params: any[] = [];
 
+            if (filtros.idCaja) {
+            condiciones.push('mf.idCaja = ?');
+            params.push(filtros.idCaja);
+            }
             if (filtros.idFondo) {
-                condiciones.push('mf.idFondo = ?');
-                params.push(filtros.idFondo);
+            condiciones.push('f.id = ?');    // filtra por el fondo clickeado
+            params.push(filtros.idFondo);
             }
-
             if (filtros.fechaDesde) {
-                condiciones.push('DATE(mf.fecha) >= ?');
-                params.push(filtros.fechaDesde);
+            condiciones.push('DATE(mf.fecha) >= ?');
+            params.push(filtros.fechaDesde);
             }
-
             if (filtros.fechaHasta) {
-                condiciones.push('DATE(mf.fecha) <= ?');
-                params.push(filtros.fechaHasta);
+            condiciones.push('DATE(mf.fecha) <= ?');
+            params.push(filtros.fechaHasta);
             }
-
             if (filtros.usuario) {
-                condiciones.push('mf.usuario = ?');
-                params.push(filtros.usuario);
+            condiciones.push('mf.usuario = ?');
+            params.push(filtros.usuario);
             }
 
-            const filtrosJoin = condiciones.length
-                ? `AND ${condiciones.join(' AND ')}`
-                : '';
+            const where = `WHERE ${condiciones.join(' AND ')}`;
 
-            const query = `
-                SELECT
-                    b.id,
-                    b.nombre AS banco,
-                    SUM(
-                        CASE
-                            WHEN mp.tipo = 'CREDITO'
-                            THEN vp.monto
-                            ELSE 0
-                        END
-                    ) AS total_credito,
-                    SUM(
-                        CASE
-                            WHEN mp.tipo = 'DEBITO'
-                            THEN vp.monto
-                            ELSE 0
-                        END
-                    ) AS total_debito,
-                    SUM(
-                        CASE
-                            WHEN mp.tipo = 'TRANSFERENCIA'
-                            THEN vp.monto
-                            ELSE 0
-                        END
-                    ) AS total_transferencia,
-                    SUM(vp.monto) AS total_general
+            const [rows]: any = await connection.query(`
+            SELECT
+                f.id                                                               AS idFondo,
+                f.nombre                                                           AS fondo,
+                f.tipo,
+                f.icono,
+                SUM(CASE WHEN mp.tipo = 'CREDITO'       THEN vp.monto ELSE 0 END) AS total_credito,
+                SUM(CASE WHEN mp.tipo = 'DEBITO'        THEN vp.monto ELSE 0 END) AS total_debito,
+                SUM(CASE WHEN mp.tipo = 'TRANSFERENCIA' THEN vp.monto ELSE 0 END) AS total_transferencia,
+                SUM(CASE WHEN mp.tipo = 'DIGITAL'       THEN vp.monto ELSE 0 END) AS total_digital,
+                SUM(CASE WHEN mp.tipo = 'EFECTIVO'      THEN vp.monto ELSE 0 END) AS total_efectivo,
+                SUM(vp.monto)                                                      AS total_general
+            FROM movimientos_fondos mf
+            INNER JOIN ventas v        ON v.id  = mf.idReferencia
+            INNER JOIN ventas_pagos vp ON vp.idVenta = v.id
+            INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo
+            INNER JOIN fondos f        ON f.id  = mp.idFondo
+            ${where}
+            GROUP BY f.id, f.nombre, f.tipo, f.icono
+            ORDER BY f.tipo, total_general DESC
+            `, params);
 
-                FROM movimientos_fondos mf
-                INNER JOIN ventas v ON v.id = mf.idReferencia
-                INNER JOIN ventas_pagos vp ON vp.idVenta = v.id
-                INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo
-                INNER JOIN bancos b ON b.id = mp.idBanco
+            return rows.map((row: any) => ({
+                idFondo:             row.idFondo,
+                fondo:               row.fondo,
+                tipo:                row.tipo,
+                icono:               row.icono,
+                total_credito:       parseFloat(row.total_credito)       || 0,
+                total_debito:        parseFloat(row.total_debito)        || 0,
+                total_transferencia: parseFloat(row.total_transferencia) || 0,
+                total_digital:       parseFloat(row.total_digital)       || 0,
+                total_efectivo:      parseFloat(row.total_efectivo)      || 0,
+                total_general:       parseFloat(row.total_general)       || 0
+            }));
 
-                WHERE mf.origen = 'VENTA' AND mf.tipo = 'INGRESO'
-                ${filtrosJoin}
-
-                GROUP BY b.id, b.nombre
-                ORDER BY total_general DESC;
-            `;
-
-            const [rows]: any = await connection.query(query, params);
-            return rows;
-
+        } catch (error: any) {
+            throw error;
         } finally {
             connection.release();
         }
@@ -480,7 +588,11 @@ class FondosRepository{
         usuario?: string;
         }) {
 
-        const { idCajaOrigen, idFondoOrigen, idCajaDestino, idFondoDestino, monto, descripcion, usuario } = datos;
+        const {
+            idCajaOrigen, idFondoOrigen,
+            idCajaDestino, idFondoDestino,
+            monto, descripcion, usuario
+        } = datos;
 
         // Validaciones previas a la transacción
         if (idCajaOrigen === idCajaDestino && idFondoOrigen === idFondoDestino) {
@@ -519,10 +631,11 @@ class FondosRepository{
 
             // 1. Registrar la transferencia
             const [tfResult]: any = await connection.query(
-            `INSERT INTO transferencias_fondos
-                (idCajaOrigen, idFondoOrigen, idCajaDestino, idFondoDestino, monto, descripcion, fecha, usuario)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [idCajaOrigen, idFondoOrigen, idCajaDestino, idFondoDestino, monto, descripcion ?? '', fecha, usuario ?? '']
+                `INSERT INTO transferencias_fondos
+                    (idCajaOrigen, idFondoOrigen, idCajaDestino, idFondoDestino, monto, descripcion, fecha, usuario)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [idCajaOrigen, idFondoOrigen, idCajaDestino, idFondoDestino,
+                monto, descripcion ?? '', fecha, usuario ?? '']
             );
             const idTransferencia = tfResult.insertId;
 
@@ -530,7 +643,7 @@ class FondosRepository{
             await connection.query(
             `INSERT INTO movimientos_fondos
                 (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, fecha, usuario)
-            VALUES (?, ?, 'EGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?)`,
+                VALUES (?, ?, 'EGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?)`,
             [idCajaOrigen, idFondoOrigen, idTransferencia, monto, descripcion ?? '', fecha, usuario ?? '']
             );
 
@@ -538,7 +651,7 @@ class FondosRepository{
             await connection.query(
             `INSERT INTO movimientos_fondos
                 (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, fecha, usuario)
-            VALUES (?, ?, 'INGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?)`,
+                VALUES (?, ?, 'INGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?)`,
             [idCajaDestino, idFondoDestino, idTransferencia, monto, descripcion ?? '', fecha, usuario ?? '']
             );
 
@@ -551,7 +664,7 @@ class FondosRepository{
         } finally {
             connection.release();
         }
-        }
+    }
 
     private construirWhere(filtros: FiltrosFondos) {
         const condiciones: string[] = [];

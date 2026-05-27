@@ -14,9 +14,9 @@ router.get('/cajas', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
-router.get('/obtener-cajas', async (req:Request, res:Response) => {
+router.get('/cajas-con-fondos', async (req:Request, res:Response) => {
     try{ 
-        res.json(await FondosRepo.ObtenerCajas());
+        res.json(await FondosRepo.ObtenerCajasConFondos());
 
     } catch(error:any){
         let msg = "Error al obtener el listado de cajas.";
@@ -37,7 +37,7 @@ router.post('/resumen', async (req:Request, res:Response) => {
 });
 router.post('/resumen-fondos', async (req:Request, res:Response) => {
     try{ 
-        res.json(await FondosRepo.ObtenerResumenFondos(req.body));
+        res.json(await FondosRepo.ObtenerResumenFondosPorCaja(req.body));
 
     } catch(error:any){
         let msg = "Error al obtener la sección de resumen de fondos.";
@@ -45,12 +45,12 @@ router.post('/resumen-fondos', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
-router.post('/resumen-fondo-bancos', async (req:Request, res:Response) => {
+router.post('/detalle-metodos-pago', async (req:Request, res:Response) => {
     try{ 
-        res.json(await FondosRepo.ObtenerMovimientosFondo(req.body));
+        res.json(await FondosRepo.ObtenerDetalleMetodosPago(req.body));
 
     } catch(error:any){
-        let msg = "Error al obtener la sección de resumen de bancos del fondo.";
+        let msg = "Error al obtener la sección de detalle de metodos de pago.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }
@@ -81,7 +81,7 @@ router.post('/registrar-transferencia', async (req:Request, res:Response) => {
         res.json(await FondosRepo.CrearTransferencia(req.body));
 
     } catch(error:any){
-        let msg = "Error al intentar registrar movimiento.";
+        let msg = "Error al intentar registrar la transferencia.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

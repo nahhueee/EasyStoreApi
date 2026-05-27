@@ -223,20 +223,19 @@ class MiscRepository{
                 mp.id,
                 CASE
                     WHEN mp.tipo = 'CREDITO'
-                        THEN CONCAT(b.nombre, ' - Crédito')
+                        THEN CONCAT(f.nombre, ' - Crédito')
 
                     WHEN mp.tipo = 'DEBITO'
-                        THEN CONCAT(b.nombre, ' - Débito')
+                        THEN CONCAT(f.nombre, ' - Débito')
 
                     WHEN mp.tipo = 'TRANSFERENCIA'
-                        THEN CONCAT(b.nombre, ' - Transferencia')
+                        THEN CONCAT(f.nombre, ' - Transferencia')
 
-                    ELSE b.nombre
+                    ELSE mp.nombre
                 END AS descripcion
 
             FROM metodos_pago mp
-            INNER JOIN bancos b
-                ON b.id = mp.idBanco
+            INNER JOIN fondos f ON f.id = mp.idFondo
             WHERE mp.idEmpresa = ?
             `
             const [rows] = await connection.query(query, [idEmpresa]);
