@@ -86,5 +86,14 @@ router.post('/registrar-transferencia', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
-// Export the router
-export default router; 
+router.post('/desglose-por-empresa', async (req:Request, res:Response) => {
+    try {
+        res.json(await FondosRepo.ObtenerDesglosePorEmpresa(req.body));
+    } catch(error:any) {
+        const msg = "Error al obtener desglose por empresa.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+export default router;

@@ -2,13 +2,9 @@ import db from '../db';
 import { NotaCreditoVenta, PagosVenta, ProductosVenta, ServiciosVenta, Venta } from '../models/Venta';
 import { ObjQR } from '../models/ObjQR';
 import { FacturaVenta } from '../models/FacturaVenta';
-import { MiscRepo } from './miscRepository';
 import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
-import { query } from 'express';
-import { TipoComprobante } from '../models/objFacturar';
-import { MovimientoFondo } from '../models/MovimientoFondo';
 import { SesionServ } from '../services/sesionService';
 const moment = require('moment');
 
@@ -519,7 +515,7 @@ class VentasRepository{
                         pago.idVenta = venta.id;
                         pago.idRecibo = pago.idMetodo == 9 ? null : idRecibo;
 
-                        await InsertPagoVenta(connection, pago);
+                        pago.idVentaPago = await InsertPagoVenta(connection, pago);
                     }
 
                     //Insertamos el movimiento en el saldo
@@ -596,23 +592,61 @@ class VentasRepository{
     }
 
     async RegistrarMovimientosVenta(connection, venta, usuario) {
+        const TIPOS_VALOR = ['CHEQUE', 'CREDITO'];
+
+        // Obtener el fondo VA una sola vez si hay pagos que lo requieran
+        const tieneValores = venta.pagos.some(p => TIPOS_VALOR.includes(p.tipo));
+        const idFondoValores = tieneValores ? await GetIdFondoValoresAcreditar(connection) : null;
+
         for (const pago of venta.pagos) {
 
-            const idFondo = await GetFondoByMetodoPago(connection, pago.idMetodo);
+            const { idFondo: idFondoReal, tipo } = await GetMetodoPago(connection, pago.idMetodo);
             const esSaldoAFavor = pago.idMetodo === 8;
+            const esValorAcreditar = TIPOS_VALOR.includes(tipo);
 
-            const movimiento:MovimientoFondo = {
-                idCaja: venta.idCaja,
-                idFondo,
-                tipo: esSaldoAFavor ? 'EGRESO' : 'INGRESO',
-                origen: 'VENTA',
-                idReferencia: venta.id,
-                monto: pago.monto,
-                descripcion: `Venta #${venta.id} - ${pago.metodo}`,
-                usuario
-            };
+            if (esValorAcreditar) {
+                // El INGRESO cae en "Valores a Acreditar", no en el fondo real
+                await InsertMovimientoFondo(connection, {
+                    idCaja: venta.idCaja,
+                    idFondo: idFondoValores,
+                    tipo: 'INGRESO',
+                    origen: 'VENTA',
+                    idReferencia: venta.id,
+                    monto: pago.monto,
+                    descripcion: `Venta #${venta.id} - ${tipo} pendiente`,
+                    usuario
+                });
 
-            await InsertMovimientoFondo(connection, movimiento);
+                // Registrar el valor en tránsito
+                const idValor = await InsertValorAcreditar(connection, {
+                    idEmpresa: venta.idEmpresa,
+                    idVentaPago: pago.idVentaPago,
+                    tipo: tipo === 'CREDITO' ? 'TARJETA_CREDITO' : 'CHEQUE',
+                    monto: pago.monto,
+                    // CRÉDITO: el fondo destino es el banco real del método
+                    // CHEQUE: null, se elige al momento de acreditar
+                    idFondoDestino: tipo === 'CREDITO' ? idFondoReal : null,
+                    usuarioAlta: usuario
+                });
+
+                // Detalle extra solo para cheque
+                if (tipo === 'CHEQUE' && pago.cheque) {
+                    await InsertCheque(connection, idValor, pago.cheque);
+                }
+
+            } else {
+                // Comportamiento original
+                await InsertMovimientoFondo(connection, {
+                    idCaja: venta.idCaja,
+                    idFondo: idFondoReal,
+                    tipo: esSaldoAFavor ? 'EGRESO' : 'INGRESO',
+                    origen: 'VENTA',
+                    idReferencia: venta.id,
+                    monto: pago.monto,
+                    descripcion: `Venta #${venta.id} - ${pago.metodo}`,
+                    usuario
+                });
+            }
         }
     }
 
@@ -638,14 +672,45 @@ class VentasRepository{
 
             acumulado += montoMovimiento;
 
-            const idFondo = await GetFondoByMetodoPago(
-                connection,
-                pago.idMetodo
-            );
+            const { idFondo: idFondoReal, tipo } = await GetMetodoPago(connection, pago.idMetodo);
+            const TIPOS_VALOR = ['CHEQUE', 'CREDITO'];
+
+            let idFondoEgreso = idFondoReal;
+
+            if (TIPOS_VALOR.includes(tipo)) {
+                // El pago original era CHEQUE o CRÉDITO: el EGRESO
+                // debe salir del fondo correcto según el estado del valor.
+                // Si estaba PENDIENTE → sale de "Valores a Acreditar".
+                // Si ya fue ACREDITADO → sale del fondo real (idFondoReal).
+                const [valRows] = await connection.query(
+                    `SELECT va.id, va.estado, va.idFondoDestino
+                     FROM valores_acreditar va
+                     JOIN ventas_pagos vp ON vp.id = va.idVentaPago
+                     WHERE vp.idVenta = ? AND va.tipo = ?
+                     LIMIT 1`,
+                    [notaCredito.idReferencia ?? notaCredito.id,
+                     tipo === 'CREDITO' ? 'TARJETA_CREDITO' : 'CHEQUE']
+                );
+
+                if (valRows.length) {
+                    const valor = valRows[0];
+                    if (valor.estado === 'PENDIENTE') {
+                        idFondoEgreso = await GetIdFondoValoresAcreditar(connection);
+                        // Marcar el valor como rechazado
+                        await connection.query(
+                            "UPDATE valores_acreditar SET estado='RECHAZADO', observaciones=? WHERE id=?",
+                            [`Anulado por NC #${notaCredito.id}`, valor.id]
+                        );
+                    } else if (valor.estado === 'ACREDITADO') {
+                        // El dinero ya estaba en el fondo real
+                        idFondoEgreso = valor.idFondoDestino ?? idFondoReal;
+                    }
+                }
+            }
 
             await InsertMovimientoFondo(connection, {
                 idCaja: notaCredito.idCaja,
-                idFondo,
+                idFondo: idFondoEgreso,
                 tipo: 'EGRESO',
                 origen: 'NOTA_CREDITO',
                 idReferencia: notaCredito.id,
@@ -1221,31 +1286,62 @@ async function UpdateVenta(connection, venta):Promise<void>{
     }
 }
 
-async function GetFondoByMetodoPago(connection, idMetodoPago) {
-   const [rows] = await connection.query(
-      'SELECT idFondo FROM metodos_pago WHERE id = ?',
-      [idMetodoPago]
-   );
-
-   return rows[0].idFondo;
+async function GetMetodoPago(connection, idMetodoPago): Promise<{ idFondo: number; tipo: string }> {
+    const [rows] = await connection.query(
+        'SELECT idFondo, tipo FROM metodos_pago WHERE id = ?',
+        [idMetodoPago]
+    );
+    return { idFondo: rows[0].idFondo, tipo: rows[0].tipo };
 }
-async function InsertMovimientoFondo(connection, movimiento:MovimientoFondo): Promise<void> {
+
+async function GetIdFondoValoresAcreditar(connection): Promise<number> {
+    const [rows] = await connection.query(
+        "SELECT id FROM fondos WHERE nombre = 'Valores a Acreditar' LIMIT 1"
+    );
+    if (!rows.length) throw new Error("Fondo 'Valores a Acreditar' no encontrado.");
+    return rows[0].id;
+}
+
+async function InsertValorAcreditar(connection, valor): Promise<number> {
+    const consulta = `
+        INSERT INTO valores_acreditar
+            (idEmpresa, idVentaPago, tipo, monto, idFondoDestino, estado, usuarioAlta)
+        VALUES (?, ?, ?, ?, ?, 'PENDIENTE', ?)
+    `;
+    const [result] = await connection.query(consulta, [
+        valor.idEmpresa,
+        valor.idVentaPago,
+        valor.tipo,
+        valor.monto,
+        valor.idFondoDestino ?? null,
+        valor.usuarioAlta ?? null
+    ]);
+    return result.insertId;
+}
+
+async function InsertCheque(connection, idValor: number, cheque): Promise<void> {
+    const consulta = `
+        INSERT INTO cheques (idValor, numero, banco, importe, fechaCobro, libradorNombre, libradorCuit)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    await connection.query(consulta, [
+        idValor,
+        cheque.numero,
+        cheque.banco,
+        cheque.importe,
+        moment(cheque.fechaCobro).format('YYYY-MM-DD'),
+        cheque.libradorNombre ?? null,
+        cheque.libradorCuit ?? null
+    ]);
+}
+
+async function InsertMovimientoFondo(connection, movimiento): Promise<void> {
     try {
         const consulta = `
             INSERT INTO movimientos_fondos
-            (
-                idCaja,
-                idFondo,
-                tipo,
-                origen,
-                idReferencia,
-                monto,
-                descripcion,
-                usuario
-            )
+            (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `;
-
         const parametros = [
             movimiento.idCaja,
             movimiento.idFondo,
@@ -1256,108 +1352,94 @@ async function InsertMovimientoFondo(connection, movimiento:MovimientoFondo): Pr
             movimiento.descripcion ?? null,
             movimiento.usuario ?? null
         ];
-
         await connection.query(consulta, parametros);
-
     } catch (error) {
         throw error;
     }
 }
 
-async function InsertProductoVenta(connection, producto):Promise<void>{
+async function InsertProductoVenta(connection, producto): Promise<void> {
     try {
         const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, idLineaTalle, cantidad, precio, total, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
                          " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
         const parametros = [producto.idVenta, producto.idProducto, producto.idLineaTalle, producto.cantidad, producto.unitario, producto.total, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
         await connection.query(consulta, parametros);
     } catch (error) {
-        throw error; 
+        throw error;
     }
 }
 
-async function InsertServicioVenta(connection, pago):Promise<void>{
+async function InsertServicioVenta(connection, pago): Promise<void> {
     try {
         const consulta = " INSERT INTO ventas_servicios(idVenta, idServicio, cantidad, precio, total) " +
                          " VALUES(?, ?, ?, ?, ?) ";
-
         const parametros = [pago.idVenta, pago.idServicio, pago.cantidad, pago.unitario, pago.total];
         await connection.query(consulta, parametros);
-        
     } catch (error) {
-        throw error; 
+        throw error;
     }
 }
 
-async function InsertHistorialVenta(connection, historial):Promise<void>{
+async function InsertHistorialVenta(connection, historial): Promise<void> {
     try {
         const consulta = " INSERT INTO ventas_historial(idVenta, procActual, procAnterior, fecha, hora) " +
-                         " VALUES(?, ?, ?) ";
-
-        const parametros = [historial.idVenta, historial.procActual, historial.procAnterior, moment().format('YYYY-MM-DD'), moment().format('HH:mm')];
+                         " VALUES(?, ?, ?, ?, ?) ";
+        const parametros = [historial.idVenta, historial.procActual, historial.procAnterior, require('moment')().format('YYYY-MM-DD'), require('moment')().format('HH:mm')];
         await connection.query(consulta, parametros);
-        
     } catch (error) {
-        throw error; 
+        throw error;
     }
 }
 
 async function InsertRecibo(connection, recibo) {
     const consulta = `
-        INSERT INTO recibos 
-        (idCliente, fecha, hora, ptoVenta, total)
+        INSERT INTO recibos (idCliente, fecha, hora, ptoVenta, total)
         VALUES (?, CURRENT_DATE, CURRENT_TIME, ?, ?)
     `;
-
     const [result] = await connection.execute(consulta, [
         recibo.idCliente,
         recibo.ptoVenta,
         recibo.total
     ]);
-
     return result.insertId;
 }
 
-async function InsertPagoVenta(connection, pago):Promise<void>{
+async function InsertPagoVenta(connection, pago): Promise<number> {
     try {
         const consulta = " INSERT INTO ventas_pagos(idVenta, idMetodo, idRecibo, monto) " +
                          " VALUES(?, ?, ?, ?) ";
-
         const parametros = [pago.idVenta, pago.idMetodo, pago.idRecibo, pago.monto];
-        await connection.query(consulta, parametros);
-        
+        const [result] = await connection.query(consulta, parametros);
+        return result.insertId;
     } catch (error) {
-        throw error; 
+        throw error;
     }
 }
 
-async function InsertFacturaVenta(connection, factura):Promise<void>{
+async function InsertFacturaVenta(connection, factura): Promise<void> {
     try {
         const consulta = " INSERT INTO ventas_factura(idVenta, cae, caeVto, ticket, tipoFactura, neto, iva, dni, tipoDni, ptoVenta, condReceptor, tipoRelacionado, ticketRelacionado, ptoVentaRelacionado) " +
                          " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
-
         const asociado = factura.comprobanteAsociado ?? {};
-
         const parametros = [
-        factura.idVenta,
-        factura.cae,
-        moment(factura.caeVto).format('YYYY-MM-DD'),
-        factura.ticket,
-        factura.tipoComprobante,
-        factura.neto,
-        factura.iva,
-        factura.dni,
-        factura.tipoDni,
-        factura.ptoVenta,
-        factura.condReceptor,
-        asociado.tipo ?? null,
-        asociado.numero ?? null,
-        asociado.puntoVenta ?? null
+            factura.idVenta,
+            factura.cae,
+            require('moment')(factura.caeVto).format('YYYY-MM-DD'),
+            factura.ticket,
+            factura.tipoComprobante,
+            factura.neto,
+            factura.iva,
+            factura.dni,
+            factura.tipoDni,
+            factura.ptoVenta,
+            factura.condReceptor,
+            asociado.tipo ?? null,
+            asociado.numero ?? null,
+            asociado.puntoVenta ?? null
         ];
         await connection.query(consulta, parametros);
-
     } catch (error) {
-        throw error; 
+        throw error;
     }
 }
 //#endregion

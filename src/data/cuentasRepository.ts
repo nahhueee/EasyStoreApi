@@ -282,7 +282,7 @@ class CuentasRepository{
                 `
                 SELECT 
                 (
-                    COALESCE(c.inicialAplicado, 0)
+                    COALESCE(c.inicial, 0)
 
                     + COALESCE((
                         SELECT 

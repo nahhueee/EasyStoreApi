@@ -19,7 +19,7 @@ class MiscRepository{
                     let material:Material = new Material();
                     material.id = row['id'];
                     material.descripcion = row['descripcion'];
-                    material.colores = await ObtenerColoresMaterial(connection, material.id!);
+                    //material.colores = await ObtenerColoresMaterial(connection, material.id!);
 
                     materiales.push(material);
                 }
@@ -219,8 +219,9 @@ class MiscRepository{
         try {
             const query =
             `
-            SELECT 
+            SELECT
                 mp.id,
+                mp.tipo,
                 CASE
                     WHEN mp.tipo = 'CREDITO'
                         THEN CONCAT(f.nombre, ' - Crédito')

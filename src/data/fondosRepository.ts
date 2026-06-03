@@ -52,7 +52,7 @@ class FondosRepository{
                 ), 0) AS saldo
                 FROM cajas c
             JOIN caja_fondos cf ON cf.idCaja = c.id AND cf.activo = 1
-            JOIN fondos f       ON f.id = cf.idFondo AND f.activo = 1 AND f.mostrar = 1
+            JOIN fondos f       ON f.id = cf.idFondo AND f.activo = 1 AND f.mostrar = 1 AND f.id <> 10
             LEFT JOIN movimientos_fondos mf ON mf.idCaja = c.id AND mf.idFondo = f.id
             WHERE c.activa = 1
             GROUP BY c.id, c.nombre, f.id, f.nombre, f.tipo, f.icono
@@ -298,7 +298,7 @@ class FondosRepository{
                     SELECT 
                         c.id,
                         (
-                            COALESCE(c.inicialAplicado, 0)
+                            COALESCE(c.inicial, 0)
 
                             + COALESCE((
                                 SELECT SUM(
@@ -502,7 +502,9 @@ class FondosRepository{
             INNER JOIN ventas_pagos vp ON vp.idVenta = v.id
             INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo
             INNER JOIN fondos f        ON f.id  = mp.idFondo
+            LEFT  JOIN valores_acreditar va ON va.idVentaPago = vp.id
             ${where}
+            AND (va.id IS NULL OR va.estado != 'PENDIENTE')
             GROUP BY f.id, f.nombre, f.tipo, f.icono
             ORDER BY f.tipo, total_general DESC
             `, params);
@@ -705,6 +707,56 @@ class FondosRepository{
 
         return { where, params };
     }
+
+    /**
+     * Para un fondo bancario seleccionado, devuelve el total ingresado
+     * por empresa (vía ventas_pagos → metodos_pago → empresas).
+     * Filtra por caja y período igual que el resto del módulo.
+     */
+    async ObtenerDesglosePorEmpresa(filtros: FiltrosFondos): Promise<any[]> {
+        const connection = await db.getConnection();
+        try {
+            const params: any[] = [filtros.idFondo, filtros.idCaja];
+            const condiciones: string[] = [
+                "v.estado IN ('Finalizada','Facturada')",
+                "v.fechaBaja IS NULL"
+            ];
+
+            if (filtros.fechaDesde) {
+                condiciones.push("DATE(v.fecha) >= ?");
+                params.push(filtros.fechaDesde);
+            }
+            if (filtros.fechaHasta) {
+                condiciones.push("DATE(v.fecha) <= ?");
+                params.push(filtros.fechaHasta);
+            }
+
+            const where = condiciones.length ? `WHERE ${condiciones.join(" AND ")}` : "";
+
+            const [rows]: any = await connection.query(`
+                SELECT
+                    emp.razonSocial AS empresa,
+                    SUM(vp.monto)   AS total
+                FROM ventas_pagos vp
+                JOIN metodos_pago mp     ON mp.id = vp.idMetodo AND mp.idFondo = ?
+                JOIN ventas v            ON v.id  = vp.idVenta  AND v.idCaja  = ?
+                JOIN empresas emp        ON emp.id = mp.idEmpresa
+                LEFT JOIN valores_acreditar va ON va.idVentaPago = vp.id
+                ${where}
+                AND (va.id IS NULL OR va.estado != 'PENDIENTE')
+                GROUP BY mp.idEmpresa, emp.razonSocial
+                ORDER BY total DESC
+            `, params);
+
+            return rows.map((r: any) => ({
+                empresa: r.empresa,
+                total:   parseFloat(r.total)
+            }));
+
+        } finally {
+            connection.release();
+        }
+    }
 }
 
 
@@ -718,7 +770,6 @@ async function ObtenerQueryMovimientos(
         //#region VARIABLES
         let query: string;
         let paginado: string = "";
-
         let count: string = "";
         let endCount: string = "";
         //#endregion
@@ -758,28 +809,18 @@ async function ObtenerQueryMovimientos(
         //#endregion
 
         if (esTotal) {
-
-            count = "SELECT COUNT(*) AS total FROM ( ";
+            count    = "SELECT COUNT(*) AS total FROM ( ";
             endCount = " ) as subquery";
-
         } else {
-
             if (filtros.tamanioPagina != null) {
-
-                const limit = Number(filtros.tamanioPagina);
-                const offset =
-                    (Number(filtros.pagina || 1) - 1) * limit;
-
-                paginado = `
-                    LIMIT ${limit}
-                    OFFSET ${offset}
-                `;
+                const limit  = Number(filtros.tamanioPagina);
+                const offset = (Number(filtros.pagina || 1) - 1) * limit;
+                paginado = `LIMIT ${limit} OFFSET ${offset}`;
             }
         }
 
         query = `
             ${count}
-
             SELECT
                 mf.id,
                 mf.fecha,
@@ -789,25 +830,15 @@ async function ObtenerQueryMovimientos(
                 mf.descripcion,
                 mf.monto,
                 mf.usuario
-
             FROM movimientos_fondos mf
-
-            INNER JOIN fondos f
-                ON f.id = mf.idFondo
-
+            INNER JOIN fondos f ON f.id = mf.idFondo
             ${where}
-
             ORDER BY mf.fecha DESC
-
             ${paginado}
-
             ${endCount}
         `;
 
-        return {
-            query,
-            params
-        };
+        return { query, params };
 
     } catch (error) {
         throw error;
@@ -815,3 +846,4 @@ async function ObtenerQueryMovimientos(
 }
 
 export const FondosRepo = new FondosRepository();
+      

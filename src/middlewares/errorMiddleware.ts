@@ -9,17 +9,36 @@ export function errorMiddleware(err, req, res, next) {
   const status = err.status || 500;
   const severity = getSeverity(status);
 
+  // stringify seguro: evita circular references (ej: ClientRequest de afip.ts)
+  const safeStringify = (obj: any): string => {
+    const seen = new WeakSet();
+    try {
+      return JSON.stringify(obj, (_, value) => {
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) return '[Circular]';
+          seen.add(value);
+        }
+        return value;
+      });
+    } catch {
+      return String(obj);
+    }
+  };
+
+  const rawDump = !err.message ? safeStringify(err) : undefined;
+
   logger.error({
     type: isAppError ? 'APP_ERROR' : 'UNHANDLED_ERROR',
-    code: err.code || 'INTERNAL_ERROR',
-    message: err.message,
+    code: err.code || err.constructor?.name || 'INTERNAL_ERROR',
+    message: err.message ?? rawDump ?? 'Sin mensaje',
     severity: severity,
     status: status,
     route: req.originalUrl,
     method: req.method,
     context: err.context,
     cause: err.cause?.message,
-    stack: err.stack
+    stack: err.stack,
+    rawError: rawDump
   });
 
   res.status(err.status || 500).json({

@@ -124,15 +124,20 @@ import { Color, TallesProducto } from "./Producto";
     idVenta?:number;
     idMetodo? : number;
     metodo?: string;
+    tipo?: string;
     monto?: number;
     idRecibo?:number;
-  
+    idVentaPago?: number;  // id del INSERT en ventas_pagos, usado para valores_acreditar
+    cheque?: any;          // datos del cheque cuando tipo === 'CHEQUE'
+
     constructor(data?: any) {
       if (data) {
         this.idMetodo = data.idMetodo;
         this.monto = data.monto;
         this.idRecibo = data.idRecibo;
         this.metodo = data.metodo;
+        this.tipo = data.tipo;
+        this.cheque = data.cheque;
       }
     }
   }

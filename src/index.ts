@@ -64,6 +64,7 @@ import direccionesRuta from './routes/direccionesRoute';
 import serviciosRuta from './routes/serviciosRoute';
 import ordenIngresoRuta from './routes/ordenIngresoRoute';
 import fondosRuta from './routes/fondosRoute';
+import valoresRuta from './routes/valoresRoute';
 
 const base = config.servidor;
 app.use(`${base}/update`, actualizacionRuta)
@@ -84,7 +85,8 @@ app.use(`${base}/misc`, miscRuta);
 app.use(`${base}/direcciones`, direccionesRuta);
 app.use(`${base}/servicios`, serviciosRuta);
 app.use(`${base}/orden-ingreso`, ordenIngresoRuta);
-app.use(`${config.servidor}/fondos`, fondosRuta);
+app.use(`${base}/fondos`, fondosRuta);
+app.use(`${base}/valores`, valoresRuta);
 
 // AdminServer Route
 import adminServerRuta from './routes/adminRoute';
@@ -123,5 +125,3 @@ app.use((_req, res) => {
 //Manejo y logs de errores
 import { errorMiddleware } from './middlewares/errorMiddleware';
 app.use(errorMiddleware);
-  
-
