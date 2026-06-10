@@ -765,8 +765,8 @@ async function ObtenerProductosOrden(connection, idOrden:number, unico:boolean =
 }
 async function ObtenerCodigosBarraProducto(connection, idProducto:number){
     try {
-        const consulta = "SELECT codigo_barra, t.descripcion talle FROM talles_producto tp " + 
-                         "INNER JOIN talles t ON t.descripcion = tp.talle " +
+        const consulta = "SELECT codigo_barra, talle, posicion FROM talles_producto tp " + 
+                         "INNER JOIN talles t ON t.descripcion = tp.talle AND tp.idLineaTalle = t.idLineaTalle " +
                          "WHERE idProducto = ? "
                          "ORDER BY t.posicion ASC ";
                          ;

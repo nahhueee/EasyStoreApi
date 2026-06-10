@@ -33,7 +33,6 @@ class ProductosRepository{
 
                 let queryRegistros1 = await ObtenerQuery(filtros, false);
                 const [rows1] = await connection.query(queryRegistros1);
-                
                 if (Array.isArray(rows1)) {
                     for (const row of rows1) productos.push(new TablaProducto(row));
                 }
@@ -460,6 +459,8 @@ class ProductosRepository{
                                 idGenero,idTemporada,idMaterial,idColor,moldeleria,topeDescuento)
                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
+                              console.log(producto)
+
             const parametros = [producto.codigo!.toUpperCase(),
                                 producto.nombre!.toUpperCase(),
                                 producto.empresa,
@@ -470,13 +471,15 @@ class ProductosRepository{
                                 producto.genero,
                                 producto.temporada,
                                 producto.material,
-                                producto.color?.id!,
+                                producto.color?.id,
                                 producto.moldeleria,
                                 producto.topeDescuento
                             ];
             
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
+            console.log(resultado)
             producto.id = resultado.insertId;
+            console.log("ID DEL PRODUCTO: " + producto.id)
             //#endregion
 
             //Insertamos los talles del producto
@@ -977,11 +980,11 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:bo
                 " LEFT JOIN temporadas t ON t.id = p.idTemporada " +
                 " WHERE p.fechaBaja IS NULL " +
                 filtro +
-                " GROUP BY p.id, p.nombre, p.codigo, p.idProceso, p.idTipo, " +
+                " GROUP BY p.id, p.nombre, p.codigo, p.moldeleria, p.imagen, p.idProceso, p.idTipo, " +
                 " p.idSubtipo, p.idGenero, p.idMaterial, " +
-                " pro.descripcion, tp.descripcion, stp.descripcion, " +
+                " pro.descripcion, pro.abreviatura, tp.descripcion, stp.descripcion, " +
                 condicionAdicional +
-                " g.descripcion, g.abreviatura, m.descripcion, t.descripcion, t.abreviatura " +
+                " g.descripcion, g.abreviatura, m.descripcion, c.descripcion, c.hexa, t.descripcion, t.abreviatura " +
                 having +
                 orden +
                 paginado +

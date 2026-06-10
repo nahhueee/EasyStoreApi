@@ -112,7 +112,6 @@ app.use(`${base}/files`, filesRoute);
 //#endregion
 
 // Index Route
-console.log(base)
 app.get(`${base}`, (req, res) => {
     res.status(200).send('Servidor funcionando CHAZAGOLF en este puerto.');
 });

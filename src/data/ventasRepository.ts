@@ -459,7 +459,6 @@ class VentasRepository{
             const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste];
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
             venta.id =  resultado.insertId;
-            console.log(venta)
 
             //Actualizamos el estado del relacionado
             if(venta.nroRelacionado != 0){
@@ -494,11 +493,11 @@ class VentasRepository{
             {
                 await this.RegistrarMovimientoNotaCredito(connection, pagosProcesados, venta, usuarioActivo);
             }else{
+
                 const totalPagado = pagosProcesados
-                                    .filter(p => p.idMetodo !== 9)
+                                    .filter(p => p.idMetodo !== 12) // Excluir Cuenta Corriente
                                     .reduce((acc, p) => acc + (p.monto || 0), 0);
               
-                
                 if (pagosProcesados.length > 0) {
                     const ptoVenta = venta.factura ? venta.factura.ptoVenta : 9999;
 
@@ -513,7 +512,8 @@ class VentasRepository{
 
                     for (const pago of pagosProcesados) {
                         pago.idVenta = venta.id;
-                        pago.idRecibo = pago.idMetodo == 9 ? null : idRecibo;
+                        pago.idRecibo = pago.idMetodo == 12 ? null : idRecibo;
+                        pago.monto = pago.idMetodo == 12 ? 0 : pago.monto; // Si es Cuenta Corriente, el monto en ventas_pagos es 0
 
                         pago.idVentaPago = await InsertPagoVenta(connection, pago);
                     }

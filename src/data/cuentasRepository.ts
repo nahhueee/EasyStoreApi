@@ -166,7 +166,19 @@ class CuentasRepository{
                     r.hora,
                     c.nombre AS cliente,
 
-                    mp.descripcion AS metodoPago,
+                    CASE
+                        WHEN mp.tipo = 'CREDITO'
+                            THEN CONCAT(f.nombre, ' - Crédito')
+
+                        WHEN mp.tipo = 'DEBITO'
+                            THEN CONCAT(f.nombre, ' - Débito')
+
+                        WHEN mp.tipo = 'TRANSFERENCIA'
+                            THEN CONCAT(f.nombre, ' - Transferencia')
+
+                        ELSE mp.nombre
+                    END AS metodoPago,
+
                     vp.monto AS montoPago,
 
                     ved.montoAplicado,
@@ -190,6 +202,8 @@ class CuentasRepository{
                 LEFT JOIN metodos_pago mp 
                     ON mp.id = COALESCE(ved.idMetodoAplicado, vp.idMetodo)
 
+            INNER JOIN fondos f ON f.id = mp.idFondo
+
                 LEFT JOIN ventas v 
                     ON v.id = COALESCE(ved.idVenta, vp.idVenta)
 
@@ -200,7 +214,6 @@ class CuentasRepository{
             `;
             
             const [rows]: any = await connection.query(consulta, [idRecibo]);
-            console.log([rows])
             const recibo = {
                 id: rows[0].id,
                 cliente: rows[0].cliente,

@@ -7,7 +7,7 @@ class ValoresRepository {
      * con datos de venta, cliente, cheque (si aplica) y fondo destino.
      * Incluye totales por tipo al final del resultado.
      */
-    async ObtenerValoresPendientes(idEmpresa: number): Promise<any> {
+    async ObtenerValoresPendientes(): Promise<any> {
         const connection = await db.getConnection();
         try {
             const [rows]: any = await connection.query(`
@@ -36,10 +36,9 @@ class ValoresRepository {
                 LEFT  JOIN clientes c       ON c.id   = v.idCliente
                 LEFT  JOIN fondos f         ON f.id   = va.idFondoDestino
                 LEFT  JOIN cheques ch       ON ch.idValor = va.id
-                WHERE va.idEmpresa = ?
-                  AND va.estado    = 'PENDIENTE'
+                WHERE va.estado = 'PENDIENTE'
                 ORDER BY va.fechaAlta DESC
-            `, [idEmpresa]);
+            `);
 
             // Totales por tipo para mostrar en el resumen
             const totales = rows.reduce((acc: any, row: any) => {

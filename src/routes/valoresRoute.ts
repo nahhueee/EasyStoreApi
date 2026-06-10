@@ -6,16 +6,11 @@ const router: Router = Router();
 
 /**
  * POST /valores/pendientes
- * Body: { idEmpresa: number }
  * Devuelve lista de valores pendientes + totales por tipo.
  */
 router.post('/pendientes', async (req: Request, res: Response) => {
     try {
-        const { idEmpresa } = req.body;
-        if (!idEmpresa) {
-            return res.status(400).send('Se requiere idEmpresa.');
-        }
-        res.json(await ValoresRepo.ObtenerValoresPendientes(idEmpresa));
+        res.json(await ValoresRepo.ObtenerValoresPendientes());
     } catch (error: any) {
         const msg = 'Error al obtener valores pendientes.';
         logger.error(msg + ' ' + error.message);
