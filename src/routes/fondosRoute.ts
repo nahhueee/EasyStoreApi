@@ -86,6 +86,21 @@ router.post('/registrar-transferencia', async (req:Request, res:Response) => {
         res.status(500).send(msg);
     }
 });
+router.get('/empresas/:idFondo', async (req:Request, res:Response) => {
+    try {
+        const idFondo = Number(req.params.idFondo);
+        if (!idFondo || isNaN(idFondo)) {
+            res.status(400).send('idFondo inválido.');
+            return;
+        }
+        res.json(await FondosRepo.ObtenerEmpresasPorFondo(idFondo));
+    } catch(error:any) {
+        const msg = "Error al obtener empresas del fondo.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.post('/desglose-por-empresa', async (req:Request, res:Response) => {
     try {
         res.json(await FondosRepo.ObtenerDesglosePorEmpresa(req.body));

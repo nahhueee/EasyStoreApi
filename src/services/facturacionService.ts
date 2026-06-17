@@ -220,6 +220,8 @@ async function ObtenerInstanciaAfip(cuilTitular): Promise<Afip> {
         return afipInstances[cuilTitular];
     }
 
+    console.log(`Obteniendo instancia de AFIP para CUIT ${cuilTitular}...`); // Log para seguimiento
+
     //#region Definir carpeta de certificados según entorno
     const certFolder = config.produccion
         ? path.resolve(__dirname, `../certs/${cuilTitular}`)
@@ -251,6 +253,8 @@ async function ObtenerInstanciaAfip(cuilTitular): Promise<Afip> {
 
     const isProd = config.produccion;
     const cuilCertificado = isProd ? cuilTitular : config.cuilTest;
+
+    console.log(`Certificados cargados para CUIT ${cuilTitular} (entorno: ${isProd ? 'producción' : 'test'})`); // Log para seguimiento
 
     // La lib afip.js usa ticketPath como directorio base, no como archivo
     // Estructura resultante: tokens/test/ o tokens/{cuit}/

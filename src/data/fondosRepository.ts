@@ -459,6 +459,7 @@ class FondosRepository{
     async ObtenerDetalleMetodosPago(filtros: FiltrosFondos): Promise<any[]> {
         const connection = await db.getConnection();
         try {
+            // ---- query ventas ----
             const condiciones: string[] = ['mf.origen = \'VENTA\'', 'mf.tipo = \'INGRESO\''];
             const params: any[] = [];
 
@@ -467,7 +468,7 @@ class FondosRepository{
             params.push(filtros.idCaja);
             }
             if (filtros.idFondo) {
-            condiciones.push('f.id = ?');    // filtra por el fondo clickeado
+            condiciones.push('f.id = ?');
             params.push(filtros.idFondo);
             }
             if (filtros.fechaDesde) {
@@ -509,6 +510,48 @@ class FondosRepository{
             ORDER BY f.tipo, total_general DESC
             `, params);
 
+            // ---- query neto manuales (INGRESO_MANUAL / EGRESO_MANUAL) ----
+            const condManuales: string[] = [
+                "mf.origen IN ('INGRESO_MANUAL','EGRESO_MANUAL')"
+            ];
+            const paramsManuales: any[] = [];
+
+            if (filtros.idCaja) {
+                condManuales.push('mf.idCaja = ?');
+                paramsManuales.push(filtros.idCaja);
+            }
+            if (filtros.idFondo) {
+                condManuales.push('mf.idFondo = ?');
+                paramsManuales.push(filtros.idFondo);
+            }
+            if (filtros.fechaDesde) {
+                condManuales.push('DATE(mf.fecha) >= ?');
+                paramsManuales.push(filtros.fechaDesde);
+            }
+            if (filtros.fechaHasta) {
+                condManuales.push('DATE(mf.fecha) <= ?');
+                paramsManuales.push(filtros.fechaHasta);
+            }
+            if (filtros.usuario) {
+                condManuales.push('mf.usuario = ?');
+                paramsManuales.push(filtros.usuario);
+            }
+
+            const [manualesRows]: any = await connection.query(`
+                SELECT
+                    mf.idFondo,
+                    SUM(CASE WHEN mf.tipo = 'INGRESO' THEN mf.monto ELSE -mf.monto END) AS total_manual
+                FROM movimientos_fondos mf
+                WHERE ${condManuales.join(' AND ')}
+                GROUP BY mf.idFondo
+            `, paramsManuales);
+
+            // Mapa idFondo -> total_manual
+            const manualesMap = new Map<number, number>();
+            for (const m of manualesRows) {
+                manualesMap.set(m.idFondo, parseFloat(m.total_manual) || 0);
+            }
+
             return rows.map((row: any) => ({
                 idFondo:             row.idFondo,
                 fondo:               row.fondo,
@@ -519,7 +562,8 @@ class FondosRepository{
                 total_transferencia: parseFloat(row.total_transferencia) || 0,
                 total_digital:       parseFloat(row.total_digital)       || 0,
                 total_efectivo:      parseFloat(row.total_efectivo)      || 0,
-                total_general:       parseFloat(row.total_general)       || 0
+                total_general:       parseFloat(row.total_general)       || 0,
+                total_manual:        manualesMap.get(row.idFondo)        ?? 0
             }));
 
         } catch (error: any) {
@@ -541,6 +585,7 @@ class FondosRepository{
                 INSERT INTO movimientos_fondos (
                     idCaja,
                     idFondo,
+                    idEmpresa,
                     tipo,
                     origen,
                     monto,
@@ -548,12 +593,13 @@ class FondosRepository{
                     usuario,
                     observaciones
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
                 movimiento.idCaja,
                 movimiento.idFondo,
+                movimiento.idEmpresa ?? null,
                 movimiento.tipo,
                 movimiento.origen,
                 movimiento.monto,
@@ -713,40 +759,90 @@ class FondosRepository{
      * por empresa (vía ventas_pagos → metodos_pago → empresas).
      * Filtra por caja y período igual que el resto del módulo.
      */
+    async ObtenerEmpresasPorFondo(idFondo: number): Promise<{ id: number; nombre: string }[]> {
+        const connection = await db.getConnection();
+        try {
+            const [rows]: any = await connection.query(`
+                SELECT DISTINCT emp.id, emp.razonSocial AS nombre
+                FROM metodos_pago mp
+                JOIN empresas emp ON emp.id = mp.idEmpresa
+                WHERE mp.idFondo = ?
+                ORDER BY emp.razonSocial
+            `, [idFondo]);
+
+            return rows.map((r: any) => ({ id: r.id, nombre: r.nombre }));
+        } finally {
+            connection.release();
+        }
+    }
+
     async ObtenerDesglosePorEmpresa(filtros: FiltrosFondos): Promise<any[]> {
         const connection = await db.getConnection();
         try {
-            const params: any[] = [filtros.idFondo, filtros.idCaja];
-            const condiciones: string[] = [
+            // bloque 1: ventas (params: idFondo, idCaja + fechas opcionales)
+            const ventasParams: any[] = [filtros.idFondo, filtros.idCaja];
+            const ventasCond: string[] = [
                 "v.estado IN ('Finalizada','Facturada')",
                 "v.fechaBaja IS NULL"
             ];
 
             if (filtros.fechaDesde) {
-                condiciones.push("DATE(v.fecha) >= ?");
-                params.push(filtros.fechaDesde);
+                ventasCond.push("DATE(v.fecha) >= ?");
+                ventasParams.push(filtros.fechaDesde);
             }
             if (filtros.fechaHasta) {
-                condiciones.push("DATE(v.fecha) <= ?");
-                params.push(filtros.fechaHasta);
+                ventasCond.push("DATE(v.fecha) <= ?");
+                ventasParams.push(filtros.fechaHasta);
             }
 
-            const where = condiciones.length ? `WHERE ${condiciones.join(" AND ")}` : "";
+            const ventasWhere = `WHERE ${ventasCond.join(" AND ")}`;
+
+            // bloque 2: manuales (params: idFondo, idCaja + fechas opcionales)
+            const manualesParams: any[] = [filtros.idFondo, filtros.idCaja];
+            const manualesCond: string[] = [
+                "mf.idEmpresa IS NOT NULL",
+                "mf.origen IN ('INGRESO_MANUAL','EGRESO_MANUAL')"
+            ];
+
+            if (filtros.fechaDesde) {
+                manualesCond.push("DATE(mf.fecha) >= ?");
+                manualesParams.push(filtros.fechaDesde);
+            }
+            if (filtros.fechaHasta) {
+                manualesCond.push("DATE(mf.fecha) <= ?");
+                manualesParams.push(filtros.fechaHasta);
+            }
+
+            const manualesWhere = `WHERE mf.idFondo = ? AND mf.idCaja = ? AND ${manualesCond.join(" AND ")}`;
 
             const [rows]: any = await connection.query(`
-                SELECT
-                    emp.razonSocial AS empresa,
-                    SUM(vp.monto)   AS total
-                FROM ventas_pagos vp
-                JOIN metodos_pago mp     ON mp.id = vp.idMetodo AND mp.idFondo = ?
-                JOIN ventas v            ON v.id  = vp.idVenta  AND v.idCaja  = ?
-                JOIN empresas emp        ON emp.id = mp.idEmpresa
-                LEFT JOIN valores_acreditar va ON va.idVentaPago = vp.id
-                ${where}
-                AND (va.id IS NULL OR va.estado != 'PENDIENTE')
-                GROUP BY mp.idEmpresa, emp.razonSocial
+                SELECT empresa, SUM(total) AS total
+                FROM (
+                    SELECT
+                        emp.razonSocial AS empresa,
+                        SUM(vp.monto)   AS total
+                    FROM ventas_pagos vp
+                    JOIN metodos_pago mp     ON mp.id = vp.idMetodo AND mp.idFondo = ?
+                    JOIN ventas v            ON v.id  = vp.idVenta  AND v.idCaja  = ?
+                    JOIN empresas emp        ON emp.id = mp.idEmpresa
+                    LEFT JOIN valores_acreditar va ON va.idVentaPago = vp.id
+                    ${ventasWhere}
+                    AND (va.id IS NULL OR va.estado != 'PENDIENTE')
+                    GROUP BY mp.idEmpresa, emp.razonSocial
+
+                    UNION ALL
+
+                    SELECT
+                        emp.razonSocial AS empresa,
+                        SUM(CASE WHEN mf.tipo = 'INGRESO' THEN mf.monto ELSE -mf.monto END) AS total
+                    FROM movimientos_fondos mf
+                    JOIN empresas emp ON emp.id = mf.idEmpresa
+                    ${manualesWhere}
+                    GROUP BY mf.idEmpresa, emp.razonSocial
+                ) t
+                GROUP BY empresa
                 ORDER BY total DESC
-            `, params);
+            `, [...ventasParams, ...manualesParams]);
 
             return rows.map((r: any) => ({
                 empresa: r.empresa,
@@ -829,9 +925,11 @@ async function ObtenerQueryMovimientos(
                 mf.origen,
                 mf.descripcion,
                 mf.monto,
-                mf.usuario
+                mf.usuario,
+                e.razonSocial AS empresa
             FROM movimientos_fondos mf
             INNER JOIN fondos f ON f.id = mf.idFondo
+            LEFT JOIN empresas e ON e.id = mf.idEmpresa
             ${where}
             ORDER BY mf.fecha DESC
             ${paginado}
@@ -846,4 +944,3 @@ async function ObtenerQueryMovimientos(
 }
 
 export const FondosRepo = new FondosRepository();
-      

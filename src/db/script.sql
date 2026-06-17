@@ -75,6 +75,36 @@ CREATE TABLE direcciones_cliente (
 )
 ENGINE=InnoDB;
 
+DROP TABLE IF EXISTS proveedores;
+CREATE TABLE proveedores (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    razonSocial VARCHAR(100),
+    telefono VARCHAR(20),
+    celular VARCHAR(20),
+    contacto VARCHAR(100),
+    email VARCHAR(100),
+    idCondIva INT,
+    idTipoDocumento INT,
+    documento BIGINT,
+    fechaAlta TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fechaBaja DATE
+)
+ENGINE=InnoDB;
+
+DROP TABLE IF EXISTS direcciones_proveedor;
+CREATE TABLE direcciones_proveedor (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idProveedor INT,
+    resumen VARCHAR(300),
+    codPostal VARCHAR(10),
+    calle VARCHAR(150),
+    numero VARCHAR(10),
+    localidad VARCHAR(100),
+    provincia VARCHAR(100),
+    observaciones VARCHAR(300)
+)
+ENGINE=InnoDB;
+
 DROP TABLE IF EXISTS tipos_pago;
 CREATE TABLE tipos_pago (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -334,8 +364,13 @@ DROP TABLE IF EXISTS metodos_pago;
 CREATE TABLE metodos_pago (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     descripcion VARCHAR(50),
-    idFondo INT 
+    idFondo INT,
+    idEmpresa INT
 );
+
+-- movimientos_fondos (tabla no incluida en este script — ver migraciones en db/tasks/)
+-- Columna idEmpresa (INT NULL) agregada via 20260610000000_add_idEmpresa_movimientos_fondos.js
+-- FK: fk_mf_empresa -> empresas(id)
 
 DROP TABLE IF EXISTS colores_producto;
 CREATE TABLE colores_producto (
