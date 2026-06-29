@@ -74,7 +74,11 @@ class ProveedoresRepository{
         const connection = await db.getConnection();
 
         try {
-            let query = "SELECT id, razonSocial, documento FROM proveedores WHERE fechaBaja IS NULL";
+            let query = " SELECT p.id, p.razonSocial, p.documento, ci.descripcion AS condicionIva, td.descripcion AS tipoDocumento " +
+                        " FROM proveedores p " +
+                        " LEFT JOIN condiciones_iva ci ON ci.id = p.idCondIva " +
+                        " LEFT JOIN tipos_documento td ON td.id = p.idTipoDocumento " +
+                        " WHERE p.fechaBaja IS NULL ";
             const [rows] = await connection.query(query);
             return [rows][0];
 
@@ -110,7 +114,7 @@ class ProveedoresRepository{
             //Insertamos las direcciones del proveedor
             for (const element of  proveedor.direcciones) {
                 element.idProveedor = idProveedor;
-                InsertDirecciones(connection, element);
+                await InsertDirecciones(connection, element);
             };
 
             //Mandamos la transaccion
@@ -158,7 +162,7 @@ class ProveedoresRepository{
             //Insertamos las direcciones del proveedor
             for (const element of  proveedor.direcciones) {
                 element.idProveedor = proveedor.id;
-                InsertDirecciones(connection, element);
+                await InsertDirecciones(connection, element);
             };
                 
             //Mandamos la transaccion

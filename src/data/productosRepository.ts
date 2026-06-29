@@ -482,12 +482,16 @@ class ProductosRepository{
             console.log("ID DEL PRODUCTO: " + producto.id)
             //#endregion
 
-            //Insertamos los talles del producto
+            //Insertamos los talles del producto. Un color nuevo siempre arranca con stock 0,
+            //sin importar lo que traiga el payload (el front puede heredar cantidad de otro color
+            //ya cargado en pantalla, ver el mismo fix aplicado en Modificar() más abajo).
+            //El stock real se carga después vía Órdenes de Ingreso.
             for (const element of  producto.talles!) {
                 element.idProducto = producto.id;
-                InsertTalleProducto(connection, element);
+                element.cantidad = 0;
+                await InsertTalleProducto(connection, element);
             };
-            
+
             //Mandamos la transaccion
             await connection.commit();
             return "OK";
@@ -546,17 +550,35 @@ class ProductosRepository{
             await connection.query(consulta, parametros);
             //#endregion
 
+            //Tomamos la cantidad real (stock) que ya existe en BD por talle, ANTES de borrar.
+            //La cantidad es propia de cada color/producto y se administra vía Órdenes de Ingreso/Ventas,
+            //nunca desde esta pantalla: el payload del front puede traer un valor de cantidad heredado
+            //de otro color (addmod-productos reutiliza un único FormArray de talles para todos los
+            //colores seleccionados) y no debe pisar el stock real.
+            const [rowsCantidadActual] = await connection.query(
+                "SELECT talle, cantidad FROM talles_producto WHERE idProducto = ?",
+                [producto.id]
+            );
+            const cantidadActualPorTalle = new Map<string, number>();
+            if (Array.isArray(rowsCantidadActual)) {
+                for (const row of rowsCantidadActual as any[]) {
+                    cantidadActualPorTalle.set(row.talle, row.cantidad);
+                }
+            }
+
             //Borramos talles anteriores
             await connection.query("DELETE FROM talles_producto WHERE idProducto = ?", [producto.id]);
 
-            //Insertamos los talles del producto
+            //Insertamos los talles del producto, preservando la cantidad real existente
+            //(si el talle es nuevo -ej. se amplió la línea de talles- arranca en 0)
             for (const element of  producto.talles!) {
                 element.idProducto = producto.id;
-                InsertTalleProducto(connection, element);
+                element.cantidad = cantidadActualPorTalle.get(element.talle ?? '') ?? 0;
+                await InsertTalleProducto(connection, element);
             };
 
             //Borramos colores anteriores
-            await connection.query("DELETE FROM colores_producto WHERE idProducto = ?", [producto.id]);
+            //await connection.query("DELETE FROM colores_producto WHERE idProducto = ?", [producto.id]);
 
             //Mandamos la transaccion
             await connection.commit();

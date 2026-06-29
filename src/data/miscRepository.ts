@@ -201,9 +201,23 @@ class MiscRepository{
 
     async CondicionesIvaSelector(){
         const connection = await db.getConnection();
-        
+
         try {
             const [rows] = await connection.query('SELECT * FROM condiciones_iva ORDER BY descripcion ASC');
+            return [rows][0];
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    async CategoriasClienteSelector(){
+        const connection = await db.getConnection();
+
+        try {
+            const [rows] = await connection.query('SELECT * FROM categorias_cliente ORDER BY descripcion ASC');
             return [rows][0];
 
         } catch (error:any) {
@@ -238,6 +252,7 @@ class MiscRepository{
             FROM metodos_pago mp
             INNER JOIN fondos f ON f.id = mp.idFondo
             WHERE mp.idEmpresa = ?
+                AND mp.tipo NOT IN ('CUENTA_CORRIENTE_PROVEEDOR', 'SALDO_FAVOR_PROVEEDOR')
             `
             const [rows] = await connection.query(query, [idEmpresa]);
             return [rows][0];

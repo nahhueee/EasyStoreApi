@@ -143,7 +143,7 @@ class ClientesRepository{
             //Insertamos las direcciones del cliente
             for (const element of  cliente.direcciones) {
                 element.idCliente = cliente.id;
-                InsertDirecciones(connection, element);
+                await InsertDirecciones(connection, element);
             };
 
             //Mandamos la transaccion
@@ -196,7 +196,7 @@ class ClientesRepository{
             //Insertamos las direcciones del cliente
             for (const element of  data.direcciones) {
                 element.idCliente = data.id;
-                InsertDirecciones(connection, element);
+                await InsertDirecciones(connection, element);
             };
                 
             //Mandamos la transaccion

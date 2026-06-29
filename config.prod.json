@@ -4,11 +4,11 @@
     "port": 9000,
     "idApp": 1,
     "web": true,
-    "servidor": "/easystore",
+    "servidor": "/chazagolf",
     "db": {
         "host": "127.0.0.1",
-        "user": "easystore",
-        "password": "nnjk2Zsbc57B3MnR",
-        "database": "dbeasystore"
+        "user": "dbchazagolf",
+        "password": "kBST5JMyc4fp5j7d",
+        "database": "dbchazagolf"
     }
 }

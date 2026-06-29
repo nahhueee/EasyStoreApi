@@ -305,7 +305,7 @@ class OrdenIngresoRepository{
             //Insertamos los productos de la orden
             for (const prod of orden.productos) {
                 prod.idOrden = orden.id;
-                InsertProductoOrden(connection, prod);
+                await InsertProductoOrden(connection, prod);
             }
             
             //Mandamos la transaccion
@@ -347,7 +347,7 @@ class OrdenIngresoRepository{
             await connection.query("DELETE FROM ordenes_productos WHERE idOrden = ?", [data.id]);
             for (const prod of data.productos) {
                 prod.idOrden = data.id;
-                InsertProductoOrden(connection, prod);
+                await InsertProductoOrden(connection, prod);
             }
 
             for (const rec of data.recepcionesRevertir) {
@@ -478,7 +478,7 @@ class OrdenIngresoRepository{
             //Insertamos los detalles de la recepcion
             for (const item of data.detalles) {
                 item.idRecepcion = result.insertId;
-                InsertDetalleRecepcion(connection, item);
+                await InsertDetalleRecepcion(connection, item);
 
                 const nroTalle = parseInt(item.talle.replace('t', ''));
                 await ProductosRepo.ActualizarInventarioOrden(connection, item.idProducto, nroTalle, item.cantidad, item.idLineaTalle, "+");

@@ -34,38 +34,39 @@ class VentasRepository{
         try {
             //Obtengo la query segun los filtros
             let query = `
-            SELECT 
+            SELECT
                 mp.id,
                 CASE
                     WHEN mp.tipo = 'CREDITO'
-                        THEN CONCAT(b.nombre, ' - Crédito')
+                        THEN CONCAT(f.nombre, ' - Crédito')
 
                     WHEN mp.tipo = 'DEBITO'
-                        THEN CONCAT(b.nombre, ' - Débito')
+                        THEN CONCAT(f.nombre, ' - Débito')
 
                     WHEN mp.tipo = 'TRANSFERENCIA'
-                        THEN CONCAT(b.nombre, ' - Transferencia')
+                        THEN CONCAT(f.nombre, ' - Transferencia')
 
-                    ELSE b.nombre
+                    ELSE mp.nombre
                 END AS metodo_pago,
                 SUM(vp.monto) AS total_acumulado
 
             FROM ventas v
-            INNER JOIN ventas_pagos vp 
+            INNER JOIN ventas_pagos vp
                 ON vp.idVenta = v.id
-            INNER JOIN metodos_pago mp 
+            INNER JOIN metodos_pago mp
                 ON mp.id = vp.idMetodo
-            INNER JOIN bancos b
-                ON b.id = mp.idBanco
+            LEFT JOIN fondos f
+                ON f.id = mp.idFondo
             WHERE v.fechaBaja IS NULL
                 AND (
                     v.estado = 'Finalizada'
                     OR v.estado = 'Facturada'
                 )
             ${filtro}
-            GROUP BY 
+            GROUP BY
                 mp.id,
-                b.nombre,
+                mp.nombre,
+                f.nombre,
                 mp.tipo
             ORDER BY total_acumulado DESC
         `;
@@ -151,14 +152,14 @@ class VentasRepository{
                     vp.idVenta,
 
                     GROUP_CONCAT(
-                        mp.descripcion
-                        ORDER BY mp.descripcion
+                        mp.nombre
+                        ORDER BY mp.nombre
                         SEPARATOR ';'
                     ) AS metodos,
 
                     GROUP_CONCAT(
                         vp.monto
-                        ORDER BY mp.descripcion
+                        ORDER BY mp.nombre
                         SEPARATOR ';'
                     ) AS montos
 
@@ -338,10 +339,11 @@ class VentasRepository{
         try {
             let queryRegistros = await ObtenerQuery(
                 {
-                    cliente: data.idCliente, 
+                    cliente: data.idCliente,
                     tipo: 'pre',
-                    nroEditando: data.nroEditando
-                }, 
+                    nroEditando: data.nroEditando,
+                    soloAbiertas: true
+                },
                 false);
 
             //Obtengo la lista de registros y el total
@@ -838,27 +840,6 @@ class VentasRepository{
         }
     }
 
-    async Eliminar(venta:any): Promise<string>{
-        const connection = await db.getConnection();
-        
-        try {
-            //Iniciamos una transaccion
-            await connection.beginTransaction();
-
-            await connection.query("UPDATE ventas SET fechaBaja = ? WHERE id = ?", [moment().format('YYYY-MM-DD HH:mm'), venta.id]);
-                        
-            //Mandamos la transaccion
-            await connection.commit();
-            return "OK";
-
-        } catch (error:any) {
-            //Si ocurre un error volvemos todo para atras
-            await connection.rollback();
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
 
     async GuardarFactura(data:any){
         const connection = await db.getConnection();
@@ -946,7 +927,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         // #region FILTROS
         if (filtros.cliente && filtros.cliente != 0){
 
-            if(filtros.desdeCuenta && filtros.desdeCuenta == false){
+            if(filtros.soloAbiertas){
                 filtro += " AND (estado <> 'Asociado' AND estado <> 'Asociada' AND estado <> 'Facturado' AND estado <> 'Facturada' AND estado <> 'Finalizado' AND estado <> 'Finalizada')";
             }
 

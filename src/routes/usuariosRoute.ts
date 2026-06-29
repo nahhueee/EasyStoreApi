@@ -60,6 +60,20 @@ router.get('/validar/:usuario', async (req:Request, res:Response) => {
     }
 });
 
+router.post('/login', async (req:Request, res:Response) => {
+    try{
+        // 200 + null en credenciales inválidas (usuario inexistente o pass incorrecta):
+        // mismo contrato que ya consumía el frontend, sin distinguir el motivo del rechazo.
+        const usuario = await UsuariosRepo.Login(req.body.usuario, req.body.pass);
+        res.json(usuario);
+
+    } catch(error:any){
+        let msg = "Error al intentar iniciar sesion.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.put('/guardar-sesion', async (req:Request, res:Response) => {
     try{ 
         res.json(await SesionServ.GuardarSesion(req.body.id, req.body.usuario, req.body.nombre, req.body.cargo.nombre));

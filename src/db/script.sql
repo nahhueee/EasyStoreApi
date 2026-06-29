@@ -30,7 +30,7 @@ CREATE TABLE usuarios (
     usuario VARCHAR(30),
     nombre VARCHAR(100),
     email VARCHAR(100),
-    pass VARCHAR(30),
+    pass VARCHAR(255),
     idCargo INT
 );
 
@@ -555,7 +555,7 @@ VALUES
 INSERT INTO tipos_pago(id, nombre) VALUES (NULL,'EFECTIVO'), (NULL,'TARJETA'), (NULL,'TRANSFERENCIA'), (NULL,'COMBINADO');
 INSERT INTO cargos(id, nombre) VALUES (NULL,'ADMINISTRADOR'), (NULL,'EMPLEADO');
 INSERT INTO `clientes` (`id`, `nombre`, `razonSocial`, `telefono`, `celular`, `contacto`, `email`, `idCondIva`, `idTipoDocumento`, `documento`, `idCondicionPago`, `idCategoria`, `fechaAlta`, `fechaBaja`) VALUES (NULL, 'CONSUMIDOR FINAL', 'CONSUMIDOR FINAL', '0', '0', 'CONSUMIDOR FINAL', NULL, '0', '0', '0', '0', '0', CURRENT_TIMESTAMP, NULL);
-INSERT INTO usuarios(id, usuario, nombre, email, pass, idCargo) VALUES (NULL, 'ADMIN', 'ADMINISTRADOR', NULL, '1235', 1);
+INSERT INTO usuarios(id, usuario, nombre, email, pass, idCargo) VALUES (NULL, 'ADMIN', 'ADMINISTRADOR', NULL, '$2b$10$ZJPupB8k/JvdKAzBeTw2BuBGLSeT4UG2TGI9QwEfjOE/78Eo.c0HC', 1); -- pass: 1235 (hash bcrypt)
 INSERT INTO lineas_talle(descripcion)
 VALUES
 ('XXP-PE-ME-GR-XXG'),
@@ -678,5 +678,83 @@ CREATE INDEX idx_ventas_pagos_venta ON ventas_pagos (idVenta);
 CREATE INDEX idx_ventas_cliente_fecha ON ventas(idCliente, fecha);
 CREATE INDEX idx_ventas_proceso ON ventas(idProceso);
 CREATE INDEX idx_ventas_pagos_metodo ON ventas_pagos(idMetodo);
+
+-- ============================================================
+-- MODULO COMPRAS (Fase 1) - jun-2026
+-- Fuente real: knex migration db/tasks/20260617141038_create_compras.js
+-- Estas definiciones son documentación de referencia, no se ejecutan desde este script.
+-- ============================================================
+
+DROP TABLE IF EXISTS alicuotas_iva;
+CREATE TABLE alicuotas_iva (
+    id INT UNSIGNED PRIMARY KEY,
+    descripcion VARCHAR(20) NOT NULL,
+    tasa DECIMAL(5,4) NOT NULL,
+    activa TINYINT DEFAULT 1
+);
+
+INSERT INTO alicuotas_iva (id, descripcion, tasa) VALUES
+(1, '21%', 0.2100),
+(2, '10,5%', 0.1050),
+(3, '27%', 0.2700),
+(4, '5%', 0.0500),
+(5, '2,5%', 0.0250),
+(6, 'Exento', 0.0000);
+
+-- idCaja: punto desde el que se paga (analogo a ventas.idCaja).
+-- idMetodoPago: FK a metodos_pago (filtrado a "todos menos DEBITO/CREDITO/SALDO_FAVOR/CUENTA_CORRIENTE" en F1), NULL pensado para Cuenta Corriente proveedor en F2.
+-- idTipoComprobante: reutiliza tipos_comprobantes (id=99 = COTIZACION; impacta fondos/CC igual que el resto).
+-- totalNeto/totalIva/totalIibb se recalculan en backend como SUM de las tablas hijas; tasaMunicipal/percepcionIva/retencionGanancia son ingreso manual.
+-- total = totalNeto + totalIva + totalIibb + tasaMunicipal + percepcionIva + retencionGanancia.
+DROP TABLE IF EXISTS compras;
+CREATE TABLE compras (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idEmpresa INT UNSIGNED NOT NULL,
+    idProveedor INT UNSIGNED NOT NULL,
+    idCaja INT UNSIGNED NOT NULL,
+    idMetodoPago INT UNSIGNED NULL,
+    fecha DATE NOT NULL,
+    idTipoComprobante INT UNSIGNED NOT NULL,
+    nroComprobante VARCHAR(20),
+    totalNeto DECIMAL(12,2) NOT NULL DEFAULT 0,
+    totalIva DECIMAL(12,2) NOT NULL DEFAULT 0,
+    totalIibb DECIMAL(12,2) NOT NULL DEFAULT 0,
+    tasaMunicipal DECIMAL(12,2) NOT NULL DEFAULT 0,
+    percepcionIva DECIMAL(12,2) NOT NULL DEFAULT 0,
+    retencionGanancia DECIMAL(12,2) NOT NULL DEFAULT 0,
+    total DECIMAL(12,2) NOT NULL DEFAULT 0,
+    estado VARCHAR(15) NOT NULL DEFAULT 'Aprobada',
+    usuario VARCHAR(15),
+    alta TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    baja DATETIME NULL
+);
+
+-- Lineas de concepto libre (sin catalogo/stock): cantidad + concepto + importe. El IVA NO vive en la linea (ver compras_iva).
+DROP TABLE IF EXISTS detalle_compras;
+CREATE TABLE detalle_compras (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idCompra BIGINT UNSIGNED NOT NULL,
+    cantidad DECIMAL(10,2) NOT NULL,
+    concepto VARCHAR(150) NOT NULL,
+    importe DECIMAL(12,2) NOT NULL
+);
+
+-- IVA manual por alicuota (hasta 3 filas tipicas: 21/10,5/27). idAlicuota referencia alicuotas_iva (catalogo, no FK explicita).
+DROP TABLE IF EXISTS compras_iva;
+CREATE TABLE compras_iva (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idCompra BIGINT UNSIGNED NOT NULL,
+    idAlicuota INT UNSIGNED NOT NULL,
+    importe DECIMAL(12,2) NOT NULL
+);
+
+-- Percepcion de Ingresos Brutos por provincia. No existe catalogo de provincias en la DB: el FE renderiza la lista fija de 24 y se guarda como texto libre.
+DROP TABLE IF EXISTS compras_percepciones_iibb;
+CREATE TABLE compras_percepciones_iibb (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    idCompra BIGINT UNSIGNED NOT NULL,
+    provincia VARCHAR(100) NOT NULL,
+    importe DECIMAL(12,2) NOT NULL
+);
 
 

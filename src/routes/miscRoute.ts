@@ -138,11 +138,22 @@ router.get('/linea-talle/:idLinea', async (req:Request, res:Response) => {
 });
 
 router.get('/condiciones-iva', async (req:Request, res:Response) => {
-    try{ 
+    try{
         res.json(await MiscRepo.CondicionesIvaSelector());
 
     } catch(error:any){
         let msg = "Error al obtener el listado de condiciones de IVA.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.get('/categorias-cliente', async (req:Request, res:Response) => {
+    try{
+        res.json(await MiscRepo.CategoriasClienteSelector());
+
+    } catch(error:any){
+        let msg = "Error al obtener el listado de categorias de cliente.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

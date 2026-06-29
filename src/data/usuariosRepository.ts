@@ -1,4 +1,5 @@
 import db from '../db';
+import bcrypt from 'bcryptjs';
 
 class UsuariosRepository{
 
@@ -26,12 +27,40 @@ class UsuariosRepository{
 
     async ObtenerUsuario(filtros:any){
         const connection = await db.getConnection();
-        
+
         try {
             let consulta = await ObtenerQuery(filtros,false);
             const rows = await connection.query(consulta);
-            
-            return rows[0][0];
+            const usuario = rows[0][0];
+
+            if (usuario) delete usuario.pass; // No exponer el hash fuera del login
+            return usuario;
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    // Usado exclusivamente por el endpoint de login. Devuelve el usuario (sin pass) si las
+    // credenciales son válidas, o null si no existe o la contraseña no coincide.
+    async Login(usuario:string, pass:string){
+        const connection = await db.getConnection();
+
+        try {
+            const rows = await connection.query(
+                "SELECT u.*, c.nombre cargo FROM usuarios u LEFT JOIN cargos c ON c.id = u.idCargo WHERE u.usuario = ?",
+                [usuario]
+            );
+            const usuarioDb = rows[0][0];
+            if (!usuarioDb) return null;
+
+            const passwordOk = await bcrypt.compare(pass, usuarioDb.pass);
+            if (!passwordOk) return null;
+
+            delete usuarioDb.pass;
+            return usuarioDb;
 
         } catch (error:any) {
             throw error;
@@ -96,9 +125,10 @@ class UsuariosRepository{
             // if(existe)//Verificamos si ya existe un usuario con el mismo nombre o correo
             //     return "Ya existe un usuario con el mismo nombre o correo.";
             
+            const hash = await bcrypt.hash(data.pass, 10);
             const consulta = "INSERT INTO usuarios(usuario, nombre, email, pass, idCargo) VALUES (?, ?, ?, ?, ?)";
-            const parametros = [data.usuario, data.nombre.toUpperCase(), data.email, data.pass, data.cargo.id];
-            
+            const parametros = [data.usuario, data.nombre.toUpperCase(), data.email, hash, data.cargo.id];
+
             await connection.query(consulta, parametros);
             return "OK";
 
@@ -117,16 +147,33 @@ class UsuariosRepository{
             // if(existe)//Verificamos si ya existe un usuario con el mismo nombre o correo
             //     return "Ya existe un usuario con el mismo nombre o correo.";
             
-            const consulta = `UPDATE usuarios 
-                              SET 
+            // Solo se rehashea y actualiza la columna pass si llega una contraseña nueva
+            // (evita pisar el hash existente con un valor vacío)
+            let consulta:string;
+            let parametros:any[];
+
+            if (data.pass) {
+                const hash = await bcrypt.hash(data.pass, 10);
+                consulta = `UPDATE usuarios
+                              SET
                               usuario = ?,
                               nombre = ?,
                               email = ?,
                               pass = ?,
                               idCargo = ?
                               WHERE id = ? `;
+                parametros = [data.usuario, data.nombre.toUpperCase(), data.email, hash, data.cargo.id, data.id];
+            } else {
+                consulta = `UPDATE usuarios
+                              SET
+                              usuario = ?,
+                              nombre = ?,
+                              email = ?,
+                              idCargo = ?
+                              WHERE id = ? `;
+                parametros = [data.usuario, data.nombre.toUpperCase(), data.email, data.cargo.id, data.id];
+            }
 
-            const parametros = [data.usuario, data.nombre.toUpperCase(), data.email, data.pass, data.cargo.id, data.id];
             await connection.query(consulta, parametros);
             return "OK";
 

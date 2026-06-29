@@ -107,17 +107,6 @@ router.post('/guardar-factura', async (req:Request, res:Response) => {
     }
 });
 
-router.put('/eliminar', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await VentasRepo.Eliminar(req.body));
-
-    } catch(error:any){
-        let msg = "Error al intentar eliminar la venta.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
 router.put('/aprobar', async (req:Request, res:Response) => {
     try{ 
         res.json(await VentasRepo.Aprobar(req.body));
