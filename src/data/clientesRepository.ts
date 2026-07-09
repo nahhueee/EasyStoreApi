@@ -99,6 +99,48 @@ class ClientesRepository{
         return cliente;
     }
 
+    // Query plana sin paginar, pensada para export masivo: a diferencia de Obtener(),
+    // no dispara las sub-consultas de direcciones/ultimoDescuento por cliente (innecesarias
+    // para un listado de datos maestros y costosas si no hay paginado de por medio).
+    async ObtenerParaExcel(filtros:any){
+        const connection = await db.getConnection();
+
+        try {
+            const query = await ObtenerQueryParaExcel(filtros);
+            const [rows] = await connection.query(query);
+
+            const clientes:any[] = [];
+
+            if (Array.isArray(rows)) {
+                for (const row of rows) {
+                    clientes.push({
+                        Codigo: row['id'],
+                        Nombre: row['nombre'],
+                        RazonSocial: row['razonSocial'],
+                        Documento: row['documento'],
+                        TipoDocumento: row['tipoDocumento'],
+                        CondicionIva: row['condicion'],
+                        CondicionPago: row['condicionPago'],
+                        Categoria: row['categoria'],
+                        ListaPrecio: MapearListaPrecio(row['idListaPrecio']),
+                        Telefono: row['telefono'],
+                        Celular: row['celular'],
+                        Contacto: row['contacto'],
+                        Email: row['email'],
+                        FechaAlta: row['fechaAlta'] ? moment(row['fechaAlta']).format('DD/MM/YYYY') : ''
+                    });
+                }
+            }
+
+            return clientes;
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
     async ClientesSelector(cuentasCorriente){
         const connection = await db.getConnection();
         
@@ -258,11 +300,13 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         // #region FILTROS
         if (filtros.nombre != null && filtros.nombre != "") 
             filtro += " AND c.nombre LIKE '%"+ filtros.nombre.toUpperCase().trim() + "%'";
-        if (filtros.condicionIva != null && filtros.condicionIva != "") 
+        if (filtros.condicionIva != null && filtros.condicionIva != "")
             filtro += " AND c.idCondIva = "+ filtros.condicionIva;
-        if (filtros.documento != null && filtros.documento != 0) 
+        if (filtros.condicionPago != null && filtros.condicionPago != "")
+            filtro += " AND c.idCondicionPago = "+ filtros.condicionPago;
+        if (filtros.documento != null && filtros.documento != 0)
             filtro += " AND c.documento = " + filtros.documento;
-        if (filtros.idCliente != null && filtros.idCliente != 0) 
+        if (filtros.idCliente != null && filtros.idCliente != 0)
             filtro += " AND c.id = "+ filtros.idCliente;
         // #endregion
 
@@ -294,6 +338,51 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             
     } catch (error) {
         throw error; 
+    }
+}
+
+// Mismos filtros que ObtenerQuery (nombre, condicionIva, condicionPago, documento), para que
+// el export siempre refleje exactamente lo que el listado tiene filtrado en pantalla.
+async function ObtenerQueryParaExcel(filtros:any):Promise<string>{
+    try {
+        let filtro:string = "";
+
+        if (filtros.nombre != null && filtros.nombre != "")
+            filtro += " AND c.nombre LIKE '%"+ filtros.nombre.toUpperCase().trim() + "%'";
+        if (filtros.condicionIva != null && filtros.condicionIva != "")
+            filtro += " AND c.idCondIva = "+ filtros.condicionIva;
+        if (filtros.condicionPago != null && filtros.condicionPago != "")
+            filtro += " AND c.idCondicionPago = "+ filtros.condicionPago;
+        if (filtros.documento != null && filtros.documento != 0)
+            filtro += " AND c.documento = " + filtros.documento;
+
+        return " SELECT c.id, c.nombre, c.razonSocial, c.documento, c.telefono, c.celular, c.contacto, c.email, " +
+            " c.idListaPrecio, c.fechaAlta, ci.descripcion condicion, td.descripcion tipoDocumento, cp.descripcion condicionPago, cc.descripcion categoria " +
+            " FROM clientes c" +
+            " LEFT JOIN condiciones_iva ci on ci.id = c.idCondIva " +
+            " LEFT JOIN tipos_documento td on td.id = c.idTipoDocumento " +
+            " LEFT JOIN condiciones_pago cp on cp.id = c.idCondicionPago " +
+            " LEFT JOIN categorias_cliente cc on cc.id = c.idCategoria " +
+            " WHERE fechaBaja IS NULL " +
+            filtro +
+            " ORDER BY c.nombre ASC";
+
+    } catch (error) {
+        throw error;
+    }
+}
+
+// Duplica intencionalmente el switch de CompletarObjeto (no hay tabla listas_precio en BD).
+// Se mantiene local a este export para no tocar CompletarObjeto sin necesidad.
+function MapearListaPrecio(idListaPrecio:number):string{
+    switch (idListaPrecio) {
+        case 1: return "CONSUMIDOR FINAL";
+        case 2: return "LISTA 3";
+        case 3: return "LISTA 3.5";
+        case 4: return "LISTA 4";
+        case 5: return "LISTA 4.5";
+        case 6: return "LISTA 5";
+        default: return "";
     }
 }
 

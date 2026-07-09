@@ -90,6 +90,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
   const sheet3 = workbook.addWorksheet('Detalle');
 
   sheet3.columns = [
+    { header: 'Proceso', key: 'proceso', width: 15 },
     { header: 'Fecha / Hora', key: 'fecha_hora', width: 20 },
     { header: 'Punto de venta', key: 'punto_venta', width: 20 },
     { header: 'Cliente', key: 'cliente', width: 30 },
@@ -137,7 +138,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
 
   sheet3.autoFilter = {
     from: 'A1',
-    to: 'X1'
+    to: 'Y1'
   };
 
 

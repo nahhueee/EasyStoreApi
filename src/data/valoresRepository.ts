@@ -21,8 +21,8 @@ class ValoresRepository {
                     va.idFondoDestino,
                     f.nombre                    AS fondoDestino,
                     vp.idVenta,
-                    v.fecha                     AS fechaVenta,
-                    c.nombre                    AS cliente,
+                    COALESCE(v.fecha, r.fecha)   AS fechaVenta,
+                    COALESCE(c.nombre, cr.nombre) AS cliente,
                     -- Datos de cheque (NULL si es TARJETA_CREDITO)
                     ch.numero                   AS chequeNumero,
                     ch.banco                    AS chequeBanco,
@@ -32,8 +32,15 @@ class ValoresRepository {
                     ch.libradorCuit             AS chequeLibradorCuit
                 FROM valores_acreditar va
                 INNER JOIN ventas_pagos vp  ON vp.id  = va.idVentaPago
-                INNER JOIN ventas v         ON v.id   = vp.idVenta
+                -- LEFT (no INNER): en una Entrega de Dinero de cuenta corriente que
+                -- cancela solo saldo inicial o genera saldo a favor, el ventas_pagos
+                -- ancla se crea con idVenta NULL (no hay una venta puntual asociada).
+                -- Con INNER JOIN esos valores desaparecían de este listado aunque
+                -- estuvieran PENDIENTE (el movimiento de fondo sí se veía, pero acá no).
+                LEFT  JOIN ventas v         ON v.id   = vp.idVenta
                 LEFT  JOIN clientes c       ON c.id   = v.idCliente
+                LEFT  JOIN recibos r        ON r.id   = vp.idRecibo
+                LEFT  JOIN clientes cr      ON cr.id  = r.idCliente
                 LEFT  JOIN fondos f         ON f.id   = va.idFondoDestino
                 LEFT  JOIN cheques ch       ON ch.idValor = va.id
                 WHERE va.estado = 'PENDIENTE'

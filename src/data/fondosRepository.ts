@@ -302,7 +302,7 @@ class FondosRepository{
 
                             + COALESCE((
                                 SELECT SUM(
-                                    CASE 
+                                    CASE
                                         WHEN v.idTComprobante NOT IN (3,8,13,100)
                                         THEN v.total
                                         ELSE -v.total
@@ -311,15 +311,34 @@ class FondosRepository{
                                 FROM ventas v
                                 WHERE v.fechaBaja IS NULL
                                 AND v.idCliente = c.id
+                                -- Excluye Presupuesto/Pedido/Nota de Empaque (sin
+                                -- idTComprobante todavía): no son deuda real hasta que
+                                -- se facturan - mismo criterio que
+                                -- cuentasRepository.ObtenerSaldoCliente().
+                                AND v.idProceso NOT IN (5,6,7)
                             ), 0)
 
                             - COALESCE((
                                 SELECT SUM(vp.monto)
                                 FROM ventas_pagos vp
                                 JOIN recibos r ON r.id = vp.idRecibo
+                                JOIN metodos_pago mp ON mp.id = vp.idMetodo
+                                -- Por tipo, no por id fijo (13 solo es "Saldo a favor"
+                                -- en la empresa 1) - mismo criterio que
+                                -- cuentasRepository.ObtenerQuery().
                                 WHERE r.fechaBaja IS NULL
                                 AND r.idCliente = c.id
-                                AND vp.idMetodo <> 8
+                                AND mp.tipo <> 'SALDO_FAVOR'
+                                -- Excluye la fila-ancla de cancelación de Saldo Inicial
+                                -- (esa plata ya está reflejada en clientes.inicial) - ver
+                                -- mismo fix en cuentasRepository.ObtenerSaldoCliente().
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM ventas_entrega_detalle ved
+                                    WHERE ved.idRecibo = vp.idRecibo
+                                    AND ved.idVenta IS NULL
+                                    AND ved.montoAplicado = vp.monto
+                                    AND ved.tipoAplicacion = 'SALDO_INICIAL'
+                                )
                             ), 0)
 
                         ) AS saldoFinal

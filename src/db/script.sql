@@ -151,6 +151,7 @@ CREATE TABLE ventas_productos (
     idLineaTalle INT NULL,
     cantidad INT NOT NULL,
     precio DECIMAL(10,2) NOT NULL,
+    precioLista DECIMAL(10,2) NULL,
     total DECIMAL(10,2) NOT NULL,
     t1 INT,
     t2 INT,

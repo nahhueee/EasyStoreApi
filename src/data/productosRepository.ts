@@ -477,9 +477,7 @@ class ProductosRepository{
                             ];
             
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
-            console.log(resultado)
             producto.id = resultado.insertId;
-            console.log("ID DEL PRODUCTO: " + producto.id)
             //#endregion
 
             //Insertamos los talles del producto. Un color nuevo siempre arranca con stock 0,
@@ -923,8 +921,11 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:bo
                         SUM(t9) AS t9,
                         SUM(t10) AS t10
                     FROM ventas_productos vp
-                    INNER JOIN ventas v ON vp.idVenta = v.id
-                    INNER JOIN productos p ON p.id = vp.idProducto
+                    INNER JOIN ventas v 
+                        ON vp.idVenta = v.id 
+                        AND v.fechaBaja IS NULL 
+                        AND (v.estado = 'Pendiente' OR v.estado = 'Aprobado')
+                    INNER JOIN productos p ON p.id = vp.idProducto 
                     `
                 }
 

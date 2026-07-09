@@ -95,3 +95,12 @@ CREATE TABLE cheques (
 -- SHOW CREATE TABLE cheques;
 -- SHOW COLUMNS FROM movimientos_fondos LIKE 'origen';
 -- SHOW COLUMNS FROM metodos_pago LIKE 'tipo';
+
+-- -------------------------------------------------------------
+-- 7. FIX (jul-2026): en dev, la tabla `cheques` quedó creada sin
+--    AUTO_INCREMENT en `id` (probablemente se ejecutó una variante
+--    del CREATE TABLE de arriba). Causaba "Field 'id' doesn't have
+--    a default value" al insertar un cheque. Tabla estaba vacía al
+--    momento del fix, por eso el MODIFY es seguro.
+-- -------------------------------------------------------------
+-- ALTER TABLE cheques MODIFY id BIGINT AUTO_INCREMENT;

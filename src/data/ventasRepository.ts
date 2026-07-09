@@ -6,7 +6,29 @@ import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
 import { SesionServ } from '../services/sesionService';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta } from '../models/ventaEstados';
 const moment = require('moment');
+
+// Actualiza el estado del proceso relacionado (Presupuesto/Pedido/Nota de Empaque)
+// referenciado por venta.nroRelacionado/tipoRelacionado. Se llama una sola vez por
+// guardado (alta o edición), después de tener venta.idProceso definitivo: si la venta
+// que se está guardando es un cierre (Factura o Cotización) el relacionado pasa a su
+// estado de cierre (Facturado/a, o Relacionado en el caso de Presupuesto); si no, queda
+// en su estado "en uso" (Asociado/a). Reemplaza los dos bloques que existían antes
+// (uno "al asociar" y otro "al facturar", éste último solo dentro de `if(venta.factura)`),
+// que dependían de que la venta tuviera datos de AFIP cargados - una Cotización nunca
+// los tiene, así que ese segundo bloque nunca corría para cierres por Cotización.
+async function ActualizarEstadoRelacionado(connection, venta: Venta) {
+    if (!venta.nroRelacionado || venta.nroRelacionado == 0) return;
+
+    const resultado = ResolverEstadoRelacionado(venta.idProceso, venta.tipoRelacionado);
+    if (!resultado) return;
+
+    await connection.query(
+        "UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ",
+        [resultado.estado, venta.nroRelacionado, resultado.idProceso]
+    );
+}
 
 class VentasRepository{
 
@@ -15,7 +37,7 @@ class VentasRepository{
         const connection = await db.getConnection();
         let filtro:string = "";
 
-        if (filtros.fechas?.length === 2) {
+        if (filtros.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
             const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
             const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
 
@@ -48,7 +70,20 @@ class VentasRepository{
 
                     ELSE mp.nombre
                 END AS metodo_pago,
-                SUM(vp.monto) AS total_acumulado
+                SUM(
+                    CASE
+                        -- NC resta (monto guardado positivo, se invierte aquí)
+                        WHEN v.idProceso = 3 THEN -vp.monto
+                        -- CC: monto real = total venta - lo pagado con otros métodos.
+                        -- Por tipo, no por id fijo (12 solo es correcto para la empresa
+                        -- 1; mp ya está joineado acá, así que no hace falta subquery
+                        -- aparte para resolverlo). Antes esto no disparaba en el resto
+                        -- de las empresas y el pago CC cola por el ELSE, mostrando el
+                        -- monto nominal como si fuera plata real cobrada por ese método.
+                        WHEN mp.tipo = 'CUENTA_CORRIENTE' THEN v.total - COALESCE(otros.total_otros, 0)
+                        ELSE vp.monto
+                    END
+                ) AS total_acumulado
 
             FROM ventas v
             INNER JOIN ventas_pagos vp
@@ -57,11 +92,24 @@ class VentasRepository{
                 ON mp.id = vp.idMetodo
             LEFT JOIN fondos f
                 ON f.id = mp.idFondo
+            -- Subquery para calcular lo pagado con métodos distintos a CC (para deducir el monto CC real)
+            LEFT JOIN (
+                SELECT vpOtros.idVenta, SUM(vpOtros.monto) AS total_otros
+                FROM ventas_pagos vpOtros
+                JOIN metodos_pago mpOtros ON mpOtros.id = vpOtros.idMetodo
+                WHERE mpOtros.tipo <> 'CUENTA_CORRIENTE'
+                GROUP BY vpOtros.idVenta
+            ) otros ON otros.idVenta = v.id
             WHERE v.fechaBaja IS NULL
                 AND (
                     v.estado = 'Finalizada'
                     OR v.estado = 'Facturada'
                 )
+                -- 'Facturada' también es el estado final de una Nota de Empaque ya
+                -- facturada (ver EstadoVenta en ventaEstados.ts): sin este filtro el
+                -- reporte la contaba como si fuera una venta real, además de la
+                -- Factura/Cotización que efectivamente la facturó.
+                AND v.idProceso IN (${IdProceso.FACTURA}, ${IdProceso.COTIZACION}, ${IdProceso.NOTA_CREDITO}, ${IdProceso.NOTA_DEBITO})
             ${filtro}
             GROUP BY
                 mp.id,
@@ -85,7 +133,7 @@ class VentasRepository{
         const connection = await db.getConnection();
         let filtro:string = "";
 
-        if (filtros.fechas?.length === 2) {
+        if (filtros.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
             const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
             const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
 
@@ -114,18 +162,30 @@ class VentasRepository{
                     IFNULL(v.hora, '')
                 ) AS fecha_hora,
                 c.nombre AS cliente,
-                IFNULL(prendas.total_prendas, 0) AS venta,
-                IFNULL(servicios.total_servicios, 0) AS servicio,
-                (
-                    (IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0)) 
-                    * (IFNULL(v.descuento, 0) / 100)
-                ) * -1 AS des,
-                v.total cobrado,
+                IF(v.idProceso = 3, IFNULL(prendas.total_prendas, 0) * -1, IFNULL(prendas.total_prendas, 0)) AS venta,
+                IF(v.idProceso = 3, IFNULL(servicios.total_servicios, 0) * -1, IFNULL(servicios.total_servicios, 0)) AS servicio,
+                IF(v.idProceso = 3,
+                    (IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0)) * (IFNULL(v.descuento, 0) / 100),
+                    (IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0)) * (IFNULL(v.descuento, 0) / 100) * -1
+                ) AS des,
+                IF(v.idProceso = 3, v.total * -1, v.total) cobrado,
                 CONCAT(IFNULL(v.descuento, 0), ' %') AS descuento,
                 com.descripcion AS comprobante,
-                IFNULL( CASE WHEN v.idTComprobante = 99 THEN v.nroProceso ELSE vf.ticket END, 0) nro_comprobante,
+                CONCAT(
+                    LPAD(IFNULL(e.puntoVta, 0), 4, '0'),
+                    '-',
+                    LPAD(
+                        IFNULL(
+                            CASE
+                                WHEN v.idTComprobante = 99 THEN v.nroProceso
+                                ELSE vf.ticket
+                            END,
+                            0
+                        ), 8, '0'
+                    )
+                ) AS nro_comprobante,
                 pagos.metodos, pagos.montos,
-                prendas.cantidad_prendas,
+                IF(v.idProceso = 3, prendas.cantidad_prendas * -1, prendas.cantidad_prendas) cantidad_prendas,
                 e.razonSocial AS facturante
             FROM ventas v
 
@@ -190,9 +250,13 @@ class VentasRepository{
             ) servicios 
                 ON servicios.idVenta = v.id
 
-            WHERE 
+            WHERE
                 v.fechaBaja IS NULL
                 AND v.estado IN ('Finalizada', 'Facturada')
+                -- Solo comprobantes reales: excluye Presupuesto/Pedido/Nota de Empaque
+                -- aunque su estado final coincida en el string (ver comentario en
+                -- ObtenerReporteAcumulado).
+                AND v.idProceso IN (${IdProceso.FACTURA}, ${IdProceso.COTIZACION}, ${IdProceso.NOTA_CREDITO}, ${IdProceso.NOTA_DEBITO})
                 ${filtro}
                 ORDER BY v.fecha DESC, v.hora DESC;
             `
@@ -211,7 +275,7 @@ class VentasRepository{
         const connection = await db.getConnection();
         let filtro:string = "";
 
-        if (filtros.fechas?.length === 2) {
+        if (filtros.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
             const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
             const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
 
@@ -231,7 +295,6 @@ class VentasRepository{
             //Obtengo la query segun los filtros
             let query = `
             SELECT CONCAT(DATE_FORMAT(v.fecha, '%d/%m/%Y'),' ',IFNULL(v.hora, '')) AS fecha_hora, p.descripcion punto_venta, c.nombre cliente, e.razonSocial facturante,
-                CONCAT(e.puntoVta,'-',v.id) AS remito,
                 CONCAT(
                     LPAD(IFNULL(e.puntoVta, 0), 4, '0'),
                     '-',
@@ -250,6 +313,7 @@ class VentasRepository{
                         ), 8, '0'
                     )
                 ) AS comprobante,
+                pv.descripcion AS proceso,
                 tp.descripcion producto,
                 sp.descripcion tipo,
                 g.descripcion genero,
@@ -257,12 +321,23 @@ class VentasRepository{
                 prod.nombre articulo,
                 m.descripcion material,
                 col.descripcion color,
-                t1 XS, t2 S, t3 M, t4 L, t5 XL, t6 XXL, t7 '3XL', t8 '4XL', t9 '5XL', t10 '6XL', vp.cantidad total  
+                IF(v.idProceso = 3, t1 * -1, t1) XS,
+                IF(v.idProceso = 3, t2 * -1, t2) S,
+                IF(v.idProceso = 3, t3 * -1, t3) M,
+                IF(v.idProceso = 3, t4 * -1, t4) L,
+                IF(v.idProceso = 3, t5 * -1, t5) XL,
+                IF(v.idProceso = 3, t6 * -1, t6) XXL,
+                IF(v.idProceso = 3, t7 * -1, t7) '3XL',
+                IF(v.idProceso = 3, t8 * -1, t8) '4XL',
+                IF(v.idProceso = 3, t9 * -1, t9) '5XL',
+                IF(v.idProceso = 3, t10 * -1, t10) '6XL',
+                IF(v.idProceso = 3, vp.cantidad * -1, vp.cantidad) total
             FROM ventas v
                 LEFT JOIN puntos_venta p ON p.id = v.idPunto
                 LEFT JOIN clientes c ON c.id = v.idCliente
                 LEFT JOIN empresas e ON e.id = v.idEmpresa
                 LEFT JOIN ventas_factura vf ON vf.idVenta = v.id
+                LEFT JOIN procesos_venta pv ON pv.id = v.idProceso
                 LEFT JOIN ventas_productos vp ON vp.idVEnta = v.id
                 LEFT JOIN productos prod ON prod.id = vp.idProducto
                 LEFT JOIN tipos_producto tp ON tp.id = prod.idTipo
@@ -270,9 +345,13 @@ class VentasRepository{
                 LEFT JOIN materiales m ON m.id = prod.idMaterial
                 LEFT JOIN generos g ON g.id = prod.idGenero
                 LEFT JOIN colores col ON col.id = prod.idColor
-            WHERE 
-                v.fechaBaja IS NULL 
+            WHERE
+                v.fechaBaja IS NULL
                 AND v.estado IN ('Finalizada','Facturada')
+                -- Solo comprobantes reales: excluye Presupuesto/Pedido/Nota de Empaque
+                -- aunque su estado final coincida en el string (ver comentario en
+                -- ObtenerReporteAcumulado).
+                AND v.idProceso IN (${IdProceso.FACTURA}, ${IdProceso.COTIZACION}, ${IdProceso.NOTA_CREDITO}, ${IdProceso.NOTA_DEBITO})
                 ${filtro}
             ORDER BY v.fecha DESC, v.hora DESC;
             `
@@ -405,6 +484,7 @@ class VentasRepository{
         venta.cliente.condicionIva = row['condicionIva'];
         venta.cliente.idTipoDocumento = row['idTipoDocumento'];
         venta.cliente.documento = row['documento'];
+        venta.cliente.idCategoria = row['idCategoria'];
 
         venta.pagos = await ObtenerPagosVenta(connection, venta.id!);
         venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
@@ -430,7 +510,13 @@ class VentasRepository{
         const connection = await db.getConnection();
 
         try {
-            const rows = await connection.query(" SELECT id FROM ventas WHERE idProceso = 7 AND nroProceso = ? ORDER BY id DESC LIMIT 1 ", nroNota);
+            // Solo debe poder facturarse una Nota de Empaque ya validada (Aprobada):
+            // en Pendiente todavía no pasó el control manual, y en Asociada/Facturada
+            // ya fue usada por otro proceso o ya se facturó.
+            const rows = await connection.query(
+                `SELECT id FROM ventas WHERE idProceso = ${IdProceso.NOTA_EMPAQUE} AND nroProceso = ? AND estado = '${EstadoVenta.APROBADA}' ORDER BY id DESC LIMIT 1`,
+                nroNota
+            );
             if(rows[0][0] == undefined) return null;
             connection.release();
 
@@ -462,79 +548,49 @@ class VentasRepository{
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
             venta.id =  resultado.insertId;
 
-            //Actualizamos el estado del relacionado
-            if(venta.nroRelacionado != 0){
-                let nroProceso = 0;
-                let estado = "";
-
-                switch (venta.tipoRelacionado) {
-                    case "PRESUPUESTO":
-                        nroProceso = 5;
-                        estado = "Asociado"
-                        break;
-                    case "PEDIDO":
-                        nroProceso = 6;
-                        estado = "Asociado"
-                        break;
-                    case "NOTA DE EMPAQUE":
-                        nroProceso = 7;
-                        estado = "Asociada"
-                        break;
-                    default:
-                        break;
-                }
-
-                await connection.query("UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ", ["Asociado", venta.nroRelacionado, nroProceso]);
-            }
+            //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
+            await ActualizarEstadoRelacionado(connection, venta);
 
             //insertamos los datos del pago de la venta
             const usuarioActivo = SesionServ.LeerSesion().usuario;
             let pagosProcesados = [...(venta.pagos || [])];
 
-            if(venta.idProceso === 3) //Notas de credito
+            if(venta.idProceso === IdProceso.NOTA_CREDITO)
             {
                 await this.RegistrarMovimientoNotaCredito(connection, pagosProcesados, venta, usuarioActivo);
             }else{
-
-                const totalPagado = pagosProcesados
-                                    .filter(p => p.idMetodo !== 12) // Excluir Cuenta Corriente
-                                    .reduce((acc, p) => acc + (p.monto || 0), 0);
-              
-                if (pagosProcesados.length > 0) {
-                    const ptoVenta = venta.factura ? venta.factura.ptoVenta : 9999;
-
-                    let idRecibo;
-                    if(totalPagado > 0){
-                        idRecibo = await InsertRecibo(connection, {
-                            idCliente: venta.cliente?.id,
-                            ptoVenta,
-                            total: totalPagado
-                        });
-                    }                    
-
-                    for (const pago of pagosProcesados) {
-                        pago.idVenta = venta.id;
-                        pago.idRecibo = pago.idMetodo == 12 ? null : idRecibo;
-                        pago.monto = pago.idMetodo == 12 ? 0 : pago.monto; // Si es Cuenta Corriente, el monto en ventas_pagos es 0
-
-                        pago.idVentaPago = await InsertPagoVenta(connection, pago);
-                    }
-
-                    //Insertamos el movimiento en el saldo
-                    await this.RegistrarMovimientosVenta(connection, {
-                        ...venta,
-                        pagos: pagosProcesados
-                    }, usuarioActivo);
+                // El recibo, los pagos y el movimiento de fondo se generan cuando llegan
+                // pagos reales (venta.pagos con longitud > 0), sin importar si la venta
+                // tiene un comprobante fiscal (venta.factura) o es un Ticket X/Cotización
+                // (idTComprobante = SIN_COMPROBANTE). ProcesarCobroVenta ya contempla el
+                // caso sin factura (usa ptoVenta 9999 como fallback). Antes se exigía
+                // venta.factura también, lo que hacía que toda venta cobrada sin factura
+                // AFIP (Cotizaciones, Pedidos/Notas de Empaque cerrados con Ticket X)
+                // perdiera silenciosamente el pago: no se guardaba ventas_pagos, no había
+                // recibo ni movimiento de fondo. Si se guarda pendiente de facturar (sin
+                // pagos todavía), los pagos quedan solo como intención del front y se
+                // procesan recién en Modificar cuando lleguen los pagos reales.
+                //
+                // Restringido a procesos facturables: Factura(1)/Cotización(2)/Nota de
+                // Débito(4). Presupuesto(5)/Pedido(6)/Nota de Empaque(7) no son ventas
+                // confirmadas todavía: el front les arma igual una línea "Cuenta Corriente"
+                // por el saldo pendiente cuando no tienen formulario de pago (ver
+                // getSaldoPendiente/pagoCompleto en addmod-ventas), y sin este filtro esa
+                // línea fantasma terminaría generando un cobro real sobre un documento que
+                // todavía puede no convertirse nunca en venta.
+                const esProcesoFacturable = [IdProceso.FACTURA, IdProceso.COTIZACION, IdProceso.NOTA_DEBITO].includes(venta.idProceso!);
+                if (esProcesoFacturable && pagosProcesados.length > 0) {
+                    await this.ProcesarCobroVenta(connection, venta, pagosProcesados, usuarioActivo);
                 }
             }
-            
-           
+
+
             //insertamos los productos de la venta
             if(venta.productos){
                 for (const element of venta.productos) {
                     element.idVenta = venta.id;
                     await InsertProductoVenta(connection, element);
-                    const finalizandoCotizacion = venta.idProceso == 2 && venta.estado == "Finalizada";
+                    const finalizandoCotizacion = venta.idProceso == IdProceso.COTIZACION && venta.estado == EstadoVenta.FINALIZADA;
 
                     if(desdeNotas){
                         await ProductosRepo.ActualizarInventario(connection, element, "+");
@@ -557,27 +613,6 @@ class VentasRepository{
             if(venta.factura){
                 venta.factura.idVenta = venta.id;
                 await InsertFacturaVenta(connection, venta.factura);
-
-                //Actualizamos el estado facturado de la venta relacionada
-                if(venta.nroRelacionado != 0){
-                    let nroProceso = 0;
-                    let estado = "";
-
-                    switch (venta.tipoRelacionado) {
-                        case "PEDIDO":
-                            nroProceso = 6;
-                            estado = "Facturado"
-                            break;
-                        case "NOTA DE EMPAQUE":
-                            nroProceso = 7;
-                            estado = "Facturada"
-                            break;
-                        default:
-                            break;
-                    }
-
-                    await connection.query("UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ", [estado, venta.nroRelacionado, nroProceso]);
-                }
             }
 
             //Mandamos la transaccion
@@ -593,6 +628,53 @@ class VentasRepository{
         }
     }
 
+    // Genera el recibo, los ventas_pagos y el movimiento de fondo de una venta ya facturada.
+    // Solo debe invocarse cuando venta.factura está presente (ver Agregar/Modificar).
+    async ProcesarCobroVenta(connection, venta, pagosProcesados, usuarioActivo) {
+        // Resolver el tipo real de cada método por su fila en metodos_pago: NO asumir
+        // por id numérico. metodos_pago está scopeado por empresa (cada empresa tiene su
+        // propia fila para "Cuenta Corriente"/"Saldo a Favor", con ids distintos), así que
+        // comparar contra un id fijo (12/13, válidos solo para la empresa 1) rompe la
+        // detección para el resto de las empresas. Bug real: recibos indebidos en Venta
+        // #87 (empresa 6) y #98 (empresa 5), corregido 07/2026.
+        for (const pago of pagosProcesados) {
+            const { tipo } = await GetMetodoPago(connection, pago.idMetodo);
+            pago.tipo = tipo;
+        }
+
+        const totalPagado = pagosProcesados
+                            .filter(p => p.tipo !== 'CUENTA_CORRIENTE')
+                            .reduce((acc, p) => acc + (p.monto || 0), 0);
+
+        const ptoVenta = venta.factura ? venta.factura.ptoVenta : 9999;
+
+        let idRecibo;
+        if(totalPagado > 0){
+            idRecibo = await InsertRecibo(connection, {
+                idCliente: venta.cliente?.id,
+                ptoVenta,
+                total: totalPagado
+            });
+        }
+
+        for (const pago of pagosProcesados) {
+            pago.idVenta = venta.id;
+            pago.idRecibo = pago.tipo === 'CUENTA_CORRIENTE' ? null : idRecibo;
+            // CC: sin recibo, pero se guarda el monto real para el reporte acumulado.
+            // El movimiento de fondo se skipea en RegistrarMovimientosVenta.
+
+            pago.idVentaPago = await InsertPagoVenta(connection, pago);
+        }
+
+        //Insertamos el movimiento en el saldo
+        await this.RegistrarMovimientosVenta(connection, {
+            ...venta,
+            pagos: pagosProcesados
+        }, usuarioActivo);
+
+        return idRecibo;
+    }
+
     async RegistrarMovimientosVenta(connection, venta, usuario) {
         const TIPOS_VALOR = ['CHEQUE', 'CREDITO'];
 
@@ -603,7 +685,12 @@ class VentasRepository{
         for (const pago of venta.pagos) {
 
             const { idFondo: idFondoReal, tipo } = await GetMetodoPago(connection, pago.idMetodo);
-            const esSaldoAFavor = pago.idMetodo === 8;
+
+            // CC no genera movimiento de fondo (la deuda se gestiona por cuenta corriente).
+            // Comparación por tipo, no por id (ver comentario en ProcesarCobroVenta).
+            if (tipo === 'CUENTA_CORRIENTE') continue;
+
+            const esSaldoAFavor = tipo === 'SALDO_FAVOR';
             const esValorAcreditar = TIPOS_VALOR.includes(tipo);
 
             if (esValorAcreditar) {
@@ -652,7 +739,13 @@ class VentasRepository{
         }
     }
 
-    async RegistrarMovimientoNotaCredito(connection, pagosOriginales, notaCredito, usuario) {
+    // devuelveDinero: reservado para el día que se necesite soportar la devolución real
+    // de plata al cliente (reintegro por caja/banco). Hoy no se usa: la política vigente
+    // es que la NC NUNCA implica devolución real, el importe siempre queda como saldo a
+    // favor del cliente para usar en una próxima venta. Si en el futuro hace falta, acá
+    // habría que bifurcar y restaurar la lógica de EGRESO real / RECHAZADO de
+    // valores_acreditar que existía antes de este cambio (ver historial de git).
+    async RegistrarMovimientoNotaCredito(connection, pagosOriginales, notaCredito, usuario, devuelveDinero: boolean = false) {
         const totalOriginal = pagosOriginales.reduce(
             (acc, p) => acc + Number(p.monto),
             0
@@ -660,6 +753,9 @@ class VentasRepository{
 
         let acumulado = 0;
 
+        // Registramos el detalle proporcional por método de pago original, solo a
+        // efectos informativos/reporte (no implica ningún movimiento real de fondo,
+        // porque no se devuelve plata: el importe se acredita entero al cliente).
         for (let i = 0; i < pagosOriginales.length; i++) {
             const pago = pagosOriginales[i];
 
@@ -674,53 +770,30 @@ class VentasRepository{
 
             acumulado += montoMovimiento;
 
-            const { idFondo: idFondoReal, tipo } = await GetMetodoPago(connection, pago.idMetodo);
-            const TIPOS_VALOR = ['CHEQUE', 'CREDITO'];
-
-            let idFondoEgreso = idFondoReal;
-
-            if (TIPOS_VALOR.includes(tipo)) {
-                // El pago original era CHEQUE o CRÉDITO: el EGRESO
-                // debe salir del fondo correcto según el estado del valor.
-                // Si estaba PENDIENTE → sale de "Valores a Acreditar".
-                // Si ya fue ACREDITADO → sale del fondo real (idFondoReal).
-                const [valRows] = await connection.query(
-                    `SELECT va.id, va.estado, va.idFondoDestino
-                     FROM valores_acreditar va
-                     JOIN ventas_pagos vp ON vp.id = va.idVentaPago
-                     WHERE vp.idVenta = ? AND va.tipo = ?
-                     LIMIT 1`,
-                    [notaCredito.idReferencia ?? notaCredito.id,
-                     tipo === 'CREDITO' ? 'TARJETA_CREDITO' : 'CHEQUE']
-                );
-
-                if (valRows.length) {
-                    const valor = valRows[0];
-                    if (valor.estado === 'PENDIENTE') {
-                        idFondoEgreso = await GetIdFondoValoresAcreditar(connection);
-                        // Marcar el valor como rechazado
-                        await connection.query(
-                            "UPDATE valores_acreditar SET estado='RECHAZADO', observaciones=? WHERE id=?",
-                            [`Anulado por NC #${notaCredito.id}`, valor.id]
-                        );
-                    } else if (valor.estado === 'ACREDITADO') {
-                        // El dinero ya estaba en el fondo real
-                        idFondoEgreso = valor.idFondoDestino ?? idFondoReal;
-                    }
-                }
-            }
-
-            await InsertMovimientoFondo(connection, {
-                idCaja: notaCredito.idCaja,
-                idFondo: idFondoEgreso,
-                tipo: 'EGRESO',
-                origen: 'NOTA_CREDITO',
-                idReferencia: notaCredito.id,
-                monto: montoMovimiento,
-                descripcion: `NC #${notaCredito.id}`,
-                usuario
+            // Registrar el pago proporcional en ventas_pagos para que aparezca
+            // en el reporte acumulado (con monto positivo; la query lo negará por idProceso=3)
+            await InsertPagoVenta(connection, {
+                idVenta: notaCredito.id,
+                idMetodo: pago.idMetodo,
+                idRecibo: null,
+                monto: montoMovimiento
             });
         }
+
+        // Saldo a favor real del cliente: recibo + pago sin venta asociada (idMetodo 13),
+        // igual al mecanismo que ya usa EntregaDinero para las entregas de dinero.
+        const idRecibo = await InsertRecibo(connection, {
+            idCliente: notaCredito.cliente?.id,
+            ptoVenta: notaCredito.factura ? notaCredito.factura.ptoVenta : 9999,
+            total: notaCredito.total
+        });
+
+        await InsertPagoVenta(connection, {
+            idVenta: null,
+            idMetodo: 13, // Saldo a favor
+            idRecibo,
+            monto: notaCredito.total
+        });
 
         await InsertMovimientoFondo(connection, {
             idCaja: notaCredito.idCaja,
@@ -745,40 +818,61 @@ class VentasRepository{
             //Insertamos la venta
             await UpdateVenta(connection,venta);
 
-            //Actualizamos el estado del relacionado
-            if(venta.nroRelacionado != 0){
-                let nroProceso = 0;
-                let estado = "";
+            //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
+            await ActualizarEstadoRelacionado(connection, venta);
 
-                switch (venta.tipoRelacionado) {
-                    case "PRESUPUESTO":
-                        nroProceso = 5;
-                        estado = "Asociado"
-                        break;
-                    case "PEDIDO":
-                        nroProceso = 6;
-                        estado = "Asociado"
-                        break;
-                    case "NOTA DE EMPAQUE":
-                        nroProceso = 7;
-                        estado = "Asociada"
-                        break;
-                    default:
-                        break;
+            if(venta.idProceso === IdProceso.NOTA_CREDITO){
+                // Notas de credito: nunca generan recibo, se mantiene el comportamiento original.
+                await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
+                if(venta.pagos){
+                    for (const element of venta.pagos) {
+                        element.idVenta = venta.id;
+                        await InsertPagoVenta(connection, element);
+                    }
                 }
+            } else if ([IdProceso.FACTURA, IdProceso.COTIZACION, IdProceso.NOTA_DEBITO].includes(venta.idProceso!) && (venta.pagos || []).length > 0) {
+                // El recibo/pago/movimiento de fondo se procesa cuando llegan pagos
+                // reales, con o sin comprobante fiscal (ver mismo criterio en Agregar).
+                // Restringido a procesos facturables (1,2,4): Presupuesto/Pedido/Nota de
+                // Empaque no deben generar cobro real todavía (ver comentario en Agregar).
+                // Si ya existe un recibo (la venta se cobró en un guardado anterior),
+                // se reutiliza en vez de generar uno nuevo y no se vuelve a disparar el
+                // movimiento de fondo (ya se registró en su momento).
+                const [reciboPrevio]: any = await connection.query(
+                    "SELECT idRecibo FROM ventas_pagos WHERE idVenta = ? AND idRecibo IS NOT NULL LIMIT 1",
+                    [venta.id]
+                );
+                const idReciboExistente = reciboPrevio.length ? reciboPrevio[0].idRecibo : null;
 
-                await connection.query("UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ", ["Asociado", venta.nroRelacionado, nroProceso]);
+                await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
+
+                const pagosProcesados = venta.pagos || [];
+                if (pagosProcesados.length > 0) {
+                    if (idReciboExistente) {
+                        for (const pago of pagosProcesados) {
+                            const { tipo } = await GetMetodoPago(connection, pago.idMetodo);
+                            pago.tipo = tipo;
+                            pago.idVenta = venta.id;
+                            pago.idRecibo = tipo === 'CUENTA_CORRIENTE' ? null : idReciboExistente;
+                            pago.idVentaPago = await InsertPagoVenta(connection, pago);
+                        }
+
+                        // La composición de métodos pudo cambiar (ej: parte pasó a Cuenta
+                        // Corriente), así que el total del recibo hay que recalcularlo.
+                        const totalPagado = pagosProcesados
+                            .filter(p => p.tipo !== 'CUENTA_CORRIENTE')
+                            .reduce((acc, p) => acc + (p.monto || 0), 0);
+                        await connection.query(
+                            "UPDATE recibos SET total = ? WHERE id = ?",
+                            [totalPagado, idReciboExistente]
+                        );
+                    } else {
+                        const usuarioActivo = SesionServ.LeerSesion().usuario;
+                        await this.ProcesarCobroVenta(connection, venta, pagosProcesados, usuarioActivo);
+                    }
+                }
             }
 
-            await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
-            //insertamos los datos del pago de la venta
-            if(venta.pagos){
-                for (const element of venta.pagos) {
-                    element.idVenta = venta.id;
-                    await InsertPagoVenta(connection, element);
-                }
-            }
-           
             await connection.query("DELETE FROM ventas_productos WHERE idVenta = ?", [venta.id]);
             //insertamos los productos de la venta
             if(venta.productos){
@@ -804,29 +898,8 @@ class VentasRepository{
             if(venta.factura){
                 venta.factura.idVenta = venta.id;
                 await InsertFacturaVenta(connection, venta.factura);
-
-                //Actualizamos el estado facturado de la venta relacionada
-                if(venta.nroRelacionado != 0){
-                    let nroProceso = 0;
-                    let estado = "";
-
-                    switch (venta.tipoRelacionado) {
-                        case "PEDIDO":
-                            nroProceso = 6;
-                            estado = "Facturado"
-                            break;
-                        case "NOTA DE EMPAQUE":
-                            nroProceso = 7;
-                            estado = "Facturada"
-                            break;
-                        default:
-                            break;
-                    }
-
-                    await connection.query("UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ", [estado, venta.nroRelacionado, nroProceso]);
-                }
             }
-            
+
             //Mandamos la transaccion
             await connection.commit();
             return "OK"
@@ -860,7 +933,12 @@ class VentasRepository{
         const connection = await db.getConnection();
         
         try {
-            await connection.query("UPDATE ventas SET estado = 'Aprobada' WHERE id = ?", [data.idVenta]);
+            // Solo se aprueba una Nota de Empaque que todavía está Pendiente: evita
+            // reaprobar una que ya fue asociada/facturada por error desde el listado.
+            await connection.query(
+                `UPDATE ventas SET estado = '${EstadoVenta.APROBADA}' WHERE id = ? AND idProceso = ${IdProceso.NOTA_EMPAQUE} AND estado = '${EstadoVenta.PENDIENTE}'`,
+                [data.idVenta]
+            );
             return("OK");
 
         } catch (error:any) {
@@ -928,7 +1006,13 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         if (filtros.cliente && filtros.cliente != 0){
 
             if(filtros.soloAbiertas){
-                filtro += " AND (estado <> 'Asociado' AND estado <> 'Asociada' AND estado <> 'Facturado' AND estado <> 'Facturada' AND estado <> 'Finalizado' AND estado <> 'Finalizada')";
+                // Excluye todo lo que ya fue usado/cerrado: Asociado/a (en uso por otro
+                // proceso), Facturado/a (ya facturado), Finalizado/a y Relacionado (estado
+                // de cierre exclusivo del Presupuesto, ver EstadoVenta.RELACIONADO).
+                filtro += " AND (estado <> 'Asociado' AND estado <> 'Asociada' AND estado <> 'Facturado' AND estado <> 'Facturada' AND estado <> 'Finalizado' AND estado <> 'Finalizada' AND estado <> 'Relacionado')";
+                // Una Nota de Empaque no debe poder elegirse para relacionar/facturar
+                // hasta que fue validada (Aprobada): mientras está Pendiente no aparece.
+                filtro += ` AND NOT (v.idProceso = ${IdProceso.NOTA_EMPAQUE} AND estado = '${EstadoVenta.PENDIENTE}')`;
             }
 
             filtro += "AND v.idCliente = " + filtros.cliente;
@@ -954,7 +1038,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             filtro += " AND v.nroProceso = " + filtros.nroProceso;
         }
 
-        if (filtros.fechas?.length === 2) {
+        if (filtros.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
             const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
             const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
 
@@ -970,11 +1054,16 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         }
         if(filtros.desdeCuenta && filtros.desdeCuenta == true){
             condicional += " ,p.entregado ,SUM(v.total - IFNULL(p.entregado, 0)) AS deuda "
+            // Por tipo, no por id: (9, 12) son ids fijos de "Saldo a favor"/"Cuenta
+            // Corriente" válidos solo para la empresa 1 - en el resto de las empresas
+            // el pago CC no quedaba excluido acá y "deuda" daba de menos. Mismo bug
+            // que en cuentasRepository.ts (ObtenerQueryVentasCliente), corregido 07/2026.
             adicional += " LEFT JOIN (" +
-                        " SELECT idVenta, SUM(monto) AS entregado" +
-                        " FROM ventas_pagos " +
-                        " WHERE idMetodo <> 9 " +
-                        " GROUP BY idVenta " +
+                        " SELECT vp.idVenta, SUM(vp.monto) AS entregado" +
+                        " FROM ventas_pagos vp" +
+                        " JOIN metodos_pago mp ON mp.id = vp.idMetodo" +
+                        " WHERE mp.tipo NOT IN ('SALDO_FAVOR', 'CUENTA_CORRIENTE') " +
+                        " GROUP BY vp.idVenta " +
                         " ) p ON p.idVenta = v.id ";
         }
         // #endregion
@@ -991,7 +1080,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 
         //Arma la Query con el paginado y los filtros correspondientes
         query = count +
-                " SELECT v.*, c.nombre, c.razonSocial, c.idCondIva, c.idTipoDocumento, c.documento, ci.descripcion AS condicionIva, pv.descripcion AS proceso, e.razonSocial AS empresa, tc.descripcion AS tipoComprobante, td.descripcion AS tipoDescuento " + 
+                " SELECT v.*, c.nombre, c.razonSocial, c.idCondIva, c.idTipoDocumento, c.documento, c.idCategoria, ci.descripcion AS condicionIva, pv.descripcion AS proceso, e.razonSocial AS empresa, tc.descripcion AS tipoComprobante, td.descripcion AS tipoDescuento " +
                 condicional + 
                 " FROM ventas v " + 
                 " LEFT JOIN clientes c ON c.id = v.idCliente " +
@@ -1001,11 +1090,11 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
                 " LEFT JOIN tipos_descuento td ON td.id = v.idTDescuento " +
                 " LEFT JOIN condiciones_iva ci ON ci.id = c.idCondIva " +
                 adicional +
-                " WHERE 1 = 1 " +
+                " WHERE v.fechaBaja IS NULL " +
                 filtro +
                 " GROUP BY v.id " +
                 ((filtros.desdeCuenta && filtros.desdeCuenta == true) ? ', p.entregado' : '') +
-                " ORDER BY v.fecha DESC, v.id DESC " +
+                " ORDER BY v.fecha DESC, v.hora DESC, v.id DESC " +
                 paginado +
                 endCount;
         return query;
@@ -1018,8 +1107,9 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 async function ObtenerPagosVenta(connection, idVenta:number){
     try {
         const consulta = `
-            SELECT 
+            SELECT
                 vp.*,
+                mp.tipo AS tipo_metodo,
                 CASE
                     WHEN mp.tipo = 'CREDITO'
                         THEN CONCAT(f.nombre, ' - Crédito')
@@ -1042,14 +1132,18 @@ async function ObtenerPagosVenta(connection, idVenta:number){
         const pagos:PagosVenta[] = [];
 
         if (Array.isArray(rows)) {
-            for (let i = 0; i < rows.length; i++) { 
+            for (let i = 0; i < rows.length; i++) {
                 const row = rows[i];
-                
+
                 let pago:PagosVenta = new PagosVenta();
                 pago.id = row['id'];
                 pago.idVenta = row['idVenta'];
                 pago.idMetodo = row['idMetodo'];
                 pago.metodo = row['metodo_pago'];
+                // Por tipo, no por id fijo (idMetodo es específico de cada empresa) -
+                // lo usa el frontend para excluir Cuenta Corriente del "entregado" en
+                // la pantalla de pago de venta (ver entrega-dinero.component.ts).
+                pago.tipo = row['tipo_metodo'];
                 pago.monto = parseFloat(row['monto']);
                 pagos.push(pago);
               }
@@ -1084,6 +1178,7 @@ async function ObtenerServiciosVenta(connection, idVenta:number){
                 servicio.cantidad = parseInt(row['cantidad']);
                 servicio.unitario = parseFloat(row['precio']);
                 servicio.total = parseFloat(row['total']);
+                servicio.importeDescuento = row['importeDescuento'] != null ? parseFloat(row['importeDescuento']) : undefined;
                 servicios.push(servicio);
               }
         }
@@ -1134,9 +1229,15 @@ async function ObtenerProductosVenta(connection, idVenta:number, idProceso:numbe
                 producto.t8 = parseInt(row['t8']);
                 producto.t9 = parseInt(row['t9']);
                 producto.t10 = parseInt(row['t10']);
-                producto.precio = parseFloat(row['precio']);
+                // precio = ancla de precio de lista para recálculos posteriores (ver
+                // calcularPrecioCliente en el front). Se reconstruye desde precioLista si la
+                // venta ya la tiene guardada; si es una venta vieja sin precioLista (columna
+                // agregada después), se cae al precio final como aproximación, igual que antes.
+                producto.precio = row['precioLista'] != null ? parseFloat(row['precioLista']) : parseFloat(row['precio']);
+                producto.precioLista = row['precioLista'] != null ? parseFloat(row['precioLista']) : undefined;
                 producto.unitario = parseFloat(row['precio']);
                 producto.total = parseFloat(row['total']);
+                producto.importeDescuento = row['importeDescuento'] != null ? parseFloat(row['importeDescuento']) : undefined;
                 producto.tallesSeleccionados = row['talles'];
                 producto.color = row['color'];
                 producto.hexa = row['hexa'];
@@ -1256,10 +1357,11 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " nroRelacionado = ?, " +
                          " tipoRelacionado = ?, " +
                          " estado = ?, " +
-                         " impaga = ? " +
+                         " impaga = ?, " +
+                         " ajusteTransf = ? " +
                          " WHERE id = ? ";
 
-        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.id];
+        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {
@@ -1267,7 +1369,11 @@ async function UpdateVenta(connection, venta):Promise<void>{
     }
 }
 
-async function GetMetodoPago(connection, idMetodoPago): Promise<{ idFondo: number; tipo: string }> {
+// Exportadas para reutilizar la misma lógica de "Valores a Acreditar" desde
+// cuentasRepository.ts (Entrega de Dinero de cuenta corriente) - antes esa
+// pantalla tenía su propia copia de GetFondoByMetodoPago que no conocía el
+// concepto de Cheque/Crédito y mandaba la plata directo a un fondo real.
+export async function GetMetodoPago(connection, idMetodoPago): Promise<{ idFondo: number; tipo: string }> {
     const [rows] = await connection.query(
         'SELECT idFondo, tipo FROM metodos_pago WHERE id = ?',
         [idMetodoPago]
@@ -1275,7 +1381,7 @@ async function GetMetodoPago(connection, idMetodoPago): Promise<{ idFondo: numbe
     return { idFondo: rows[0].idFondo, tipo: rows[0].tipo };
 }
 
-async function GetIdFondoValoresAcreditar(connection): Promise<number> {
+export async function GetIdFondoValoresAcreditar(connection): Promise<number> {
     const [rows] = await connection.query(
         "SELECT id FROM fondos WHERE nombre = 'Valores a Acreditar' LIMIT 1"
     );
@@ -1283,7 +1389,7 @@ async function GetIdFondoValoresAcreditar(connection): Promise<number> {
     return rows[0].id;
 }
 
-async function InsertValorAcreditar(connection, valor): Promise<number> {
+export async function InsertValorAcreditar(connection, valor): Promise<number> {
     const consulta = `
         INSERT INTO valores_acreditar
             (idEmpresa, idVentaPago, tipo, monto, idFondoDestino, estado, usuarioAlta)
@@ -1300,7 +1406,7 @@ async function InsertValorAcreditar(connection, valor): Promise<number> {
     return result.insertId;
 }
 
-async function InsertCheque(connection, idValor: number, cheque): Promise<void> {
+export async function InsertCheque(connection, idValor: number, cheque): Promise<void> {
     const consulta = `
         INSERT INTO cheques (idValor, numero, banco, importe, fechaCobro, libradorNombre, libradorCuit)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1313,6 +1419,40 @@ async function InsertCheque(connection, idValor: number, cheque): Promise<void> 
         moment(cheque.fechaCobro).format('YYYY-MM-DD'),
         cheque.libradorNombre ?? null,
         cheque.libradorCuit ?? null
+    ]);
+}
+
+// Fondo virtual donde se registra el INGRESO de una retención sufrida (Ganancias/
+// IIBB/SUSS): no es plata real, es un crédito fiscal futuro contra AFIP/ARBA/SUSS.
+// Ver 20260705120000_create_retenciones.js. Lookup por `tipo` (no por `nombre`,
+// más robusto - mismo criterio que GetFondoVirtual en comprasCuentasRepository.ts).
+export async function GetIdFondoRetenciones(connection): Promise<number> {
+    const [rows] = await connection.query(
+        "SELECT id FROM fondos WHERE tipo = 'RETENCIONES_SUFRIDAS' AND activo = 1"
+    );
+    if (!rows.length) throw new Error("Fondo 'Retenciones Sufridas' no encontrado.");
+    return rows[0].id;
+}
+
+// Registro minimalista (tipo + importe) de la retención, anclado a un ventas_pagos
+// igual que valores_acreditar.idVentaPago: si la operación reparte el monto en
+// varios ventas_pagos (ver EntregaDinero en cuentasRepository.ts), se inserta UN
+// solo row por el monto total retenido, no uno por fragmento.
+export async function InsertRetencion(
+    connection,
+    idVentaPago: number,
+    retencion: { tipo: string; importe: number },
+    usuarioAlta?: string
+): Promise<void> {
+    const consulta = `
+        INSERT INTO retenciones (idVentaPago, tipo, importe, usuarioAlta)
+        VALUES (?, ?, ?, ?)
+    `;
+    await connection.query(consulta, [
+        idVentaPago,
+        retencion.tipo,
+        retencion.importe,
+        usuarioAlta ?? null
     ]);
 }
 
@@ -1341,9 +1481,16 @@ async function InsertMovimientoFondo(connection, movimiento): Promise<void> {
 
 async function InsertProductoVenta(connection, producto): Promise<void> {
     try {
-        const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, idLineaTalle, cantidad, precio, total, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        const parametros = [producto.idVenta, producto.idProducto, producto.idLineaTalle, producto.cantidad, producto.unitario, producto.total, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
+        const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, idLineaTalle, cantidad, precio, precioLista, total, importeDescuento, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        // precioLista = producto.precio (precio de lista calculado por calcularPrecioCliente en el
+        // front, previo a cualquier edición manual). producto.unitario es el precio final cobrado,
+        // que puede diferir si el vendedor lo editó (ver permiteEditarPrecio en addmod-ventas).
+        // importeDescuento: monto de descuento ($) ya aplicado a esta línea, calculado en el front
+        // respetando el topeDescuento del producto (ver aplicarDescuentoAItems en addmod-ventas).
+        // Se persiste porque el tope no se guarda en ningún lado; sin esto, listado-ventas no puede
+        // reconstruir correctamente el descuento al volver a mostrar la venta.
+        const parametros = [producto.idVenta, producto.idProducto, producto.idLineaTalle, producto.cantidad, producto.unitario, producto.precio, producto.total, producto.importeDescuento ?? 0, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
         await connection.query(consulta, parametros);
     } catch (error) {
         throw error;
@@ -1352,9 +1499,10 @@ async function InsertProductoVenta(connection, producto): Promise<void> {
 
 async function InsertServicioVenta(connection, pago): Promise<void> {
     try {
-        const consulta = " INSERT INTO ventas_servicios(idVenta, idServicio, cantidad, precio, total) " +
-                         " VALUES(?, ?, ?, ?, ?) ";
-        const parametros = [pago.idVenta, pago.idServicio, pago.cantidad, pago.unitario, pago.total];
+        const consulta = " INSERT INTO ventas_servicios(idVenta, idServicio, cantidad, precio, total, importeDescuento) " +
+                         " VALUES(?, ?, ?, ?, ?, ?) ";
+        // importeDescuento: ver comentario equivalente en InsertProductoVenta.
+        const parametros = [pago.idVenta, pago.idServicio, pago.cantidad, pago.unitario, pago.total, pago.importeDescuento ?? 0];
         await connection.query(consulta, parametros);
     } catch (error) {
         throw error;
@@ -1387,9 +1535,20 @@ async function InsertRecibo(connection, recibo) {
 
 async function InsertPagoVenta(connection, pago): Promise<number> {
     try {
+        // Invariante: un pago tipo CUENTA_CORRIENTE nunca puede quedar con un
+        // recibo real (no es plata real todavía, ver RegistrarMovimientosVenta
+        // más arriba - CC no genera movimiento de fondo). Se fuerza acá, en el
+        // único punto de inserción a ventas_pagos, en vez de confiar en que cada
+        // call site (ProcesarCobroVenta, Modificar, etc.) arme bien el idRecibo.
+        // Bug real que motivó esto: recibos indebidos en Venta #87 (empresa 6) y
+        // #98 (empresa 5), y Venta #109 (Club Náutico San Isidro) con impaga mal
+        // calculado por el mismo desacople - corregido 07/2026.
+        const { tipo } = await GetMetodoPago(connection, pago.idMetodo);
+        const idRecibo = tipo === 'CUENTA_CORRIENTE' ? null : pago.idRecibo;
+
         const consulta = " INSERT INTO ventas_pagos(idVenta, idMetodo, idRecibo, monto) " +
                          " VALUES(?, ?, ?, ?) ";
-        const parametros = [pago.idVenta, pago.idMetodo, pago.idRecibo, pago.monto];
+        const parametros = [pago.idVenta, pago.idMetodo, idRecibo, pago.monto];
         const [result] = await connection.query(consulta, parametros);
         return result.insertId;
     } catch (error) {

@@ -65,11 +65,18 @@ import { Color, TallesProducto } from "./Producto";
     t9?: number;
     t10?: number;
     precio?:number;
+    precioLista?: number;
     unitario?: number;
     total?: number;
+    // Importe de descuento ($) realmente aplicado a esta línea al momento de la
+    // venta (respeta el topeDescuento del producto en ese momento, que no se
+    // persiste). Se guarda tal cual para que listado-ventas/vista-previa no
+    // tengan que reconstruirlo después sin esa información. Ver migración
+    // 20260707120000_add_importe_descuento_ventas_items.
+    importeDescuento?: number;
     tallesSeleccionados:string = "";
     talles:TallesProducto[] = [];
-  
+
     constructor(data?: any) {
       if (data) {
         this.idProducto = data.idProducto;
@@ -89,9 +96,11 @@ import { Color, TallesProducto } from "./Producto";
         this.t9 = data.t9;
         this.t10 = data.t10;
         this.precio = data.precio;
+        this.precioLista = data.precioLista;
         this.unitario = data.unitario;
         this.nomProducto = data.nomProducto;
         this.total = data.total;
+        this.importeDescuento = data.importeDescuento;
         this.tallesSeleccionados = data.tallesSeleccionados;
         this.talles = data.talles;
       }
@@ -106,7 +115,9 @@ import { Color, TallesProducto } from "./Producto";
     cantidad?: number;
     unitario?: number;
     total?: number;
-  
+    // Ver comentario equivalente en ProductosVenta.importeDescuento.
+    importeDescuento?: number;
+
     constructor(data?: any) {
       if (data) {
         this.idServicio = data.idServicio;
@@ -115,6 +126,7 @@ import { Color, TallesProducto } from "./Producto";
         this.unitario = data.unitario;
         this.nomServicio = data.nomServicio;
         this.total = data.total;
+        this.importeDescuento = data.importeDescuento;
       }
     }
   }

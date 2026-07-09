@@ -5,8 +5,12 @@ const router : Router  = Router();
 
 import { crearExcelVentas } from '../services/excelVentasService';
 import { crearExcelProductos } from '../services/excelProductosService';
+import { crearExcelClientes } from '../services/excelClientesService';
+import { crearExcelCuentas } from '../services/excelCuentasService';
 import { ProductosRepo } from '../data/productosRepository';
 import { VentasRepo } from '../data/ventasRepository';
+import { ClientesRepo } from '../data/clientesRepository';
+import { CuentasRepo } from '../data/cuentasRepository';
 
 //#region IMPRESION DE PDFS
 const printer = require('pdf-to-printer');
@@ -84,7 +88,48 @@ router.post('/ventas-excel', async (req, res) => {
         res.status(500).send(msg);
     }
 });
+
+
+router.post('/clientes-excel', async (req, res) => {
+    try {
+
+        const clientes = await ClientesRepo.ObtenerParaExcel(req.body);
+
+        // Generar Excel usando el servicio
+        const buffer = await crearExcelClientes(clientes);
+
+        // Configurar headers para descarga
+        res.setHeader('Content-Disposition', 'attachment; filename="clientes.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch(error:any){
+        let msg = "Error al intentar generar el excel de clientes.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.post('/cuentas-excel', async (req, res) => {
+    try {
+
+        const cuentas = await CuentasRepo.ObtenerParaExcel(req.body);
+
+        // Generar Excel usando el servicio
+        const buffer = await crearExcelCuentas(cuentas);
+
+        // Configurar headers para descarga
+        res.setHeader('Content-Disposition', 'attachment; filename="cuentas-corrientes.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch(error:any){
+        let msg = "Error al intentar generar el excel de cuentas corrientes.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 //#endregion
 
 // Export the router
-export default router; 
+export default router;
