@@ -173,6 +173,30 @@ class VentasRepository{
                     IFNULL(prendas.total_prendas, 0) * (IFNULL(v.descuento, 0) / 100),
                     IFNULL(prendas.total_prendas, 0) * (IFNULL(v.descuento, 0) / 100) * -1
                 ) AS des,
+                -- Recargo del 10% por transferencia (ajusteTransf=1), aplicado sobre
+                -- Venta neta de descuento + Servicio (el descuento nunca toca Servicio,
+                -- mismo criterio que "des" arriba). Sin esta columna, "Venta + Servicio -
+                -- Descuento" no cerraba contra "Cobrado" en ninguna venta con recargo por
+                -- transferencia (pedido explícito del usuario, jul-2026).
+                IF(v.ajusteTransf = 1,
+                    IF(v.idProceso = 3,
+                        ROUND((IFNULL(prendas.total_prendas, 0) * (1 - IFNULL(v.descuento, 0) / 100) + IFNULL(servicios.total_servicios, 0)) * 0.10, 2) * -1,
+                        ROUND((IFNULL(prendas.total_prendas, 0) * (1 - IFNULL(v.descuento, 0) / 100) + IFNULL(servicios.total_servicios, 0)) * 0.10, 2)
+                    ),
+                    0
+                ) AS ajuste,
+                -- IVA discriminado según lo confirmado por AFIP en ventas_factura (mismo
+                -- valor que usa factura.service.ts para imprimir "IVA Total" - no se
+                -- recalcula acá para no reabrir la discusión neto/bruto por lista de
+                -- precio, ya resuelta en ese servicio). NULL cuando no hay comprobante
+                -- fiscal con IVA (Factura C, Sin Comprobante, etc.) -> 0.
+                -- OJO: esta columna es informativa, no siempre aditiva. En Consumidor
+                -- Final el precio de venta YA INCLUYE el IVA (se discrimina, no se suma),
+                -- así que Venta+Servicio-Descuento+Ajuste ya cierra contra Cobrado SIN
+                -- sumarle esta columna. Solo en mayorista con lista propia (precio neto)
+                -- el IVA se agrega arriba y ahí sí es aditivo. Ver EsMayoristaConListaPropia()
+                -- en addmod-ventas.component.ts.
+                IF(v.idProceso = 3, IFNULL(vf.iva, 0) * -1, IFNULL(vf.iva, 0)) AS iva21,
                 IF(v.idProceso = 3, v.total * -1, v.total) cobrado,
                 CONCAT(IFNULL(v.descuento, 0), ' %') AS descuento,
                 com.descripcion AS comprobante,
@@ -792,21 +816,18 @@ class VentasRepository{
             });
         }
 
-        // Saldo a favor real del cliente: recibo + pago sin venta asociada (idMetodo 13),
-        // igual al mecanismo que ya usa EntregaDinero para las entregas de dinero.
-        const idRecibo = await InsertRecibo(connection, {
-            idCliente: notaCredito.cliente?.id,
-            ptoVenta: notaCredito.factura ? notaCredito.factura.ptoVenta : 9999,
-            total: notaCredito.total
-        });
-
-        await InsertPagoVenta(connection, {
-            idVenta: null,
-            idMetodo: 13, // Saldo a favor
-            idRecibo,
-            monto: notaCredito.total
-        });
-
+        // Notas de crédito: nunca generan recibo (mismo criterio que Modificar,
+        // ver comentario ahí). La propia NC ya representa el saldo a favor por su
+        // cuenta (idTComprobante IN (3,8,13,100) → aparece como línea "A FAVOR" en
+        // el extracto y resta en ObtenerSaldoCliente vía el término de ventas).
+        // Antes se creaba acá un recibo + pago SALDO_FAVOR "espejo" (mismo
+        // mecanismo que usa EntregaDinero cuando no hay venta que cargue el
+        // crédito) - pero para una NC sí hay una venta que ya lo carga, así que
+        // ese recibo era puro ruido: duplicaba la línea en el extracto (sección
+        // RECIBOS del UNION) y duplicaba el ingreso en el fondo virtual "Saldo a
+        // Favor" (idFondo=5). Bug real: recibos #53/NC #132, corregido 07/2026.
+        // Se mantiene el movimiento de fondo (sí es necesario: es la única forma
+        // de que el fondo 5 refleje el saldo a favor generado por esta NC).
         await InsertMovimientoFondo(connection, {
             idCaja: notaCredito.idCaja,
             idFondo: 5,

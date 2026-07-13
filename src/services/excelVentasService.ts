@@ -57,6 +57,8 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
     { header: 'Venta', key: 'venta', width: 15 },
     { header: 'Servicio', key: 'servicio', width: 15 },
     { header: 'Descuento $', key: 'des', width: 15 },
+    { header: 'Ajuste $', key: 'ajuste', width: 15 },
+    { header: 'IVA 21%', key: 'iva21', width: 15 },
     { header: 'Cobrado', key: 'cobrado', width: 15 },
     { header: 'Descuento %', key: 'descuento', width: 15 },
     { header: 'Comprobante', key: 'comprobante', width: 20 },
@@ -74,13 +76,15 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
       venta: Number(r.venta),
       servicio: Number(r.servicio),
       des: Number(r.des),
+      ajuste: Number(r.ajuste),
+      iva21: Number(r.iva21),
       cantidad_prendas: Number(r.cantidad_prendas)
     });
   });
 
   sheet2.autoFilter = {
     from: 'A1',
-    to: 'P1'
+    to: 'R1'
   };
 
 
