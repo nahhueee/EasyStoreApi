@@ -57,7 +57,6 @@ class VentasRepository{
             //Obtengo la query segun los filtros
             let query = `
             SELECT
-                mp.id,
                 CASE
                     WHEN mp.tipo = 'CREDITO'
                         THEN CONCAT(f.nombre, ' - Crédito')
@@ -111,11 +110,12 @@ class VentasRepository{
                 -- Factura/Cotización que efectivamente la facturó.
                 AND v.idProceso IN (${IdProceso.FACTURA}, ${IdProceso.COTIZACION}, ${IdProceso.NOTA_CREDITO}, ${IdProceso.NOTA_DEBITO})
             ${filtro}
-            GROUP BY
-                mp.id,
-                mp.nombre,
-                f.nombre,
-                mp.tipo
+            -- Se agrupa por el nombre calculado (metodo_pago), no por mp.id: cada
+            -- empresa tiene su propia fila en metodos_pago para el mismo método
+            -- (ej. "Cuenta Corriente" id=12 para SUCEDE SRL, id=99 para GABEL BRIAN
+            -- OSCAR), y agrupar por id hacía que el reporte mostrara el mismo
+            -- nombre repetido en varias filas en vez de un único total consolidado.
+            GROUP BY metodo_pago
             ORDER BY total_acumulado DESC
         `;
 
@@ -164,9 +164,14 @@ class VentasRepository{
                 c.nombre AS cliente,
                 IF(v.idProceso = 3, IFNULL(prendas.total_prendas, 0) * -1, IFNULL(prendas.total_prendas, 0)) AS venta,
                 IF(v.idProceso = 3, IFNULL(servicios.total_servicios, 0) * -1, IFNULL(servicios.total_servicios, 0)) AS servicio,
+                -- El descuento general se aplica solo sobre la Venta (productos), nunca sobre
+                -- el Servicio: mismo criterio que topeDescuento=0 para servicios en toda la app
+                -- (ver backfill de importeDescuento jul-2026). Antes sumaba prendas+servicios
+                -- acá, así que "Venta + Servicio - Descuento" no cerraba contra "Cobrado"
+                -- (que sí usa v.total, correcto) en cualquier venta con servicios.
                 IF(v.idProceso = 3,
-                    (IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0)) * (IFNULL(v.descuento, 0) / 100),
-                    (IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0)) * (IFNULL(v.descuento, 0) / 100) * -1
+                    IFNULL(prendas.total_prendas, 0) * (IFNULL(v.descuento, 0) / 100),
+                    IFNULL(prendas.total_prendas, 0) * (IFNULL(v.descuento, 0) / 100) * -1
                 ) AS des,
                 IF(v.idProceso = 3, v.total * -1, v.total) cobrado,
                 CONCAT(IFNULL(v.descuento, 0), ' %') AS descuento,
@@ -352,6 +357,13 @@ class VentasRepository{
                 -- aunque su estado final coincida en el string (ver comentario en
                 -- ObtenerReporteAcumulado).
                 AND v.idProceso IN (${IdProceso.FACTURA}, ${IdProceso.COTIZACION}, ${IdProceso.NOTA_CREDITO}, ${IdProceso.NOTA_DEBITO})
+                -- Excluye filas sin cantidad real de producto: ventas solo de
+                -- servicios (LEFT JOIN sin fila en ventas_productos -> cantidad
+                -- NULL, ej. Venta Julián Etulain) y líneas cargadas con cantidad=0
+                -- a propósito (ej. ajuste de precio especial sin afectar stock,
+                -- caso Graciela Bolzan). Ninguna de las dos afecta stock real, no
+                -- deberían aparecer en un reporte pensado por cantidad de prendas.
+                AND IFNULL(vp.cantidad, 0) <> 0
                 ${filtro}
             ORDER BY v.fecha DESC, v.hora DESC;
             `

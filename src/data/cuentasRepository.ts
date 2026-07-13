@@ -605,6 +605,37 @@ class CuentasRepository{
                 );
                 if (idVentaPagoAncla === null) idVentaPagoAncla = pagoResult.insertId;
 
+                // Retirar de ventas_pagos la porción de Cuenta Corriente que se acaba de
+                // cobrar: sin esto, la venta queda con la fila CC original (deuda total)
+                // MÁS la fila del pago real recién insertada, sumando más que venta.total
+                // (ventas_pagos deja de reflejar cómo está compuesta la venta hoy). La
+                // traza de que esta plata se cobró por esta entrega ya queda en
+                // ventas_entrega_detalle (abajo) - no se pierde historial, solo se
+                // mantiene ventas_pagos consistente con el total real.
+                // Bug real: Ventas #101, #103, #126 (corregido jul-2026).
+                let restanteAReducir = montoAplicado;
+                const [filasCC]: any = await connection.query(
+                    `
+                    SELECT vp.id, vp.monto
+                    FROM ventas_pagos vp
+                    JOIN metodos_pago mp ON mp.id = vp.idMetodo
+                    WHERE vp.idVenta = ? AND mp.tipo = 'CUENTA_CORRIENTE'
+                    ORDER BY vp.id ASC
+                    `,
+                    [venta.id]
+                );
+                for (const filaCC of filasCC) {
+                    if (restanteAReducir <= 0) break;
+                    const aReducir = Math.min(Number(filaCC.monto), restanteAReducir);
+                    const nuevoMonto = Number(filaCC.monto) - aReducir;
+                    if (nuevoMonto <= 0) {
+                        await connection.query(`DELETE FROM ventas_pagos WHERE id = ?`, [filaCC.id]);
+                    } else {
+                        await connection.query(`UPDATE ventas_pagos SET monto = ? WHERE id = ?`, [nuevoMonto, filaCC.id]);
+                    }
+                    restanteAReducir -= aReducir;
+                }
+
                 // Detalle entrega
                 await connection.query(
                     `
