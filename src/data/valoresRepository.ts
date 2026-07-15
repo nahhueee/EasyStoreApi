@@ -152,6 +152,9 @@ class ValoresRepository {
      * Rechaza un valor pendiente:
      * EGRESO de "Valores a Acreditar" (la plata nunca llega al fondo real).
      * UPDATE estado → RECHAZADO.
+     * Abre su propia conexión/transacción (uso desde el endpoint de Valores a
+     * Acreditar). Para reusar la misma lógica dentro de OTRA transacción ya
+     * abierta (ej. DarBajaRecibo en cuentasRepository.ts), usar RechazarValorConn.
      */
     async RechazarValor(params: {
         idValor: number;
@@ -159,46 +162,11 @@ class ValoresRepository {
         usuario: string;
         observaciones: string;
     }): Promise<void> {
-        const { idValor, idCaja, usuario, observaciones } = params;
         const connection = await db.getConnection();
 
         try {
             await connection.beginTransaction();
-
-            // Validar estado
-            const [[valor]]: any = await connection.query(
-                `SELECT id, estado, monto, tipo FROM valores_acreditar WHERE id = ? FOR UPDATE`,
-                [idValor]
-            );
-
-            if (!valor) throw { status: 404, message: 'Valor no encontrado.' };
-            if (valor.estado !== 'PENDIENTE') {
-                throw { status: 400, message: `El valor ya fue ${valor.estado.toLowerCase()}.` };
-            }
-
-            // Fondo "Valores a Acreditar"
-            const [[fondoVA]]: any = await connection.query(
-                `SELECT id FROM fondos WHERE nombre = 'Valores a Acreditar' LIMIT 1`
-            );
-            if (!fondoVA) throw { status: 500, message: "Fondo 'Valores a Acreditar' no encontrado." };
-
-            // EGRESO — la plata sale de VA sin ingresar a ningún fondo real
-            await connection.query(`
-                INSERT INTO movimientos_fondos
-                    (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario, observaciones)
-                VALUES (?, ?, 'EGRESO', 'ACREDITACION_VALOR', ?, ?, ?, ?, ?)
-            `, [idCaja, fondoVA.id, idValor, valor.monto,
-                `Rechazo valor #${idValor} (${valor.tipo})`, usuario, observaciones]);
-
-            // Marcar RECHAZADO
-            await connection.query(`
-                UPDATE valores_acreditar
-                SET estado = 'RECHAZADO',
-                    usuarioAcredita = ?,
-                    observaciones   = ?
-                WHERE id = ?
-            `, [usuario, observaciones, idValor]);
-
+            await RechazarValorConn(connection, params);
             await connection.commit();
 
         } catch (error) {
@@ -208,6 +176,55 @@ class ValoresRepository {
             connection.release();
         }
     }
+}
+
+/**
+ * Misma lógica de RechazarValor, pero recibe una `connection` ya abierta en
+ * vez de manejar su propia transacción - para poder correr dentro de la
+ * transacción de otra operación (ej. DarBajaRecibo). No hace commit/rollback:
+ * eso es responsabilidad de quien abrió la transacción.
+ */
+export async function RechazarValorConn(connection, params: {
+    idValor: number;
+    idCaja: number;
+    usuario: string;
+    observaciones: string;
+}): Promise<void> {
+    const { idValor, idCaja, usuario, observaciones } = params;
+
+    // Validar estado
+    const [[valor]]: any = await connection.query(
+        `SELECT id, estado, monto, tipo FROM valores_acreditar WHERE id = ? FOR UPDATE`,
+        [idValor]
+    );
+
+    if (!valor) throw { status: 404, message: 'Valor no encontrado.' };
+    if (valor.estado !== 'PENDIENTE') {
+        throw { status: 400, message: `El valor ya fue ${valor.estado.toLowerCase()}.` };
+    }
+
+    // Fondo "Valores a Acreditar"
+    const [[fondoVA]]: any = await connection.query(
+        `SELECT id FROM fondos WHERE nombre = 'Valores a Acreditar' LIMIT 1`
+    );
+    if (!fondoVA) throw { status: 500, message: "Fondo 'Valores a Acreditar' no encontrado." };
+
+    // EGRESO — la plata sale de VA sin ingresar a ningún fondo real
+    await connection.query(`
+        INSERT INTO movimientos_fondos
+            (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario, observaciones)
+        VALUES (?, ?, 'EGRESO', 'ACREDITACION_VALOR', ?, ?, ?, ?, ?)
+    `, [idCaja, fondoVA.id, idValor, valor.monto,
+        `Rechazo valor #${idValor} (${valor.tipo})`, usuario, observaciones]);
+
+    // Marcar RECHAZADO
+    await connection.query(`
+        UPDATE valores_acreditar
+        SET estado = 'RECHAZADO',
+            usuarioAcredita = ?,
+            observaciones   = ?
+        WHERE id = ?
+    `, [usuario, observaciones, idValor]);
 }
 
 export const ValoresRepo = new ValoresRepository();

@@ -42,6 +42,13 @@ interface EntregaDineroDTO {
   retencion?: RetencionDTO;
 }
 
+// Ver HANDOFF-dar-de-baja-recibo.md para el diseño completo de DarBajaRecibo.
+interface DarBajaReciboDTO {
+  idRecibo: number;
+  motivo: string;
+  idCaja: number;
+}
+
 
 class CuentasRepository{
 
@@ -215,6 +222,8 @@ class CuentasRepository{
                     r.id,
                     r.fecha,
                     r.hora,
+                    r.fechaBaja,
+                    r.observaciones,
                     c.nombre AS cliente,
 
                     CASE
@@ -272,6 +281,10 @@ class CuentasRepository{
                 fecha: rows[0].fecha,
                 hora: rows[0].hora,
                 total: Number(rows[0].total),
+                // Para que el front pueda deshabilitar "Dar de baja" si ya está dado de
+                // baja, y mostrar el motivo (queda guardado en observaciones al dar de baja).
+                fechaBaja: rows[0].fechaBaja ?? null,
+                observaciones: rows[0].observaciones ?? null,
 
                 pagos: Object.values(
                     rows.reduce((acc, r) => {
@@ -893,6 +906,311 @@ class CuentasRepository{
 
         } catch (error) {
             await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+
+    // Da de baja un recibo completo (cobro directo, Entrega de Dinero, o mirror de
+    // Nota de Crédito histórico), revirtiendo todo lo que ese recibo generó: fondos
+    // reales, Valores a Acreditar, Retenciones Sufridas, saldo inicial, saldo a favor
+    // y el estado (impaga/Cuenta Corriente) de las ventas afectadas.
+    //
+    // Bloqueos duros (se evalúan ANTES de escribir nada - si alguno dispara, la
+    // operación aborta completa, no hay baja parcial):
+    //   1) Cualquier Cheque/Crédito de este recibo ya ACREDITADO a un fondo real.
+    //   2) Si el recibo es una Entrega de Dinero que generó saldo a favor, ese saldo
+    //      ya fue (parcial o totalmente) consumido por otra operación del cliente.
+    //
+    // Cheque/Crédito y Retención: se borran físicamente (cheques -> valores_acreditar,
+    // y retenciones) en vez de marcarlos RECHAZADO/baja lógica, porque
+    // valores_acreditar.idVentaPago y retenciones.idVentaPago tienen FK contra
+    // ventas_pagos sin ON DELETE CASCADE - no se puede borrar la fila de ventas_pagos
+    // mientras existan (y si no se borra esa fila, ObtenerVentasImpagas la sigue
+    // contando como pagado real en la próxima Entrega de Dinero). El rastro de que
+    // existieron queda en movimientos_fondos (append-only) vía el contra-asiento.
+    //
+    // Ver HANDOFF-dar-de-baja-recibo.md para el diseño completo y el razonamiento
+    // detrás de cada decisión.
+    async DarBajaRecibo(data: DarBajaReciboDTO): Promise<any> {
+        const { idRecibo, idCaja } = data;
+        const motivo = (data.motivo || '').trim();
+        if (!motivo) {
+            throw { status: 400, message: 'El motivo es obligatorio para dar de baja un recibo.' };
+        }
+
+        const usuarioActivo = SesionServ.LeerSesion().usuario;
+        const connection = await db.getConnection();
+        let enTransaccion = false;
+
+        try {
+            // ---------------------------------------------------------------
+            // FASE 1: identificar origen + bloqueos duros (sin escribir nada)
+            // ---------------------------------------------------------------
+            const [[recibo]]: any = await connection.query(
+                `SELECT id, idCliente, fechaBaja FROM recibos WHERE id = ?`,
+                [idRecibo]
+            );
+            if (!recibo) throw { status: 404, message: 'Recibo no encontrado.' };
+            if (recibo.fechaBaja) throw { status: 400, message: 'El recibo ya fue dado de baja.' };
+
+            const pagos = await ObtenerPagosRecibo(connection, idRecibo);
+
+            // idEntrega se identifica vía ventas_entrega_detalle.idRecibo, NO vía
+            // pagos.idEntrega: una Entrega de Dinero que solo cancela saldo inicial (sin
+            // ventas, sin remanente) con un método Efectivo/Débito/Transferencia no
+            // genera NINGUNA fila en ventas_pagos (el "ancla" solo se crea si hace falta
+            // para Cheque/Crédito/Retención, ver EntregaDinero) - inferir el origen desde
+            // `pagos` fallaba en ese caso puntual.
+            const [[entregaRow]]: any = await connection.query(
+                `SELECT idEntrega, idMetodoAplicado FROM ventas_entrega_detalle WHERE idRecibo = ? LIMIT 1`,
+                [idRecibo]
+            );
+            const idEntrega = entregaRow?.idEntrega ?? null;
+
+            if (!pagos.length && idEntrega == null) {
+                throw { status: 400, message: 'El recibo no tiene pagos ni aplicaciones asociadas; no corresponde darlo de baja con esta función.' };
+            }
+
+            const idsPagos = pagos.map((p: any) => p.id);
+            const inPagos = idsPagos.map(() => '?').join(',');
+
+            // Bloqueo duro 1: Cheque/Crédito ya ACREDITADO -> bloquea TODO el recibo
+            // (si idsPagos está vacío - caso del párrafo de arriba - no hay Cheque/Crédito
+            // posible: esos métodos siempre generan su fila ancla en ventas_pagos).
+            const [valoresRecibo]: any = idsPagos.length
+                ? await connection.query(
+                    `SELECT id, estado, monto, tipo FROM valores_acreditar WHERE idVentaPago IN (${inPagos})`,
+                    idsPagos
+                  )
+                : [[]];
+            const valorAcreditado = valoresRecibo.find((v: any) => v.estado === 'ACREDITADO');
+            if (valorAcreditado) {
+                throw {
+                    status: 400,
+                    message: `No se puede dar de baja: el valor #${valorAcreditado.id} (${valorAcreditado.tipo}) ya fue acreditado a un fondo real.`
+                };
+            }
+
+            // Bloqueo duro 2: saldo a favor generado por esta Entrega ya consumido
+            // (parcial o totalmente). Criterio acordado: pool neteado por cliente (el
+            // esquema no trackea "consumo" por lote) - se permite la baja si el crédito
+            // disponible actual del cliente (generado - consumido) cubre al menos el
+            // monto que generó ESTA entrega.
+            if (idEntrega != null) {
+                const [[favorGenerado]]: any = await connection.query(
+                    `
+                    SELECT COALESCE(SUM(montoAplicado), 0) AS monto
+                    FROM ventas_entrega_detalle
+                    WHERE idEntrega = ? AND tipoAplicacion = 'SALDO_A_FAVOR'
+                    `,
+                    [idEntrega]
+                );
+
+                if (Number(favorGenerado.monto) > 0) {
+                    const disponible = await CreditoDisponibleCliente(connection, recibo.idCliente);
+                    if (disponible < Number(favorGenerado.monto)) {
+                        throw {
+                            status: 400,
+                            message: 'No se puede dar de baja: el saldo a favor generado por esta entrega ya fue consumido (parcial o totalmente) en otra operación.'
+                        };
+                    }
+                }
+            }
+
+            // ---------------------------------------------------------------
+            // FASE 2: reversión real, dentro de transacción
+            // ---------------------------------------------------------------
+            await connection.beginTransaction();
+            enTransaccion = true;
+
+            // Re-chequeo de idempotencia + lock, ahora sí dentro de la transacción
+            // (protege contra una carrera entre la Fase 1 y acá).
+            const [[reciboLock]]: any = await connection.query(
+                `SELECT fechaBaja FROM recibos WHERE id = ? FOR UPDATE`,
+                [idRecibo]
+            );
+            if (reciboLock.fechaBaja) throw { status: 400, message: 'El recibo ya fue dado de baja.' };
+
+            if (valoresRecibo.length) {
+                const idsValores = valoresRecibo.map((v: any) => v.id);
+                const inValores = idsValores.map(() => '?').join(',');
+                await connection.query(`SELECT id FROM valores_acreditar WHERE id IN (${inValores}) FOR UPDATE`, idsValores);
+            }
+
+            const IDS_TCOMPROBANTE_NC = [3, 8, 13, 100]; // mismo set que ObtenerQuery/ObtenerVentasClienteReporte
+
+            // --- Reversión de Cheque/Crédito: borrado físico (cheques -> valores_acreditar) ---
+            let idFondoValores: number | null = null;
+            for (const valor of valoresRecibo) {
+                if (valor.tipo === 'CHEQUE') {
+                    await connection.query(`DELETE FROM cheques WHERE idValor = ?`, [valor.id]);
+                }
+                if (idFondoValores === null) idFondoValores = await GetIdFondoValoresAcreditar(connection);
+                await InsertMovimientoFondo(connection, {
+                    idCaja, idFondo: idFondoValores, tipo: 'EGRESO', origen: 'ACREDITACION_VALOR',
+                    idReferencia: null, monto: valor.monto,
+                    descripcion: `Baja recibo #${idRecibo} - reversión valor #${valor.id} (${valor.tipo})`,
+                    usuario: usuarioActivo
+                } as any);
+                await connection.query(`DELETE FROM valores_acreditar WHERE id = ?`, [valor.id]);
+            }
+
+            // --- Reversión de Retención asociada (si la hubo) ---
+            const [retencionesRecibo]: any = idsPagos.length
+                ? await connection.query(
+                    `SELECT id, tipo, importe FROM retenciones WHERE idVentaPago IN (${inPagos})`,
+                    idsPagos
+                  )
+                : [[]];
+            let idFondoRetenciones: number | null = null;
+            for (const ret of retencionesRecibo) {
+                if (idFondoRetenciones === null) idFondoRetenciones = await GetIdFondoRetenciones(connection);
+                await InsertMovimientoFondo(connection, {
+                    idCaja, idFondo: idFondoRetenciones, tipo: 'EGRESO', origen: 'AJUSTE',
+                    idReferencia: null, monto: ret.importe,
+                    descripcion: `Baja recibo #${idRecibo} - reversión retención ${ret.tipo}`,
+                    usuario: usuarioActivo
+                } as any);
+                await connection.query(`DELETE FROM retenciones WHERE id = ?`, [ret.id]);
+            }
+
+            if (idEntrega != null) {
+                // ---- Entrega de Dinero: reversión completa ----
+
+                // Restaurar clientes.inicial
+                const [[cancelacionInicial]]: any = await connection.query(
+                    `SELECT COALESCE(SUM(montoAplicado),0) AS monto FROM ventas_entrega_detalle WHERE idEntrega = ? AND tipoAplicacion = 'SALDO_INICIAL'`,
+                    [idEntrega]
+                );
+                if (Number(cancelacionInicial.monto) > 0) {
+                    await connection.query(`UPDATE clientes SET inicial = inicial + ? WHERE id = ?`, [cancelacionInicial.monto, recibo.idCliente]);
+                    await InsertMovimientoFondo(connection, {
+                        idCaja, idFondo: 4, tipo: 'INGRESO', origen: 'AJUSTE',
+                        idReferencia: null, monto: cancelacionInicial.monto,
+                        descripcion: `Baja recibo #${idRecibo} - reversión cancelación saldo inicial cliente ${recibo.idCliente}`,
+                        usuario: usuarioActivo
+                    } as any);
+                }
+
+                // Reponer al pool virtual de Cuenta Corriente (fondo 4) por cada venta
+                // cancelada por esta entrega (esto es independiente del contra-asiento en
+                // el fondo real/Valores a Acreditar, hecho más abajo - son dos libros
+                // distintos, ver HANDOFF).
+                for (const p of pagos) {
+                    if (p.idVenta == null) continue;
+                    await InsertMovimientoFondo(connection, {
+                        idCaja, idFondo: 4, tipo: 'INGRESO', origen: 'AJUSTE',
+                        idReferencia: p.idVenta, monto: p.monto,
+                        descripcion: `Baja recibo #${idRecibo} - reversión cancelación deuda venta #${p.idVenta}`,
+                        usuario: usuarioActivo
+                    } as any);
+                }
+
+                // Anular saldo a favor generado (si lo hubo)
+                const [[favorGenerado]]: any = await connection.query(
+                    `SELECT COALESCE(SUM(montoAplicado),0) AS monto FROM ventas_entrega_detalle WHERE idEntrega = ? AND tipoAplicacion = 'SALDO_A_FAVOR'`,
+                    [idEntrega]
+                );
+                if (Number(favorGenerado.monto) > 0) {
+                    await InsertMovimientoFondo(connection, {
+                        idCaja, idFondo: 5, tipo: 'EGRESO', origen: 'AJUSTE',
+                        idReferencia: idEntrega, monto: favorGenerado.monto,
+                        descripcion: `Baja recibo #${idRecibo} - reversión saldo a favor generado cliente ${recibo.idCliente}`,
+                        usuario: usuarioActivo
+                    } as any);
+                }
+
+                // Reversión del fondo real (Efectivo/Débito/Transferencia) para la porción
+                // de la entrega que NO fue Cheque/Crédito (esa ya se revirtió arriba vía
+                // valores_acreditar, con el monto total de la operación). Se descuenta la
+                // porción de retención (si la hubo) porque esa ya se revirtió aparte contra
+                // el fondo "Retenciones Sufridas".
+                const esValorAcreditar = pagos.some((p: any) => ['CHEQUE', 'CREDITO'].includes(p.tipoMetodo));
+                if (!esValorAcreditar) {
+                    // Monto real total de la entrega tomado de ventas_entrega_detalle (no de
+                    // `pagos`): el fragmento de saldo inicial no genera fila en ventas_pagos
+                    // si la entrega no necesitaba ancla (ver detección de idEntrega más
+                    // arriba) - sumar solo `pagos` subestima el monto a revertir en ese caso.
+                    const [[totalEntregaRow]]: any = await connection.query(
+                        `SELECT COALESCE(SUM(montoAplicado),0) AS monto FROM ventas_entrega_detalle WHERE idEntrega = ?`,
+                        [idEntrega]
+                    );
+                    const totalRetencion = retencionesRecibo.reduce((acc: number, r: any) => acc + Number(r.importe), 0);
+                    const montoFondoReal = Number(totalEntregaRow.monto) - totalRetencion;
+                    if (montoFondoReal > 0) {
+                        // idMetodo también se toma de ventas_entrega_detalle (idMetodoAplicado),
+                        // no de pagos[0], por la misma razón: `pagos` puede venir vacío.
+                        const { idFondo } = await GetMetodoPago(connection, entregaRow.idMetodoAplicado);
+                        await InsertMovimientoFondo(connection, {
+                            idCaja, idFondo, tipo: 'EGRESO', origen: 'AJUSTE',
+                            idReferencia: idEntrega, monto: montoFondoReal,
+                            descripcion: `Baja recibo #${idRecibo} - reversión entrega cliente ${recibo.idCliente}`,
+                            usuario: usuarioActivo
+                        } as any);
+                    }
+                }
+
+                await connection.query(`DELETE FROM ventas_entrega_detalle WHERE idEntrega = ?`, [idEntrega]);
+                await connection.query(`DELETE FROM ventas_entrega WHERE id = ?`, [idEntrega]);
+
+            } else {
+                // ---- Cobro directo / mirror de Nota de Crédito histórico ----
+                for (const p of pagos) {
+                    if (['CHEQUE', 'CREDITO'].includes(p.tipoMetodo)) continue; // ya revertido arriba
+
+                    const { idFondo } = await GetMetodoPago(connection, p.idMetodo);
+                    await InsertMovimientoFondo(connection, {
+                        idCaja, idFondo, tipo: 'EGRESO', origen: 'AJUSTE',
+                        idReferencia: p.idVenta ?? null, monto: p.monto,
+                        descripcion: `Baja recibo #${idRecibo}` + (p.idVenta ? ` - venta #${p.idVenta}` : ''),
+                        usuario: usuarioActivo
+                    } as any);
+                }
+            }
+
+            // Ventas reales afectadas: excluye mirror de NC (idTComprobante de Nota de
+            // Crédito) y filas sin venta (saldo inicial / saldo a favor) - a esas nunca
+            // corresponde reponerles Cuenta Corriente.
+            const ventasAfectadas = new Set<number>();
+            for (const p of pagos) {
+                if (p.idVenta != null && !IDS_TCOMPROBANTE_NC.includes(p.idTComprobante)) {
+                    ventasAfectadas.add(p.idVenta);
+                }
+            }
+
+            // Borrado físico de los ventas_pagos de este recibo (ya sin hijos que lo bloqueen)
+            await connection.query(`DELETE FROM ventas_pagos WHERE idRecibo = ?`, [idRecibo]);
+
+            // Recalcular cobertura real de cada venta afectada: repone a Cuenta Corriente
+            // si quedó sin cobertura real, o deja impaga=0 si otro pago real ya la cubre
+            // (mismo caso que recibo #47 del RESUMEN histórico).
+            for (const idVenta of ventasAfectadas) {
+                await RecalcularCoberturaVenta(connection, idVenta);
+            }
+
+            // Marcar el recibo dado de baja
+            await connection.query(
+                `UPDATE recibos SET fechaBaja = NOW(), observaciones = ? WHERE id = ?`,
+                [motivo, idRecibo]
+            );
+
+            await connection.commit();
+            enTransaccion = false;
+
+            const saldoCliente = await this.ObtenerSaldoCliente(recibo.idCliente);
+
+            return {
+                idRecibo,
+                idCliente: recibo.idCliente,
+                ventasAfectadas: Array.from(ventasAfectadas),
+                saldoCliente
+            };
+
+        } catch (error) {
+            if (enTransaccion) await connection.rollback();
             throw error;
         } finally {
             connection.release();
@@ -1798,7 +2116,111 @@ async function ObtenerVentasImpagas(connection, idCliente:number){
         return [rows][0];
 
     } catch (error) {
-        throw error; 
+        throw error;
+    }
+}
+
+// Pagos asociados a un recibo, con el tipo de método resuelto y el idTComprobante
+// de la venta relacionada (para detectar mirror de Nota de Crédito) - usado por
+// DarBajaRecibo para identificar el origen del recibo (cobro directo / Entrega de
+// Dinero / mirror de NC) antes de revertirlo.
+async function ObtenerPagosRecibo(connection, idRecibo: number) {
+    const [rows]: any = await connection.query(
+        `
+        SELECT
+            vp.id, vp.idVenta, vp.idMetodo, vp.monto, vp.idEntrega,
+            mp.tipo AS tipoMetodo,
+            v.idTComprobante
+        FROM ventas_pagos vp
+        JOIN metodos_pago mp ON mp.id = vp.idMetodo
+        LEFT JOIN ventas v ON v.id = vp.idVenta
+        WHERE vp.idRecibo = ?
+        `,
+        [idRecibo]
+    );
+    return rows;
+}
+
+// Crédito de "saldo a favor" disponible de un cliente: pool neteado (no hay
+// tracking por lote en el esquema), usado por DarBajaRecibo para chequear que el
+// saldo a favor generado por una Entrega de Dinero no esté ya (parcial o
+// totalmente) consumido antes de permitir revertirla. Mismas fuentes que
+// ObtenerQuery()/ObtenerSaldoCliente() para "entregas" (ventas_entrega_detalle
+// tipoAplicacion='SALDO_A_FAVOR') y "notas_credito" (idTComprobante IN (3,8,13,100)),
+// menos lo ya consumido vía pagos con método tipo='SALDO_FAVOR'.
+async function CreditoDisponibleCliente(connection, idCliente: number): Promise<number> {
+    const [[fila]]: any = await connection.query(
+        `
+        SELECT
+            (
+                COALESCE((
+                    SELECT SUM(ved.montoAplicado)
+                    FROM ventas_entrega_detalle ved
+                    JOIN ventas_entrega ve ON ve.id = ved.idEntrega
+                    WHERE ve.idCliente = ? AND ved.tipoAplicacion = 'SALDO_A_FAVOR'
+                ), 0)
+                +
+                COALESCE((
+                    SELECT SUM(v.total)
+                    FROM ventas v
+                    WHERE v.idCliente = ? AND v.idTComprobante IN (3,8,13,100) AND v.fechaBaja IS NULL
+                ), 0)
+                -
+                COALESCE((
+                    SELECT SUM(vp.monto)
+                    FROM ventas_pagos vp
+                    JOIN ventas v ON v.id = vp.idVenta
+                    JOIN metodos_pago mp ON mp.id = vp.idMetodo
+                    WHERE v.idCliente = ? AND mp.tipo = 'SALDO_FAVOR'
+                ), 0)
+            ) AS creditoDisponible
+        `,
+        [idCliente, idCliente, idCliente]
+    );
+    return Number(fila.creditoDisponible);
+}
+
+// Recalcula si una venta quedó con cobertura real (Efectivo/Débito/Transferencia/
+// Cheque/Crédito, excluyendo Cuenta Corriente) después de que DarBajaRecibo borró
+// los ventas_pagos de un recibo dado de baja. Si falta cobertura, repone la
+// diferencia como Cuenta Corriente (mismo criterio que ya usa el alta de venta) y
+// marca impaga=1; si ya está cubierta por otro pago real (ej. recibo #47 del
+// RESUMEN histórico), deja impaga=0 sin tocar nada más.
+async function RecalcularCoberturaVenta(connection, idVenta: number): Promise<void> {
+    const [[venta]]: any = await connection.query(
+        `SELECT id, total, idEmpresa FROM ventas WHERE id = ? FOR UPDATE`,
+        [idVenta]
+    );
+    if (!venta) return;
+
+    const [[cobertura]]: any = await connection.query(
+        `
+        SELECT COALESCE(SUM(vp.monto), 0) AS pagado
+        FROM ventas_pagos vp
+        JOIN metodos_pago mp ON mp.id = vp.idMetodo
+        WHERE vp.idVenta = ? AND mp.tipo <> 'CUENTA_CORRIENTE'
+        `,
+        [idVenta]
+    );
+
+    const faltante = Number(venta.total) - Number(cobertura.pagado);
+
+    if (faltante > 0.01) {
+        const [[metodoCC]]: any = await connection.query(
+            `SELECT id FROM metodos_pago WHERE idEmpresa = ? AND tipo = 'CUENTA_CORRIENTE' LIMIT 1`,
+            [venta.idEmpresa]
+        );
+        if (!metodoCC) {
+            throw { status: 500, message: `No se encontró el método Cuenta Corriente para la empresa ${venta.idEmpresa}.` };
+        }
+
+        await connection.query(
+            `INSERT INTO ventas_pagos (idVenta, idMetodo, monto, idRecibo) VALUES (?, ?, ?, NULL)`,
+            [idVenta, metodoCC.id, faltante]
+        );
+        await connection.query(`UPDATE ventas SET impaga = 1 WHERE id = ?`, [idVenta]);
+    } else {
+        await connection.query(`UPDATE ventas SET impaga = 0 WHERE id = ?`, [idVenta]);
     }
 }
 

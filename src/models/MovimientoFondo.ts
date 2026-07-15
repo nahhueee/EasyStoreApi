@@ -11,7 +11,8 @@ export class MovimientoFondo {
         | 'TRANSFERENCIA'
         | 'INGRESO_MANUAL'
         | 'NOTA_CREDITO'
-        | 'EGRESO_MANUAL' = 'VENTA';
+        | 'EGRESO_MANUAL'
+        | 'ACREDITACION_VALOR' = 'VENTA';
     idEmpresa?: number | null;
     idReferencia?: number | null;
     monto: number = 0;

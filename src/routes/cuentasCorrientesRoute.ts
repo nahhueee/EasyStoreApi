@@ -79,6 +79,21 @@ router.put('/revertir-entrega', async (req:Request, res:Response) => {
     }
 });
 
+router.put('/dar-baja-recibo', async (req:Request, res:Response) => {
+    try{
+        res.json(await CuentasRepo.DarBajaRecibo(req.body));
+
+    } catch(error:any){
+        let msg = "No se pudo dar de baja el recibo.";
+        logger.error(msg + " " + error.message);
+        // DarBajaRecibo tira { status, message } para los bloqueos de negocio (recibo
+        // ya dado de baja, valor acreditado, saldo a favor consumido) - mismo patrón
+        // que valoresRoute.ts/comprasCuentasRoute.ts, para que el front pueda mostrar
+        // el motivo específico en vez de un 500 genérico.
+        res.status(error.status || 500).send(error.message || msg);
+    }
+});
+
 router.put('/actualizar-pago', async (req:Request, res:Response) => {
     try{ 
         res.json(await CuentasRepo.ActualizarPagosVenta(req.body));
