@@ -189,6 +189,8 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
   sheet2.getColumn('venta').numFmt = '$ #,##0.00';
   sheet2.getColumn('servicio').numFmt = '$ #,##0.00';
   sheet2.getColumn('des').numFmt = '$ #,##0.00';
+  sheet2.getColumn('ajuste').numFmt = '$ #,##0.00';
+  sheet2.getColumn('iva21').numFmt = '$ #,##0.00';
   sheet2.getColumn('cobrado').numFmt = '$ #,##0.00';
 
   // =========================
