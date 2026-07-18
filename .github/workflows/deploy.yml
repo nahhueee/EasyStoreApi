@@ -48,6 +48,13 @@ jobs:
             echo '${{ secrets.CONFIG_TEST_JSON }}' > config.test.json
           fi
 
+      # El .env del repo es el de desarrollo local (NODE_ENV=pc) y app.config.ts lo lee
+      # en runtime para decidir qué config.*.json cargar. Si se deploya tal cual, pisa
+      # el NODE_ENV correcto que debe tener cada proceso en el servidor. Se sobreescribe
+      # acá con el valor que corresponde a esta rama antes de buildear.
+      - name: Escribir .env del ambiente
+        run: echo "NODE_ENV=${{ steps.vars.outputs.node_env }}" > .env
+
       - name: Build (tsc + setup.js)
         run: npm run build
         env:
