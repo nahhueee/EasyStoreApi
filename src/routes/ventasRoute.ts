@@ -76,7 +76,7 @@ router.get('/verificar-nota/:nroNota', async (req:Request, res:Response) => {
 //#region ABM
 router.post('/agregar', async (req:Request, res:Response) => {
     try{ 
-        res.json(await VentasRepo.Agregar(req.body.venta, req.body.desdeNotas));
+        res.json(await VentasRepo.Agregar(req.body.venta));
 
     } catch(error:any){
         let msg = "Error al intentar agregar la venta.";

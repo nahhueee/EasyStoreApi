@@ -58,8 +58,9 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
     { header: 'Servicio', key: 'servicio', width: 15 },
     { header: 'Descuento $', key: 'des', width: 15 },
     { header: 'Ajuste $', key: 'ajuste', width: 15 },
-    { header: 'IVA 21%', key: 'iva21', width: 15 },
     { header: 'Cobrado', key: 'cobrado', width: 15 },
+    { header: 'IVA 21%', key: 'iva21', width: 15 },
+    { header: 'Cobrado Neto', key: 'cobradoNeto', width: 15 },
     { header: 'Descuento %', key: 'descuento', width: 15 },
     { header: 'Comprobante', key: 'comprobante', width: 20 },
     { header: 'N° Comprobante', key: 'nro_comprobante', width: 20 },
@@ -70,21 +71,26 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
   ];
 
   res2.forEach(r => {
+    const cobrado = Number(r.cobrado);
+    const iva21 = Number(r.iva21);
+
     sheet2.addRow({
       ...r,
-      cobrado: Number(r.cobrado),
+      cobrado,
       venta: Number(r.venta),
       servicio: Number(r.servicio),
       des: Number(r.des),
       ajuste: Number(r.ajuste),
-      iva21: Number(r.iva21),
+      iva21,
+      cobradoNeto: cobrado - iva21,
+      montos: formatearMontosPago(r.metodos, r.montos, Number(r.idProceso) === 3),
       cantidad_prendas: Number(r.cantidad_prendas)
     });
   });
 
   sheet2.autoFilter = {
     from: 'A1',
-    to: 'R1'
+    to: 'S1'
   };
 
 
@@ -192,6 +198,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
   sheet2.getColumn('ajuste').numFmt = '$ #,##0.00';
   sheet2.getColumn('iva21').numFmt = '$ #,##0.00';
   sheet2.getColumn('cobrado').numFmt = '$ #,##0.00';
+  sheet2.getColumn('cobradoNeto').numFmt = '$ #,##0.00';
 
   // =========================
   // EXPORTAR
@@ -213,6 +220,35 @@ function autoFitColumns(sheet: ExcelJS.Worksheet) {
     column.width = maxLength + 2;
   });
 }
+// Arma el texto de "Montos de pago" con el mismo estilo moneda que la columna
+// Cobrado ('$ #,##0.00'), un par "Método: $ monto" por cada método de pago de
+// la venta. metodos/montos vienen de un GROUP_CONCAT alineado por posición
+// (mismo ORDER BY mp.nombre en ambos), separados por ';'.
+// Para Notas de Crédito (esNotaCredito=true) cada monto individual se invierte:
+// ventas_pagos.monto se guarda siempre positivo, el signo negativo de la NC
+// se aplica acá (mismo criterio que ya usa "Cobrado" e "IVA 21%" en la query).
+function formatearMontosPago(metodos: string | null, montos: string | null, esNotaCredito: boolean): string {
+  if (!metodos || !montos) return '';
+
+  const listaMetodos = metodos.split(';');
+  const listaMontos = montos.split(';');
+
+  return listaMetodos
+    .map((metodo, i) => {
+      const monto = Number(listaMontos[i]) * (esNotaCredito ? -1 : 1);
+      // es-AR: coincide con cómo Excel renderiza el numFmt '$ #,##0.00' de la
+      // columna Cobrado en una máquina con configuración regional argentina
+      // (separador de miles '.', decimal ',').
+      const montoFormateado = monto.toLocaleString('es-AR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+
+      return `${metodo}: $ ${montoFormateado}`;
+    })
+    .join('; ');
+}
+
 function aplicarFormatoTalles(sheet: ExcelJS.Worksheet) {
   const headers = sheet.getRow(1);
 

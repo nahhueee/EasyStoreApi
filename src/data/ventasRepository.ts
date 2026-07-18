@@ -152,8 +152,9 @@ class VentasRepository{
         try {
             //Obtengo la query segun los filtros
             let query = `
-            SELECT 
+            SELECT
                 pv.descripcion AS proceso,
+                v.idProceso,
                 v.nroProceso,
                 p.descripcion AS punto_venta,
                 CONCAT(
@@ -164,14 +165,20 @@ class VentasRepository{
                 c.nombre AS cliente,
                 IF(v.idProceso = 3, IFNULL(prendas.total_prendas, 0) * -1, IFNULL(prendas.total_prendas, 0)) AS venta,
                 IF(v.idProceso = 3, IFNULL(servicios.total_servicios, 0) * -1, IFNULL(servicios.total_servicios, 0)) AS servicio,
-                -- El descuento general se aplica solo sobre la Venta (productos), nunca sobre
-                -- el Servicio: mismo criterio que topeDescuento=0 para servicios en toda la app
-                -- (ver backfill de importeDescuento jul-2026). Antes sumaba prendas+servicios
-                -- acá, así que "Venta + Servicio - Descuento" no cerraba contra "Cobrado"
-                -- (que sí usa v.total, correcto) en cualquier venta con servicios.
+                -- Suma el importeDescuento REAL persistido por ítem (productos + servicios),
+                -- no un recálculo de venta.descuento% asumiendo que el descuento nunca toca
+                -- Servicio. Ese supuesto es la política general (topeDescuento=0 para
+                -- servicios en catálogo), pero no es una invariante dura: hay ventas
+                -- puntuales donde el descuento sí se aplicó a un servicio al momento de
+                -- facturar aunque su tope de catálogo HOY sea 0 (ver ventas #69 y #120,
+                -- corregidas jul-2026 - "Correccion venta 69/120 servicio LOGO"). El
+                -- recálculo naive por % general no reflejaba esos casos y "Venta + Servicio
+                -- - Descuento + Ajuste" no cerraba contra "Cobrado". Sumar importeDescuento
+                -- real es correcto siempre que el dato esté persistido (confirmado por
+                -- auditoría jul-2026: sin casos pendientes fuera de #69/#120).
                 IF(v.idProceso = 3,
-                    IFNULL(prendas.total_prendas, 0) * (IFNULL(v.descuento, 0) / 100),
-                    IFNULL(prendas.total_prendas, 0) * (IFNULL(v.descuento, 0) / 100) * -1
+                    IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0),
+                    (IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0)) * -1
                 ) AS des,
                 -- Recargo del 10% por transferencia (ajusteTransf=1), aplicado sobre
                 -- Venta neta de descuento + Servicio (el descuento nunca toca Servicio,
@@ -261,22 +268,24 @@ class VentasRepository{
                 ON pagos.idVenta = v.id
 
             LEFT JOIN (
-                SELECT 
+                SELECT
                     idVenta,
                     SUM(cantidad) AS cantidad_prendas,
-                    SUM(total) AS total_prendas
+                    SUM(total) AS total_prendas,
+                    SUM(importeDescuento) AS descuento_prendas
                 FROM ventas_productos
                 GROUP BY idVenta
-            ) prendas 
+            ) prendas
                 ON prendas.idVenta = v.id
 
             LEFT JOIN (
-                SELECT 
+                SELECT
                     idVenta,
-                    SUM(total) AS total_servicios
+                    SUM(total) AS total_servicios,
+                    SUM(importeDescuento) AS descuento_servicios
                 FROM ventas_servicios
                 GROUP BY idVenta
-            ) servicios 
+            ) servicios
                 ON servicios.idVenta = v.id
 
             WHERE
@@ -567,7 +576,7 @@ class VentasRepository{
     //#endregion
 
     //#region ABM
-    async Agregar(venta:Venta, desdeNotas:boolean): Promise<string>{
+    async Agregar(venta:Venta): Promise<string>{
         const connection = await db.getConnection();
         
         try {
@@ -628,7 +637,13 @@ class VentasRepository{
                     await InsertProductoVenta(connection, element);
                     const finalizandoCotizacion = venta.idProceso == IdProceso.COTIZACION && venta.estado == EstadoVenta.FINALIZADA;
 
-                    if(desdeNotas){
+                    // Signo del movimiento de stock atado a idProceso, no a un flag aparte:
+                    // una Nota de Crédito SIEMPRE devuelve stock (venga del flujo clásico
+                    // desde listado-ventas/notas-venta.component, o de una NC libre cargada
+                    // directo). Antes esto dependía de un booleano "desdeNotas" pasado a mano
+                    // por cada caller, señal redundante con idProceso que podía desincronizarse
+                    // (una NC creada desde otro flujo sin pasar el flag no devolvía stock).
+                    if(venta.idProceso === IdProceso.NOTA_CREDITO){
                         await ProductosRepo.ActualizarInventario(connection, element, "+");
                     }else{
                         if(venta.factura || finalizandoCotizacion)
@@ -782,38 +797,55 @@ class VentasRepository{
     // habría que bifurcar y restaurar la lógica de EGRESO real / RECHAZADO de
     // valores_acreditar que existía antes de este cambio (ver historial de git).
     async RegistrarMovimientoNotaCredito(connection, pagosOriginales, notaCredito, usuario, devuelveDinero: boolean = false) {
-        const totalOriginal = pagosOriginales.reduce(
-            (acc, p) => acc + Number(p.monto),
-            0
-        );
+        // NC libre (cargada directo, sin una venta de origen de la que prorratear
+        // métodos de pago, ej. desde una pantalla de NC standalone): no hay nada
+        // que prorratear, se registra una única línea por el total con el método
+        // "Saldo a Favor" de la empresa (mismo criterio de resolución por tipo,
+        // no por id fijo, que ya usa GetIdFondoCuentaCorriente en cuentasRepository -
+        // metodos_pago está scopeado por empresa).
+        if (!pagosOriginales || pagosOriginales.length === 0) {
+            const idMetodoSaldoFavor = await GetIdMetodoSaldoAFavor(connection, notaCredito.idEmpresa);
 
-        let acumulado = 0;
-
-        // Registramos el detalle proporcional por método de pago original, solo a
-        // efectos informativos/reporte (no implica ningún movimiento real de fondo,
-        // porque no se devuelve plata: el importe se acredita entero al cliente).
-        for (let i = 0; i < pagosOriginales.length; i++) {
-            const pago = pagosOriginales[i];
-
-            const proporcion = Number(pago.monto) / totalOriginal;
-
-            let montoMovimiento =
-                i === pagosOriginales.length - 1
-                    ? notaCredito.total - acumulado
-                    : Number(
-                        (notaCredito.total * proporcion).toFixed(2)
-                    );
-
-            acumulado += montoMovimiento;
-
-            // Registrar el pago proporcional en ventas_pagos para que aparezca
-            // en el reporte acumulado (con monto positivo; la query lo negará por idProceso=3)
             await InsertPagoVenta(connection, {
                 idVenta: notaCredito.id,
-                idMetodo: pago.idMetodo,
+                idMetodo: idMetodoSaldoFavor,
                 idRecibo: null,
-                monto: montoMovimiento
+                monto: notaCredito.total
             });
+        } else {
+            const totalOriginal = pagosOriginales.reduce(
+                (acc, p) => acc + Number(p.monto),
+                0
+            );
+
+            let acumulado = 0;
+
+            // Registramos el detalle proporcional por método de pago original, solo a
+            // efectos informativos/reporte (no implica ningún movimiento real de fondo,
+            // porque no se devuelve plata: el importe se acredita entero al cliente).
+            for (let i = 0; i < pagosOriginales.length; i++) {
+                const pago = pagosOriginales[i];
+
+                const proporcion = Number(pago.monto) / totalOriginal;
+
+                let montoMovimiento =
+                    i === pagosOriginales.length - 1
+                        ? notaCredito.total - acumulado
+                        : Number(
+                            (notaCredito.total * proporcion).toFixed(2)
+                        );
+
+                acumulado += montoMovimiento;
+
+                // Registrar el pago proporcional en ventas_pagos para que aparezca
+                // en el reporte acumulado (con monto positivo; la query lo negará por idProceso=3)
+                await InsertPagoVenta(connection, {
+                    idVenta: notaCredito.id,
+                    idMetodo: pago.idMetodo,
+                    idRecibo: null,
+                    monto: montoMovimiento
+                });
+            }
         }
 
         // Notas de crédito: nunca generan recibo (mismo criterio que Modificar,
@@ -1412,6 +1444,20 @@ export async function GetMetodoPago(connection, idMetodoPago): Promise<{ idFondo
         [idMetodoPago]
     );
     return { idFondo: rows[0].idFondo, tipo: rows[0].tipo };
+}
+
+// Resuelve el método de pago "Saldo a Favor" de una empresa por tipo (no por id
+// fijo): metodos_pago está scopeado por empresa, cada una tiene su propia fila
+// con un id distinto (mismo criterio ya usado para CUENTA_CORRIENTE en
+// cuentasRepository.ts). Se usa solo para la línea informativa de ventas_pagos
+// de una NC libre (sin pagos originales de los que prorratear).
+export async function GetIdMetodoSaldoAFavor(connection, idEmpresa: number): Promise<number> {
+    const [rows] = await connection.query(
+        "SELECT id FROM metodos_pago WHERE idEmpresa = ? AND tipo = 'SALDO_FAVOR' LIMIT 1",
+        [idEmpresa]
+    );
+    if (!rows.length) throw new Error(`Método 'Saldo a Favor' no encontrado para la empresa ${idEmpresa}.`);
+    return rows[0].id;
 }
 
 export async function GetIdFondoValoresAcreditar(connection): Promise<number> {
