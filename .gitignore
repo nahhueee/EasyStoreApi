@@ -1,6 +1,8 @@
 /out
 /node_modules
 /src/certs
+/config.prod.json
+/config.test.json
 /src/log/general.json
 /src/log/update.json
 /src/log/backup.json

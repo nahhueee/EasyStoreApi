@@ -1,0 +1,89 @@
+name: Deploy API
+
+on:
+  push:
+    branches:
+      - main
+      - test
+
+concurrency:
+  group: deploy-api-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "16"
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Definir variables según rama
+        id: vars
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "node_env=prod" >> "$GITHUB_OUTPUT"
+            echo "remote_path=/www/wwwroot/creationserver.com/chazaGolf" >> "$GITHUB_OUTPUT"
+            echo "pm2_name=chazaGolf" >> "$GITHUB_OUTPUT"
+          else
+            echo "node_env=test" >> "$GITHUB_OUTPUT"
+            echo "remote_path=/www/wwwroot/creationserver.com/chazaGolfTest" >> "$GITHUB_OUTPUT"
+            echo "pm2_name=chazaGolfTest" >> "$GITHUB_OUTPUT"
+          fi
+
+      # config.prod.json / config.test.json no están en el repo (contienen credenciales
+      # de MySQL). Se escriben acá a partir de un GitHub Secret, solo en memoria del runner.
+      - name: Escribir config del ambiente
+        run: |
+          if [ "${{ steps.vars.outputs.node_env }}" = "prod" ]; then
+            echo '${{ secrets.CONFIG_PROD_JSON }}' > config.prod.json
+          else
+            echo '${{ secrets.CONFIG_TEST_JSON }}' > config.test.json
+          fi
+
+      - name: Build (tsc + setup.js)
+        run: npm run build
+        env:
+          NODE_ENV: ${{ steps.vars.outputs.node_env }}
+
+      # Sin --delete a propósito: certs AFIP, tokens, uploads, logs, session.json y los
+      # JSON de referencia geográfica (calles/localidades/provincias) viven solo en el
+      # servidor y no deben tocarse en cada deploy.
+      - name: Subir build al VPS
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: >-
+            -avz
+            --exclude=src/certs
+            --exclude=src/tokens
+            --exclude=src/upload
+            --exclude=src/log/*.json
+            --exclude=src/log/*.log
+            --exclude=src/session.json
+            --exclude=src/json/*.json
+          path: out/
+          remote_path: ${{ steps.vars.outputs.remote_path }}/
+          remote_host: ${{ secrets.VPS_HOST }}
+          remote_port: ${{ secrets.VPS_PORT }}
+          remote_user: ${{ secrets.VPS_USER }}
+          remote_key: ${{ secrets.VPS_DEPLOY_KEY }}
+
+      - name: Instalar dependencias en el servidor y reiniciar PM2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          port: ${{ secrets.VPS_PORT }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_DEPLOY_KEY }}
+          script: |
+            set -e
+            cd ${{ steps.vars.outputs.remote_path }}
+            npm ci --omit=dev
+            pm2 reload ${{ steps.vars.outputs.pm2_name }}

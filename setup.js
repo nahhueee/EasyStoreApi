@@ -44,8 +44,14 @@ async function setup() {
     filesToCopy.push(configFile);
 
     // Copiar archivos individuales
+    // (algunos, como los JSON de referencia geográfica o config.*.json en CI,
+    // pueden no existir en el checkout: se asume que ya están en destino y se omiten)
     for (const file of filesToCopy) {
-      await fs.copy(file, path.join("out", file));
+      if (await fs.pathExists(file)) {
+        await fs.copy(file, path.join("out", file));
+      } else {
+        console.warn(`⚠️  Archivo no encontrado, se omite (se asume ya presente en destino): ${file}`);
+      }
     }
 
     // Copiar toda la carpeta tasks
