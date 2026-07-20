@@ -173,8 +173,20 @@ class VentasRepository{
                 -- agrega aparte al facturar, hay que sumarlo acá para mostrar el bruto real.
                 -- OJO: replica los IDs 2/1 a mano porque no hay forma de reusar la función
                 -- TS desde SQL - si esa regla cambia en el front, actualizar también acá.
+                --
+                -- Excepción NC "sin productos" (NC X libre, nota-credito-x.component.ts,
+                -- modo "Sin productos"): no genera ninguna fila en ventas_productos ni
+                -- ventas_servicios, todo el importe vive solo en v.total. Sin este
+                -- fallback, "Venta" quedaba en $0,00 aunque "Cobrado" sí mostrara el
+                -- importe real - se detecta por ausencia total de ítems (prendas Y
+                -- servicios NULL), no por idTComprobante, porque ese mismo componente
+                -- también permite cargar productos reales (ahí sí hay que mostrar el
+                -- desglose normal).
                 IF(v.idProceso = 3,
-                    (IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)) * -1,
+                    IF(prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
+                        v.total,
+                        IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
+                    ) * -1,
                     IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
                 ) AS venta,
                 IF(v.idProceso = 3, IFNULL(servicios.total_servicios, 0) * -1, IFNULL(servicios.total_servicios, 0)) AS servicio,

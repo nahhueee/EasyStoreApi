@@ -529,9 +529,16 @@ class FondosRepository{
             ORDER BY f.tipo, total_general DESC
             `, params);
 
-            // ---- query neto manuales (INGRESO_MANUAL / EGRESO_MANUAL) ----
+            // ---- query neto "otros movimientos" (todo lo que no sea VENTA) ----
+            // Antes filtraba solo INGRESO_MANUAL/EGRESO_MANUAL: dejaba afuera
+            // AJUSTE, TRANSFERENCIA, COBRO_CC, PAGO_PROVEEDOR, RETIRO,
+            // NOTA_CREDITO y ACREDITACION_VALOR, que no aparecían en ningún
+            // desglose (sí sumaban al saldo total/neto período, ver
+            // ObtenerResumenFondosPorCaja/ObtenerSeccionResumen, pero no acá).
+            // Se usa exclusión en vez de whitelist para que un origen nuevo no
+            // vuelva a quedar afuera silenciosamente.
             const condManuales: string[] = [
-                "mf.origen IN ('INGRESO_MANUAL','EGRESO_MANUAL')"
+                "mf.origen != 'VENTA'"
             ];
             const paramsManuales: any[] = [];
 

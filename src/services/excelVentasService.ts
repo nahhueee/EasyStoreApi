@@ -34,10 +34,15 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
   // Texto
   sheet1.getCell(`A${totalRowIndex}`).value = 'TOTAL';
 
-  // Fórmula correcta (sin incluirse a sí misma)
-  sheet1.getCell(`B${totalRowIndex}`).value = {
-    formula: `SUM(B2:B${lastDataRow})`
-  };
+  // Fórmula correcta (sin incluirse a sí misma). Si no hay filas de datos
+  // (ej. la venta filtrada no tiene ningún registro en ventas_pagos - queda
+  // afuera del INNER JOIN de ObtenerReporteAcumulado), lastDataRow=1 y la fila
+  // TOTAL cae en la fila 2: SUM(B2:B1) se normaliza a B1:B2, incluyéndose a sí
+  // misma -> referencia circular en Excel. En ese caso ponemos 0 directo, no
+  // hace falta fórmula para sumar nada.
+  sheet1.getCell(`B${totalRowIndex}`).value = res1.length > 0
+    ? { formula: `SUM(B2:B${lastDataRow})` }
+    : 0;
 
   // Estilo
   sheet1.getRow(totalRowIndex).font = { bold: true };
@@ -83,7 +88,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
       ajuste: Number(r.ajuste),
       iva21,
       cobradoNeto: cobrado - iva21,
-      montos: formatearMontosPago(r.metodos, r.montos, Number(r.idProceso) === 3),
+      montos: formatearMontosPago(r.montos, Number(r.idProceso) === 3),
       cantidad_prendas: Number(r.cantidad_prendas)
     });
   });
@@ -221,21 +226,20 @@ function autoFitColumns(sheet: ExcelJS.Worksheet) {
   });
 }
 // Arma el texto de "Montos de pago" con el mismo estilo moneda que la columna
-// Cobrado ('$ #,##0.00'), un par "Método: $ monto" por cada método de pago de
-// la venta. metodos/montos vienen de un GROUP_CONCAT alineado por posición
-// (mismo ORDER BY mp.nombre en ambos), separados por ';'.
+// Cobrado ('$ #,##0.00'), solo el número - el método ya está en la columna
+// "Métodos de pago" aparte, no hace falta repetirlo acá. montos viene de un
+// GROUP_CONCAT alineado por posición con metodos (mismo ORDER BY mp.nombre en
+// ambos), separado por ';'.
 // Para Notas de Crédito (esNotaCredito=true) cada monto individual se invierte:
 // ventas_pagos.monto se guarda siempre positivo, el signo negativo de la NC
 // se aplica acá (mismo criterio que ya usa "Cobrado" e "IVA 21%" en la query).
-function formatearMontosPago(metodos: string | null, montos: string | null, esNotaCredito: boolean): string {
-  if (!metodos || !montos) return '';
+function formatearMontosPago(montos: string | null, esNotaCredito: boolean): string {
+  if (!montos) return '';
 
-  const listaMetodos = metodos.split(';');
-  const listaMontos = montos.split(';');
-
-  return listaMetodos
-    .map((metodo, i) => {
-      const monto = Number(listaMontos[i]) * (esNotaCredito ? -1 : 1);
+  return montos
+    .split(';')
+    .map(m => {
+      const monto = Number(m) * (esNotaCredito ? -1 : 1);
       // es-AR: coincide con cómo Excel renderiza el numFmt '$ #,##0.00' de la
       // columna Cobrado en una máquina con configuración regional argentina
       // (separador de miles '.', decimal ',').
@@ -244,7 +248,7 @@ function formatearMontosPago(metodos: string | null, montos: string | null, esNo
         maximumFractionDigits: 2
       });
 
-      return `${metodo}: $ ${montoFormateado}`;
+      return `$ ${montoFormateado}`;
     })
     .join('; ');
 }
