@@ -238,7 +238,11 @@ class VentasRepository{
                     LPAD(
                         IFNULL(
                             CASE
-                                WHEN v.idTComprobante = 99 THEN v.nroProceso
+                                -- 99 = Sin Comprobante, 100 = NC "X" (nota-credito-x.component.ts,
+                                -- interna, no pasa por AFIP/ARCA) - ninguna de las dos genera fila
+                                -- en ventas_factura, por eso vf.ticket es NULL y sin este caso
+                                -- especial el N° de comprobante quedaba en 0.
+                                WHEN v.idTComprobante IN (99, 100) THEN v.nroProceso
                                 ELSE vf.ticket
                             END,
                             0
@@ -368,8 +372,11 @@ class VentasRepository{
                     '-',
                     LPAD(
                         IFNULL(
-                            CASE 
-                                WHEN v.idTComprobante = 99 THEN v.nroProceso
+                            CASE
+                                -- 99 = Sin Comprobante, 100 = NC "X" (nota-credito-x.component.ts,
+                                -- interna, no pasa por AFIP/ARCA) - mismo fix que en
+                                -- ObtenerReporteVentas/nro_comprobante.
+                                WHEN v.idTComprobante IN (99, 100) THEN v.nroProceso
                                 ELSE vf.ticket
                             END,
                             0

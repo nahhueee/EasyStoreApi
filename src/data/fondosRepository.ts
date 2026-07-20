@@ -824,10 +824,14 @@ class FondosRepository{
             const ventasWhere = `WHERE ${ventasCond.join(" AND ")}`;
 
             // bloque 2: manuales (params: idFondo, idCaja + fechas opcionales)
+            // Antes filtraba solo origen IN ('INGRESO_MANUAL','EGRESO_MANUAL'): dejaba
+            // afuera cualquier AJUSTE (u otro origen no-VENTA) con idEmpresa asignado.
+            // El bloque de ventas de acá lee de ventas_pagos (no de movimientos_fondos),
+            // así que no hay riesgo de duplicar nada al sacar el filtro de origen - alcanza
+            // con "tiene empresa asignada" (mismo criterio que ObtenerDetalleMetodosPago).
             const manualesParams: any[] = [filtros.idFondo, filtros.idCaja];
             const manualesCond: string[] = [
-                "mf.idEmpresa IS NOT NULL",
-                "mf.origen IN ('INGRESO_MANUAL','EGRESO_MANUAL')"
+                "mf.idEmpresa IS NOT NULL"
             ];
 
             if (filtros.fechaDesde) {
