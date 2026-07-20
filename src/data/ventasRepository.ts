@@ -166,7 +166,7 @@ class VentasRepository{
                 -- "Venta" se muestra en bruto (IVA incluido) para cerrar siempre contra
                 -- "Cobrado". En el caso normal (sin lista propia), ventas_productos.total
                 -- YA incluye IVA - no hace falta sumar nada. Pero para Mayorista con lista
-                -- propia (idCategoria=2/MAYORISTA y v.idListaPrecio distinto de 1/
+                -- propia (idCategoria=2/MAYORISTA y v.idLista distinto de 1/
                 -- CONSUMIDOR_FINAL - misma regla que esMayoristaConListaPropia() en
                 -- venta.constants.ts, usada en addmod-ventas/listado-ventas/notas-venta/
                 -- vista-previa/factura.service) el precio persistido es NETO y el IVA se
@@ -174,8 +174,8 @@ class VentasRepository{
                 -- OJO: replica los IDs 2/1 a mano porque no hay forma de reusar la función
                 -- TS desde SQL - si esa regla cambia en el front, actualizar también acá.
                 IF(v.idProceso = 3,
-                    (IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idListaPrecio IS NOT NULL AND v.idListaPrecio <> 1, IFNULL(vf.iva, 0), 0)) * -1,
-                    IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idListaPrecio IS NOT NULL AND v.idListaPrecio <> 1, IFNULL(vf.iva, 0), 0)
+                    (IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)) * -1,
+                    IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
                 ) AS venta,
                 IF(v.idProceso = 3, IFNULL(servicios.total_servicios, 0) * -1, IFNULL(servicios.total_servicios, 0)) AS servicio,
                 -- Suma el importeDescuento REAL persistido por ítem (productos + servicios),
@@ -1481,7 +1481,7 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " observacion = ? " +
                          " WHERE id = ? ";
 
-        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idLista, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.id];
+        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {
