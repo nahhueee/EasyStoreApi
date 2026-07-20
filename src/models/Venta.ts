@@ -38,6 +38,10 @@ import { Color, TallesProducto } from "./Producto";
 
     nroRelacionado?:number;
     tipoRelacionado?:string;
+    // Texto libre a nivel de venta (ej. motivo de una Nota de Crédito sin
+    // productos: "Adelanto de producción"/"Saldo orden de compra"). Ver
+    // migración 20260719120000_add_observacion_ventas.
+    observacion?:string;
     estado:string = "";
     impaga:number = 0;
     entregado:number = 0;

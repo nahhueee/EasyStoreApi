@@ -10,12 +10,17 @@ concurrency:
   group: deploy-api-${{ github.ref_name }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -94,3 +99,20 @@ jobs:
             cd ${{ steps.vars.outputs.remote_path }}
             npm ci --omit=dev
             pm2 reload ${{ steps.vars.outputs.pm2_name }}
+
+      # Solo en prod: taguea el commit desplegado con la versión de package.json.
+      # El bump de versión es manual (vos lo hacés antes de mergear a main); acá
+      # solo se traza qué versión quedó efectivamente en producción.
+      - name: Crear tag de versión (solo prod)
+        if: steps.vars.outputs.node_env == 'prod'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "El tag $TAG ya existe, no se crea de nuevo."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Deploy a produccion: $TAG"
+            git push origin "$TAG"
+          fi

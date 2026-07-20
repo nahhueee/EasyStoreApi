@@ -96,3 +96,23 @@ export function ResolverEstadoRelacionado(idProcesoVenta?: number, tipoRelaciona
         estado: estadoCierre ?? relacion.estadoUso,
     };
 }
+
+/**
+ * Estados "abiertos" (todavía no usados/cerrados) en los que se permite dar de
+ * baja un Presupuesto/Pedido/Nota de Empaque (decisión 19/07/2026). Una vez
+ * que el proceso queda Asociado/Relacionado (usado por otro documento) o
+ * Facturado/Facturada (cerrado), no se puede dar de baja - dejaría una
+ * referencia (nroRelacionado/tipoRelacionado) apuntando a algo inexistente.
+ * Factura/Cotización/NC/ND quedan afuera a propósito: no aplica esta baja.
+ */
+export const ESTADOS_ABIERTOS_BAJA: Partial<Record<IdProceso, EstadoVenta[]>> = {
+    [IdProceso.PRESUPUESTO]:  [EstadoVenta.APROBADO],
+    [IdProceso.PEDIDO]:       [EstadoVenta.APROBADO],
+    [IdProceso.NOTA_EMPAQUE]: [EstadoVenta.PENDIENTE, EstadoVenta.APROBADA],
+};
+
+export function puedeDarseDeBaja(idProceso?: number, estado?: string): boolean {
+    const estadosAbiertos = ESTADOS_ABIERTOS_BAJA[idProceso as IdProceso];
+    if (!estadosAbiertos) return false;
+    return estadosAbiertos.includes(estado as EstadoVenta);
+}

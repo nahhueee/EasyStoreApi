@@ -6,7 +6,7 @@ import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
 import { SesionServ } from '../services/sesionService';
-import { ResolverEstadoRelacionado, IdProceso, EstadoVenta } from '../models/ventaEstados';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja } from '../models/ventaEstados';
 const moment = require('moment');
 
 // Actualiza el estado del proceso relacionado (Presupuesto/Pedido/Nota de Empaque)
@@ -163,7 +163,20 @@ class VentasRepository{
                     IFNULL(v.hora, '')
                 ) AS fecha_hora,
                 c.nombre AS cliente,
-                IF(v.idProceso = 3, IFNULL(prendas.total_prendas, 0) * -1, IFNULL(prendas.total_prendas, 0)) AS venta,
+                -- "Venta" se muestra en bruto (IVA incluido) para cerrar siempre contra
+                -- "Cobrado". En el caso normal (sin lista propia), ventas_productos.total
+                -- YA incluye IVA - no hace falta sumar nada. Pero para Mayorista con lista
+                -- propia (idCategoria=2/MAYORISTA y v.idListaPrecio distinto de 1/
+                -- CONSUMIDOR_FINAL - misma regla que esMayoristaConListaPropia() en
+                -- venta.constants.ts, usada en addmod-ventas/listado-ventas/notas-venta/
+                -- vista-previa/factura.service) el precio persistido es NETO y el IVA se
+                -- agrega aparte al facturar, hay que sumarlo acá para mostrar el bruto real.
+                -- OJO: replica los IDs 2/1 a mano porque no hay forma de reusar la función
+                -- TS desde SQL - si esa regla cambia en el front, actualizar también acá.
+                IF(v.idProceso = 3,
+                    (IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idListaPrecio IS NOT NULL AND v.idListaPrecio <> 1, IFNULL(vf.iva, 0), 0)) * -1,
+                    IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idListaPrecio IS NOT NULL AND v.idListaPrecio <> 1, IFNULL(vf.iva, 0), 0)
+                ) AS venta,
                 IF(v.idProceso = 3, IFNULL(servicios.total_servicios, 0) * -1, IFNULL(servicios.total_servicios, 0)) AS servicio,
                 -- Suma el importeDescuento REAL persistido por ítem (productos + servicios),
                 -- no un recálculo de venta.descuento% asumiendo que el descuento nunca toca
@@ -516,6 +529,7 @@ class VentasRepository{
         venta.nroRelacionado = parseFloat(row['nroRelacionado']);
         venta.tipoRelacionado = row['tipoRelacionado'];
         venta.estado = row['estado'];
+        venta.observacion = row['observacion'];
         venta.impaga = row['impaga'];
         venta.entregado = parseFloat(row['entregado'] ?? 0);
         venta.deuda = parseFloat(row['deuda']) ?? 0;
@@ -586,10 +600,10 @@ class VentasRepository{
             await connection.beginTransaction();
 
             //Insertamos la venta
-            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf) " +
-                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?) ";
+            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion) " +
+                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?) ";
 
-            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste];
+            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null];
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
             venta.id =  resultado.insertId;
 
@@ -870,6 +884,46 @@ class VentasRepository{
             descripcion: `Saldo a favor NC #${notaCredito.id}`,
             usuario
         });
+    }
+
+    // Dar de baja Presupuesto/Pedido/Nota de Empaque (decisión 19/07/2026). A
+    // diferencia de DarBajaRecibo (cuentasRepository.ts), acá no hay ninguna
+    // cascada que revertir: estos procesos nunca generan movimiento de fondo,
+    // recibo, ni descuento de stock (eso solo pasa al facturarse/finalizar una
+    // Cotización) - por eso alcanza con marcar fechaBaja. El cálculo de
+    // "disponible" de Nota de Empaque (productosRepository.ObtenerStockDisponiblePorProducto)
+    // ya filtra por fechaBaja IS NULL, así que un Pedido dado de baja deja de
+    // reservar stock automáticamente, sin tocar nada más.
+    async DarBajaVenta(idVenta: number, motivo: string): Promise<void> {
+        const motivoLimpio = (motivo || '').trim();
+        if (!motivoLimpio) {
+            throw { status: 400, message: 'El motivo es obligatorio para dar de baja.' };
+        }
+
+        const connection = await db.getConnection();
+        try {
+            const [[venta]]: any = await connection.query(
+                "SELECT idProceso, estado, fechaBaja FROM ventas WHERE id = ?",
+                [idVenta]
+            );
+
+            if (!venta) throw { status: 404, message: 'La venta no existe.' };
+            if (venta.fechaBaja) throw { status: 400, message: 'Ya fue dada de baja.' };
+
+            if (![IdProceso.PRESUPUESTO, IdProceso.PEDIDO, IdProceso.NOTA_EMPAQUE].includes(venta.idProceso)) {
+                throw { status: 400, message: 'Solo se puede dar de baja Presupuestos, Pedidos o Notas de Empaque.' };
+            }
+            if (!puedeDarseDeBaja(venta.idProceso, venta.estado)) {
+                throw { status: 400, message: `No se puede dar de baja: el estado actual ("${venta.estado}") ya no es abierto (fue usado o cerrado por otro documento).` };
+            }
+
+            await connection.query(
+                "UPDATE ventas SET fechaBaja = NOW(), observacion = ? WHERE id = ?",
+                [motivoLimpio, idVenta]
+            );
+        } finally {
+            connection.release();
+        }
     }
 
     async Modificar(venta:Venta): Promise<string>{
@@ -1423,10 +1477,11 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " tipoRelacionado = ?, " +
                          " estado = ?, " +
                          " impaga = ?, " +
-                         " ajusteTransf = ? " +
+                         " ajusteTransf = ?, " +
+                         " observacion = ? " +
                          " WHERE id = ? ";
 
-        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.id];
+        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {

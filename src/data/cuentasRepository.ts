@@ -2025,7 +2025,10 @@ async function ObtenerQueryVentasCliente(filtros:any,esTotal:boolean,esReporte:b
                             -v.total AS movimiento,
                             'A FAVOR',
                             CONCAT(v.tipoRelacionado, ' # ', v.nroRelacionado),
-                            '' AS observaciones,
+                            -- Motivo de una NC "sin productos" (Adelanto de producción/Saldo
+                            -- orden de compra, ver observacion en ventas). Vacío para el resto
+                            -- de las notas/comprobantes A FAVOR, que no cargan este campo.
+                            COALESCE(v.observacion, '') AS observaciones,
                             3 AS orden_tipo
                         FROM ventas v
                         LEFT JOIN ventas_factura vf ON vf.idVenta = v.id

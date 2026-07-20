@@ -96,6 +96,21 @@ router.put('/modificar', async (req:Request, res:Response) => {
     }
 });
 
+router.put('/dar-baja', async (req:Request, res:Response) => {
+    try{
+        res.json(await VentasRepo.DarBajaVenta(req.body.idVenta, req.body.motivo));
+
+    } catch(error:any){
+        let msg = "No se pudo dar de baja.";
+        logger.error(msg + " " + error.message);
+        // Mismo patrón que dar-baja-recibo (cuentasCorrientesRoute.ts): DarBajaVenta
+        // tira { status, message } para los bloqueos de negocio (proceso no válido,
+        // estado no abierto, motivo faltante), así el front puede mostrar el motivo
+        // específico en vez de un 500 genérico.
+        res.status(error.status || 500).send(error.message || msg);
+    }
+});
+
 router.post('/guardar-factura', async (req:Request, res:Response) => {
     try{ 
         res.json(await VentasRepo.GuardarFactura(req.body));
