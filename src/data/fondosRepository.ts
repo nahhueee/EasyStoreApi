@@ -845,12 +845,24 @@ class FondosRepository{
 
             const manualesWhere = `WHERE mf.idFondo = ? AND mf.idCaja = ? AND ${manualesCond.join(" AND ")}`;
 
+            // Se separan "ventas" (cobros reales) de "otros" (manuales/ajustes/etc. con
+            // empresa asignada) en vez de sumarlos directo a un único total: mezclados,
+            // un ajuste o egreso manual grande hace que el número por empresa no se
+            // entienda (parece "ventas negativas" cuando en realidad es un egreso de
+            // caja). Con el desglose, cada columna reconcilia con los totales ya
+            // visibles arriba ("Ventas: X" / "Otros movimientos: Y" del desglose por
+            // método) - ver conversación jul-2026 sobre este mismo confusión con SUCEDE SRL.
             const [rows]: any = await connection.query(`
-                SELECT empresa, SUM(total) AS total
+                SELECT
+                    empresa,
+                    SUM(ventas) AS ventas,
+                    SUM(otros)  AS otros,
+                    SUM(ventas) + SUM(otros) AS total
                 FROM (
                     SELECT
                         emp.razonSocial AS empresa,
-                        SUM(vp.monto)   AS total
+                        SUM(vp.monto)   AS ventas,
+                        0               AS otros
                     FROM ventas_pagos vp
                     JOIN metodos_pago mp     ON mp.id = vp.idMetodo AND mp.idFondo = ?
                     JOIN ventas v            ON v.id  = vp.idVenta  AND v.idCaja  = ?
@@ -864,7 +876,8 @@ class FondosRepository{
 
                     SELECT
                         emp.razonSocial AS empresa,
-                        SUM(CASE WHEN mf.tipo = 'INGRESO' THEN mf.monto ELSE -mf.monto END) AS total
+                        0 AS ventas,
+                        SUM(CASE WHEN mf.tipo = 'INGRESO' THEN mf.monto ELSE -mf.monto END) AS otros
                     FROM movimientos_fondos mf
                     JOIN empresas emp ON emp.id = mf.idEmpresa
                     ${manualesWhere}
@@ -876,6 +889,8 @@ class FondosRepository{
 
             return rows.map((r: any) => ({
                 empresa: r.empresa,
+                ventas:  parseFloat(r.ventas),
+                otros:   parseFloat(r.otros),
                 total:   parseFloat(r.total)
             }));
 
