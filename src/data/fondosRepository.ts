@@ -521,6 +521,15 @@ class FondosRepository{
             INNER JOIN ventas v        ON v.id  = mf.idReferencia
             INNER JOIN ventas_pagos vp ON vp.idVenta = v.id
             INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo
+                                       AND mp.idFondo = mf.idFondo
+            -- mp.idFondo = mf.idFondo ata cada pago al movimiento de fondo que
+            -- efectivamente lo generó. Sin esto, una venta pagada con 2+ métodos
+            -- generaba 2+ filas en movimientos_fondos, y cada una volvía a traer
+            -- TODOS los ventas_pagos de la venta (join solo por vp.idVenta = v.id) -
+            -- el pago que sí caía en este fondo se contaba una vez por cada método
+            -- de la venta, aunque los otros métodos fueran de otro fondo. Bug real:
+            -- ventas #114/#64, detectado jul-2026 (Ventas + Otros movimientos no
+            -- cerraba con el Neto Período del fondo).
             INNER JOIN fondos f        ON f.id  = mp.idFondo
             LEFT  JOIN valores_acreditar va ON va.idVentaPago = vp.id
             ${where}
