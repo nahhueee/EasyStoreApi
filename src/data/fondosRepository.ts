@@ -479,49 +479,67 @@ class FondosRepository{
         const connection = await db.getConnection();
         try {
             // ---- query ventas ----
-            const condiciones: string[] = ['mf.origen = \'VENTA\'', 'mf.tipo = \'INGRESO\''];
+            // Se ancla en "fondos" (LEFT JOIN hacia el resto), no en los movimientos de
+            // venta: antes el FROM arrancaba en movimientos_fondos con origen='VENTA',
+            // así que un fondo que solo recibe plata por acreditación de cheque/tarjeta
+            // (origen='ACREDITACION_VALOR', no 'VENTA') o por movimientos manuales
+            // quedaba con 0 filas acá, y el frontend ocultaba TODA la sección "Desglose
+            // por método" (incluido "Otros movimientos", que sí tenía datos). Bug real:
+            // fondo Galicia, detectado jul-2026. Los filtros de período/caja/usuario se
+            // mueven al ON del join con movimientos_fondos (no al WHERE): si quedaran en
+            // el WHERE, con LEFT JOIN anularían la fila del fondo entero cuando no hay
+            // ningún movimiento de venta que matchee.
+            const condMovs: string[] = [];
             const params: any[] = [];
 
             if (filtros.idCaja) {
-            condiciones.push('mf.idCaja = ?');
-            params.push(filtros.idCaja);
-            }
-            if (filtros.idFondo) {
-            condiciones.push('f.id = ?');
-            params.push(filtros.idFondo);
+                condMovs.push('mf.idCaja = ?');
+                params.push(filtros.idCaja);
             }
             if (filtros.fechaDesde) {
-            condiciones.push('DATE(mf.fecha) >= ?');
-            params.push(filtros.fechaDesde);
+                condMovs.push('DATE(mf.fecha) >= ?');
+                params.push(filtros.fechaDesde);
             }
             if (filtros.fechaHasta) {
-            condiciones.push('DATE(mf.fecha) <= ?');
-            params.push(filtros.fechaHasta);
+                condMovs.push('DATE(mf.fecha) <= ?');
+                params.push(filtros.fechaHasta);
             }
             if (filtros.usuario) {
-            condiciones.push('mf.usuario = ?');
-            params.push(filtros.usuario);
+                condMovs.push('mf.usuario = ?');
+                params.push(filtros.usuario);
             }
 
-            const where = `WHERE ${condiciones.join(' AND ')}`;
+            const condMovsWhere = condMovs.length ? `AND ${condMovs.join(' AND ')}` : '';
+
+            // f.id = ? sigue en el WHERE: aplica sobre la tabla ancla (fondos), no se ve
+            // afectado por el LEFT JOIN.
+            const condFondo: string[] = [];
+            if (filtros.idFondo) {
+                condFondo.push('f.id = ?');
+                params.push(filtros.idFondo);
+            }
+            const whereFondo = condFondo.length ? `WHERE ${condFondo.join(' AND ')}` : '';
 
             const [rows]: any = await connection.query(`
             SELECT
-                f.id                                                               AS idFondo,
-                f.nombre                                                           AS fondo,
+                f.id                                                                        AS idFondo,
+                f.nombre                                                                    AS fondo,
                 f.tipo,
                 f.icono,
-                SUM(CASE WHEN mp.tipo = 'CREDITO'       THEN vp.monto ELSE 0 END) AS total_credito,
-                SUM(CASE WHEN mp.tipo = 'DEBITO'        THEN vp.monto ELSE 0 END) AS total_debito,
-                SUM(CASE WHEN mp.tipo = 'TRANSFERENCIA' THEN vp.monto ELSE 0 END) AS total_transferencia,
-                SUM(CASE WHEN mp.tipo = 'DIGITAL'       THEN vp.monto ELSE 0 END) AS total_digital,
-                SUM(CASE WHEN mp.tipo = 'EFECTIVO'      THEN vp.monto ELSE 0 END) AS total_efectivo,
-                SUM(vp.monto)                                                      AS total_general
-            FROM movimientos_fondos mf
-            INNER JOIN ventas v        ON v.id  = mf.idReferencia
-            INNER JOIN ventas_pagos vp ON vp.idVenta = v.id
-            INNER JOIN metodos_pago mp ON mp.id = vp.idMetodo
-                                       AND mp.idFondo = mf.idFondo
+                COALESCE(SUM(CASE WHEN mp.tipo = 'CREDITO'       THEN vp.monto ELSE 0 END), 0) AS total_credito,
+                COALESCE(SUM(CASE WHEN mp.tipo = 'DEBITO'        THEN vp.monto ELSE 0 END), 0) AS total_debito,
+                COALESCE(SUM(CASE WHEN mp.tipo = 'TRANSFERENCIA' THEN vp.monto ELSE 0 END), 0) AS total_transferencia,
+                COALESCE(SUM(CASE WHEN mp.tipo = 'DIGITAL'       THEN vp.monto ELSE 0 END), 0) AS total_digital,
+                COALESCE(SUM(CASE WHEN mp.tipo = 'EFECTIVO'      THEN vp.monto ELSE 0 END), 0) AS total_efectivo,
+                COALESCE(SUM(vp.monto), 0)                                                     AS total_general
+            FROM fondos f
+            LEFT JOIN movimientos_fondos mf
+                ON mf.idFondo = f.id
+                AND mf.origen = 'VENTA'
+                AND mf.tipo   = 'INGRESO'
+                ${condMovsWhere}
+            LEFT JOIN ventas v         ON v.id = mf.idReferencia
+            LEFT JOIN ventas_pagos vp  ON vp.idVenta = v.id
             -- mp.idFondo = mf.idFondo ata cada pago al movimiento de fondo que
             -- efectivamente lo generó. Sin esto, una venta pagada con 2+ métodos
             -- generaba 2+ filas en movimientos_fondos, y cada una volvía a traer
@@ -530,10 +548,10 @@ class FondosRepository{
             -- de la venta, aunque los otros métodos fueran de otro fondo. Bug real:
             -- ventas #114/#64, detectado jul-2026 (Ventas + Otros movimientos no
             -- cerraba con el Neto Período del fondo).
-            INNER JOIN fondos f        ON f.id  = mp.idFondo
-            LEFT  JOIN valores_acreditar va ON va.idVentaPago = vp.id
-            ${where}
-            AND (va.id IS NULL OR va.estado != 'PENDIENTE')
+            LEFT JOIN metodos_pago mp  ON mp.id = vp.idMetodo AND mp.idFondo = mf.idFondo
+            LEFT JOIN valores_acreditar va ON va.idVentaPago = vp.id
+            ${whereFondo}
+            ${whereFondo ? 'AND' : 'WHERE'} (va.id IS NULL OR va.estado != 'PENDIENTE')
             GROUP BY f.id, f.nombre, f.tipo, f.icono
             ORDER BY f.tipo, total_general DESC
             `, params);
