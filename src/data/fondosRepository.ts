@@ -687,12 +687,18 @@ class FondosRepository{
         monto: number;
         descripcion?: string;
         usuario?: string;
+        // Empresa a la que se le atribuye esta transferencia, para el arqueo por
+        // empresa (jul-2026). A diferencia de ventas/cobros, una transferencia entre
+        // fondos no tiene una empresa "objetiva" - por eso se pide en el formulario
+        // en vez de derivarla. Opcional: si no se manda, queda sin empresa asignada
+        // (mismo criterio que el resto de los orígenes que todavía no la tienen).
+        idEmpresa?: number | null;
         }) {
 
         const {
             idCajaOrigen, idFondoOrigen,
             idCajaDestino, idFondoDestino,
-            monto, descripcion, usuario
+            monto, descripcion, usuario, idEmpresa
         } = datos;
 
         // Validaciones previas a la transacción
@@ -743,17 +749,17 @@ class FondosRepository{
             // 2. Egreso en origen
             await connection.query(
             `INSERT INTO movimientos_fondos
-                (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, fecha, usuario)
-                VALUES (?, ?, 'EGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?)`,
-            [idCajaOrigen, idFondoOrigen, idTransferencia, monto, descripcion ?? '', fecha, usuario ?? '']
+                (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, fecha, usuario, idEmpresa)
+                VALUES (?, ?, 'EGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?, ?)`,
+            [idCajaOrigen, idFondoOrigen, idTransferencia, monto, descripcion ?? '', fecha, usuario ?? '', idEmpresa ?? null]
             );
 
             // 3. Ingreso en destino
             await connection.query(
             `INSERT INTO movimientos_fondos
-                (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, fecha, usuario)
-                VALUES (?, ?, 'INGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?)`,
-            [idCajaDestino, idFondoDestino, idTransferencia, monto, descripcion ?? '', fecha, usuario ?? '']
+                (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, fecha, usuario, idEmpresa)
+                VALUES (?, ?, 'INGRESO', 'TRANSFERENCIA', ?, ?, ?, ?, ?, ?)`,
+            [idCajaDestino, idFondoDestino, idTransferencia, monto, descripcion ?? '', fecha, usuario ?? '', idEmpresa ?? null]
             );
 
             await connection.commit();
@@ -850,15 +856,17 @@ class FondosRepository{
 
             const ventasWhere = `WHERE ${ventasCond.join(" AND ")}`;
 
-            // bloque 2: manuales (params: idFondo, idCaja + fechas opcionales)
-            // Antes filtraba solo origen IN ('INGRESO_MANUAL','EGRESO_MANUAL'): dejaba
-            // afuera cualquier AJUSTE (u otro origen no-VENTA) con idEmpresa asignado.
-            // El bloque de ventas de acá lee de ventas_pagos (no de movimientos_fondos),
-            // así que no hay riesgo de duplicar nada al sacar el filtro de origen - alcanza
-            // con "tiene empresa asignada" (mismo criterio que ObtenerDetalleMetodosPago).
+            // bloque 2: "otros" (manuales/ajustes/etc. con empresa asignada)
+            // IMPORTANTE (jul-2026): ahora que VENTA/ACREDITACION_VALOR/NOTA_CREDITO
+            // también graban idEmpresa (ver RegistrarMovimientosVenta, AcreditarValor),
+            // hay que excluirlos acá explícitamente - si no, se duplicarían: una vez
+            // por el bloque de ventas (que lee de ventas_pagos) y otra vez acá (que lee
+            // de movimientos_fondos). Antes alcanzaba con "idEmpresa IS NOT NULL" a
+            // secas porque esos orígenes nunca lo tenían asignado.
             const manualesParams: any[] = [filtros.idFondo, filtros.idCaja];
             const manualesCond: string[] = [
-                "mf.idEmpresa IS NOT NULL"
+                "mf.idEmpresa IS NOT NULL",
+                "mf.origen NOT IN ('VENTA','ACREDITACION_VALOR','NOTA_CREDITO')"
             ];
 
             if (filtros.fechaDesde) {

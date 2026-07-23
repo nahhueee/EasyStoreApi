@@ -88,8 +88,12 @@ class ValoresRepository {
             await connection.beginTransaction();
 
             // 1. Leer el valor y validar estado
+            // idEmpresa se trae acá para poder taggear los 2 movimientos de fondo de
+            // abajo (antes no se pasaba, y quedaban sin empresa asignada aunque el
+            // dato ya estaba guardado en esta misma fila desde que se creó el valor -
+            // ver arqueo por empresa, jul-2026).
             const [[valor]]: any = await connection.query(
-                `SELECT id, estado, monto, tipo, idFondoDestino
+                `SELECT id, estado, monto, tipo, idFondoDestino, idEmpresa
                  FROM valores_acreditar WHERE id = ? FOR UPDATE`,
                 [idValor]
             );
@@ -116,16 +120,16 @@ class ValoresRepository {
             // 3. EGRESO de "Valores a Acreditar"
             await connection.query(`
                 INSERT INTO movimientos_fondos
-                    (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario, observaciones)
-                VALUES (?, ?, 'EGRESO', 'ACREDITACION_VALOR', ?, ?, ?, ?, ?)
-            `, [idCaja, fondoVA.id, idValor, valor.monto, desc, usuario, observaciones ?? null]);
+                    (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario, observaciones, idEmpresa)
+                VALUES (?, ?, 'EGRESO', 'ACREDITACION_VALOR', ?, ?, ?, ?, ?, ?)
+            `, [idCaja, fondoVA.id, idValor, valor.monto, desc, usuario, observaciones ?? null, valor.idEmpresa]);
 
             // 4. INGRESO en el fondo destino real
             await connection.query(`
                 INSERT INTO movimientos_fondos
-                    (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario, observaciones)
-                VALUES (?, ?, 'INGRESO', 'ACREDITACION_VALOR', ?, ?, ?, ?, ?)
-            `, [idCaja, idFondoDestino, idValor, valor.monto, desc, usuario, observaciones ?? null]);
+                    (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario, observaciones, idEmpresa)
+                VALUES (?, ?, 'INGRESO', 'ACREDITACION_VALOR', ?, ?, ?, ?, ?, ?)
+            `, [idCaja, idFondoDestino, idValor, valor.monto, desc, usuario, observaciones ?? null, valor.idEmpresa]);
 
             // 5. Marcar como ACREDITADO
             await connection.query(`
@@ -194,7 +198,7 @@ export async function RechazarValorConn(connection, params: {
 
     // Validar estado
     const [[valor]]: any = await connection.query(
-        `SELECT id, estado, monto, tipo FROM valores_acreditar WHERE id = ? FOR UPDATE`,
+        `SELECT id, estado, monto, tipo, idEmpresa FROM valores_acreditar WHERE id = ? FOR UPDATE`,
         [idValor]
     );
 
@@ -212,10 +216,10 @@ export async function RechazarValorConn(connection, params: {
     // EGRESO — la plata sale de VA sin ingresar a ningún fondo real
     await connection.query(`
         INSERT INTO movimientos_fondos
-            (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario, observaciones)
-        VALUES (?, ?, 'EGRESO', 'ACREDITACION_VALOR', ?, ?, ?, ?, ?)
+            (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario, observaciones, idEmpresa)
+        VALUES (?, ?, 'EGRESO', 'ACREDITACION_VALOR', ?, ?, ?, ?, ?, ?)
     `, [idCaja, fondoVA.id, idValor, valor.monto,
-        `Rechazo valor #${idValor} (${valor.tipo})`, usuario, observaciones]);
+        `Rechazo valor #${idValor} (${valor.tipo})`, usuario, observaciones, valor.idEmpresa]);
 
     // Marcar RECHAZADO
     await connection.query(`

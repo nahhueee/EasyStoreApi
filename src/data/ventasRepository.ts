@@ -787,7 +787,8 @@ class VentasRepository{
                     idReferencia: venta.id,
                     monto: pago.monto,
                     descripcion: `Venta #${venta.id} - ${tipo} pendiente`,
-                    usuario
+                    usuario,
+                    idEmpresa: venta.idEmpresa
                 });
 
                 // Registrar el valor en tránsito
@@ -817,7 +818,8 @@ class VentasRepository{
                     idReferencia: venta.id,
                     monto: pago.monto,
                     descripcion: `Venta #${venta.id} - ${pago.metodo}`,
-                    usuario
+                    usuario,
+                    idEmpresa: venta.idEmpresa
                 });
             }
         }
@@ -901,7 +903,8 @@ class VentasRepository{
             idReferencia: notaCredito.id,
             monto: notaCredito.total,
             descripcion: `Saldo a favor NC #${notaCredito.id}`,
-            usuario
+            usuario,
+            idEmpresa: notaCredito.idEmpresa
         });
     }
 
@@ -1611,10 +1614,14 @@ export async function InsertRetencion(
 
 async function InsertMovimientoFondo(connection, movimiento): Promise<void> {
     try {
+        // idEmpresa se agrega acá (jul-2026): antes esta query no lo insertaba, así
+        // que cualquier caller que pasara idEmpresa (venta.idEmpresa) lo perdía en
+        // silencio - por eso ninguna venta quedaba con empresa asignada en
+        // movimientos_fondos, aunque el dato estaba disponible en `venta`.
         const consulta = `
             INSERT INTO movimientos_fondos
-            (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (idCaja, idFondo, tipo, origen, idReferencia, monto, descripcion, usuario, idEmpresa)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         const parametros = [
             movimiento.idCaja,
@@ -1624,7 +1631,8 @@ async function InsertMovimientoFondo(connection, movimiento): Promise<void> {
             movimiento.idReferencia ?? null,
             movimiento.monto,
             movimiento.descripcion ?? null,
-            movimiento.usuario ?? null
+            movimiento.usuario ?? null,
+            movimiento.idEmpresa ?? null
         ];
         await connection.query(consulta, parametros);
     } catch (error) {

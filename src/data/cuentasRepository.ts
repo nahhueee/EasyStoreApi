@@ -561,7 +561,8 @@ class CuentasRepository{
                     idReferencia: null,
                     monto: aplicadoInicial,
                     descripcion: `Cancelación saldo inicial cliente ${data.idCliente}`,
-                    usuario: usuarioActivo
+                    usuario: usuarioActivo,
+                    idEmpresa: data.idEmpresa
                 });
 
                 // Entra al fondo real / Valores a Acreditar (porción cheque) y al fondo
@@ -579,7 +580,8 @@ class CuentasRepository{
                         descripcion: esValorAcreditar
                             ? `Cobro saldo inicial cliente ${data.idCliente} - ${tipo} pendiente`
                             : `Cobro saldo inicial cliente ${data.idCliente}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo,
+                        idEmpresa: data.idEmpresa
                     });
                 }
 
@@ -592,7 +594,8 @@ class CuentasRepository{
                         idReferencia: null,
                         monto: retencionInicial,
                         descripcion: `Retención ${data.retencion!.tipo} sufrida - saldo inicial cliente ${data.idCliente}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo,
+                        idEmpresa: data.idEmpresa
                     });
                 }
 
@@ -676,7 +679,8 @@ class CuentasRepository{
                     idReferencia: venta.id,
                     monto: montoAplicado,
                     descripcion: `Cancelación deuda venta #${venta.id}`,
-                    usuario: usuarioActivo
+                    usuario: usuarioActivo,
+                    idEmpresa: data.idEmpresa
                 });
 
                 // Entra al fondo real / Valores a Acreditar (porción cheque) y al fondo
@@ -694,7 +698,8 @@ class CuentasRepository{
                         descripcion: esValorAcreditar
                             ? `Cobro deuda venta #${venta.id} - ${tipo} pendiente`
                             : `Cobro deuda venta #${venta.id}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo,
+                        idEmpresa: data.idEmpresa
                     });
                 }
 
@@ -707,7 +712,8 @@ class CuentasRepository{
                         idReferencia: venta.id,
                         monto: retencionVenta,
                         descripcion: `Retención ${data.retencion!.tipo} sufrida - venta #${venta.id}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo,
+                        idEmpresa: data.idEmpresa
                     });
                 }
 
@@ -763,7 +769,8 @@ class CuentasRepository{
                         descripcion: esValorAcreditar
                             ? `Entrega excedente cliente ${data.idCliente} - ${tipo} pendiente`
                             : `Entrega excedente cliente ${data.idCliente}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo,
+                        idEmpresa: data.idEmpresa
                     });
                 }
 
@@ -776,7 +783,8 @@ class CuentasRepository{
                         idReferencia: idEntrega,
                         monto: retencionExcedente,
                         descripcion: `Retención ${data.retencion!.tipo} sufrida - excedente cliente ${data.idCliente}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo,
+                        idEmpresa: data.idEmpresa
                     });
                 }
 
@@ -791,7 +799,8 @@ class CuentasRepository{
                     idReferencia: idEntrega,
                     monto: montoRestante,
                     descripcion: `Saldo a favor cliente ${data.idCliente}`,
-                    usuario: usuarioActivo
+                    usuario: usuarioActivo,
+                    idEmpresa: data.idEmpresa
                 });
             }
 
@@ -982,7 +991,7 @@ class CuentasRepository{
             // posible: esos métodos siempre generan su fila ancla en ventas_pagos).
             const [valoresRecibo]: any = idsPagos.length
                 ? await connection.query(
-                    `SELECT id, estado, monto, tipo FROM valores_acreditar WHERE idVentaPago IN (${inPagos})`,
+                    `SELECT id, estado, monto, tipo, idEmpresa FROM valores_acreditar WHERE idVentaPago IN (${inPagos})`,
                     idsPagos
                   )
                 : [[]];
@@ -1053,7 +1062,7 @@ class CuentasRepository{
                     idCaja, idFondo: idFondoValores, tipo: 'EGRESO', origen: 'ACREDITACION_VALOR',
                     idReferencia: null, monto: valor.monto,
                     descripcion: `Baja recibo #${idRecibo} - reversión valor #${valor.id} (${valor.tipo})`,
-                    usuario: usuarioActivo
+                    usuario: usuarioActivo, idEmpresa: valor.idEmpresa
                 } as any);
                 await connection.query(`DELETE FROM valores_acreditar WHERE id = ?`, [valor.id]);
             }
@@ -1061,10 +1070,16 @@ class CuentasRepository{
             // --- Reversión de Retención asociada (si la hubo) ---
             const [retencionesRecibo]: any = idsPagos.length
                 ? await connection.query(
-                    `SELECT id, tipo, importe FROM retenciones WHERE idVentaPago IN (${inPagos})`,
+                    `SELECT id, tipo, importe, idVentaPago FROM retenciones WHERE idVentaPago IN (${inPagos})`,
                     idsPagos
                   )
                 : [[]];
+            // Mapa idVentaPago -> idEmpresa (de `pagos`, que ya trae v.idEmpresa vía
+            // ObtenerPagosRecibo) para poder taggear la reversión de retención con la
+            // misma empresa del pago que la generó.
+            const empresaPorVentaPago = new Map<number, number | null>(
+                pagos.map((p: any) => [p.id, p.idEmpresa ?? null])
+            );
             let idFondoRetenciones: number | null = null;
             for (const ret of retencionesRecibo) {
                 if (idFondoRetenciones === null) idFondoRetenciones = await GetIdFondoRetenciones(connection);
@@ -1072,10 +1087,19 @@ class CuentasRepository{
                     idCaja, idFondo: idFondoRetenciones, tipo: 'EGRESO', origen: 'AJUSTE',
                     idReferencia: null, monto: ret.importe,
                     descripcion: `Baja recibo #${idRecibo} - reversión retención ${ret.tipo}`,
-                    usuario: usuarioActivo
+                    usuario: usuarioActivo, idEmpresa: empresaPorVentaPago.get(ret.idVentaPago) ?? null
                 } as any);
                 await connection.query(`DELETE FROM retenciones WHERE id = ?`, [ret.id]);
             }
+
+            // Empresa de la entrega, para taggear las reversiones que no están atadas a
+            // una venta puntual (saldo inicial, saldo a favor, fondo real): se toma del
+            // primer pago con idEmpresa disponible (todos los pagos de una misma entrega
+            // comparten empresa). Si la entrega no generó ningún ventas_pagos (caso
+            // borde: cancelación 100% de saldo inicial, sin ancla ni ventas), queda en
+            // null - no hay de dónde derivarlo de forma confiable, mismo gap que existía
+            // en el insert original (ver EntregaDinero).
+            const idEmpresaEntrega: number | null = pagos.find((p: any) => p.idEmpresa != null)?.idEmpresa ?? null;
 
             if (idEntrega != null) {
                 // ---- Entrega de Dinero: reversión completa ----
@@ -1091,7 +1115,7 @@ class CuentasRepository{
                         idCaja, idFondo: 4, tipo: 'INGRESO', origen: 'AJUSTE',
                         idReferencia: null, monto: cancelacionInicial.monto,
                         descripcion: `Baja recibo #${idRecibo} - reversión cancelación saldo inicial cliente ${recibo.idCliente}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo, idEmpresa: idEmpresaEntrega
                     } as any);
                 }
 
@@ -1105,7 +1129,7 @@ class CuentasRepository{
                         idCaja, idFondo: 4, tipo: 'INGRESO', origen: 'AJUSTE',
                         idReferencia: p.idVenta, monto: p.monto,
                         descripcion: `Baja recibo #${idRecibo} - reversión cancelación deuda venta #${p.idVenta}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo, idEmpresa: p.idEmpresa
                     } as any);
                 }
 
@@ -1119,7 +1143,7 @@ class CuentasRepository{
                         idCaja, idFondo: 5, tipo: 'EGRESO', origen: 'AJUSTE',
                         idReferencia: idEntrega, monto: favorGenerado.monto,
                         descripcion: `Baja recibo #${idRecibo} - reversión saldo a favor generado cliente ${recibo.idCliente}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo, idEmpresa: idEmpresaEntrega
                     } as any);
                 }
 
@@ -1148,7 +1172,7 @@ class CuentasRepository{
                             idCaja, idFondo, tipo: 'EGRESO', origen: 'AJUSTE',
                             idReferencia: idEntrega, monto: montoFondoReal,
                             descripcion: `Baja recibo #${idRecibo} - reversión entrega cliente ${recibo.idCliente}`,
-                            usuario: usuarioActivo
+                            usuario: usuarioActivo, idEmpresa: idEmpresaEntrega
                         } as any);
                     }
                 }
@@ -1166,7 +1190,7 @@ class CuentasRepository{
                         idCaja, idFondo, tipo: 'EGRESO', origen: 'AJUSTE',
                         idReferencia: p.idVenta ?? null, monto: p.monto,
                         descripcion: `Baja recibo #${idRecibo}` + (p.idVenta ? ` - venta #${p.idVenta}` : ''),
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo, idEmpresa: p.idEmpresa
                     } as any);
                 }
             }
@@ -1305,7 +1329,8 @@ class CuentasRepository{
                     idReferencia: entrega.idVenta,
                     monto: montoTotalPago,
                     descripcion: `Cancelación deuda venta #${entrega.idVenta}`,
-                    usuario: usuarioActivo
+                    usuario: usuarioActivo,
+                    idEmpresa: ventaRow?.idEmpresa
                 });
 
                 // Cheque/Crédito: no es plata real todavía, va a "Valores a Acreditar"
@@ -1326,7 +1351,8 @@ class CuentasRepository{
                         idReferencia: entrega.idVenta,
                         monto: element.monto,
                         descripcion: `Cobro deuda venta #${entrega.idVenta} - ${tipo} pendiente`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo,
+                        idEmpresa: ventaRow?.idEmpresa
                     });
 
                     const idValor = await InsertValorAcreditar(connection, {
@@ -1353,7 +1379,8 @@ class CuentasRepository{
                         idReferencia: entrega.idVenta,
                         monto: element.monto,
                         descripcion: `Cobro deuda venta #${entrega.idVenta}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo,
+                        idEmpresa: ventaRow?.idEmpresa
                     });
                 }
 
@@ -1372,7 +1399,8 @@ class CuentasRepository{
                         idReferencia: entrega.idVenta,
                         monto: montoRetencion,
                         descripcion: `Retención ${element.retencion.tipo} sufrida - venta #${entrega.idVenta}`,
-                        usuario: usuarioActivo
+                        usuario: usuarioActivo,
+                        idEmpresa: ventaRow?.idEmpresa
                     });
 
                     await InsertRetencion(connection, idVentaPago, element.retencion, usuarioActivo);
@@ -1404,6 +1432,11 @@ class CuentasRepository{
 
 async function InsertMovimientoFondo(connection, movimiento:MovimientoFondo): Promise<void> {
     try {
+        // idEmpresa se agrega acá (jul-2026): el modelo MovimientoFondo ya tenía el
+        // campo, pero esta query no lo insertaba - cualquier caller que pasara
+        // idEmpresa lo perdía en silencio. Es la causa de que EntregaDinero/
+        // ActualizarPagosVenta quedaran sin empresa asignada en el arqueo por
+        // empresa (ver conversación jul-2026, fondo BBVA).
         const consulta = `
             INSERT INTO movimientos_fondos
             (
@@ -1414,9 +1447,10 @@ async function InsertMovimientoFondo(connection, movimiento:MovimientoFondo): Pr
                 idReferencia,
                 monto,
                 descripcion,
-                usuario
+                usuario,
+                idEmpresa
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const parametros = [
@@ -1427,7 +1461,8 @@ async function InsertMovimientoFondo(connection, movimiento:MovimientoFondo): Pr
             movimiento.idReferencia ?? null,
             movimiento.monto,
             movimiento.descripcion ?? null,
-            movimiento.usuario ?? null
+            movimiento.usuario ?? null,
+            movimiento.idEmpresa ?? null
         ];
 
         await connection.query(consulta, parametros);
@@ -2133,7 +2168,8 @@ async function ObtenerPagosRecibo(connection, idRecibo: number) {
         SELECT
             vp.id, vp.idVenta, vp.idMetodo, vp.monto, vp.idEntrega,
             mp.tipo AS tipoMetodo,
-            v.idTComprobante
+            v.idTComprobante,
+            v.idEmpresa
         FROM ventas_pagos vp
         JOIN metodos_pago mp ON mp.id = vp.idMetodo
         LEFT JOIN ventas v ON v.id = vp.idVenta

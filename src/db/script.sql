@@ -434,6 +434,16 @@ INSERT INTO reglas_comprobante VALUES
 INSERT INTO reglas_comprobante VALUES
 (5, 'MONO', NULL, 11);
 
+-- RI → Exento = Factura A (mismo criterio que RI→RI/Mono/MonoSocial)
+INSERT INTO reglas_comprobante VALUES
+(8, 'RI', 4, 1);
+
+-- Monotributo → Exento = Factura C (explícita; ya cubierta por el fallback
+-- MONO→cualquiera de la regla 5, pero se deja explícita por consistencia
+-- documental con el resto de las condiciones)
+INSERT INTO reglas_comprobante VALUES
+(9, 'MONO', 4, 11);
+
 -- Cotización (todas las empresas, todos los clientes)
 INSERT INTO reglas_comprobante VALUES
 (6, 'RI', NULL, 99),
@@ -569,7 +579,8 @@ INSERT INTO condiciones_iva (id, descripcion) VALUES
 (1, 'IVA Responsable Inscripto'),
 (6, 'Responsable Monotributo'),
 (13, 'Monotributista Social'),
-(15, 'IVA No Alcanzado');
+(15, 'IVA No Alcanzado'),
+(4, 'IVA Sujeto Exento');
 
 INSERT INTO tipos_comprobantes (id, cod_arca, descripcion) VALUES
 (1, 'A', 'FACTURA A'),
