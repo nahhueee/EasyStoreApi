@@ -859,14 +859,22 @@ class FondosRepository{
             // bloque 2: "otros" (manuales/ajustes/etc. con empresa asignada)
             // IMPORTANTE (jul-2026): ahora que VENTA/ACREDITACION_VALOR/NOTA_CREDITO
             // también graban idEmpresa (ver RegistrarMovimientosVenta, AcreditarValor),
-            // hay que excluirlos acá explícitamente - si no, se duplicarían: una vez
-            // por el bloque de ventas (que lee de ventas_pagos) y otra vez acá (que lee
-            // de movimientos_fondos). Antes alcanzaba con "idEmpresa IS NOT NULL" a
-            // secas porque esos orígenes nunca lo tenían asignado.
+            // hay que excluir VENTA y NOTA_CREDITO acá explícitamente - si no, se
+            // duplicarían: una vez por el bloque de ventas (que lee de ventas_pagos)
+            // y otra vez acá (que lee de movimientos_fondos). Antes alcanzaba con
+            // "idEmpresa IS NOT NULL" a secas porque esos orígenes nunca lo tenían asignado.
+            //
+            // ACREDITACION_VALOR NO se excluye: el bloque de ventas cuenta un pago con
+            // cheque/tarjeta según el fondo NOMINAL del método de pago (mp.idFondo), no
+            // según a qué fondo se terminó acreditando (idFondoDestino, elegido recién al
+            // acreditar - ver AcreditarValor). Cuando ambos difieren, excluir
+            // ACREDITACION_VALOR hacía desaparecer esa plata del desglose por empresa sin
+            // que el bloque de ventas la hubiera contado nunca (caso real: valor #113,
+            // SUCEDE SRL, fondo BBVA - jul-2026).
             const manualesParams: any[] = [filtros.idFondo, filtros.idCaja];
             const manualesCond: string[] = [
                 "mf.idEmpresa IS NOT NULL",
-                "mf.origen NOT IN ('VENTA','ACREDITACION_VALOR','NOTA_CREDITO')"
+                "mf.origen NOT IN ('VENTA','NOTA_CREDITO')"
             ];
 
             if (filtros.fechaDesde) {
