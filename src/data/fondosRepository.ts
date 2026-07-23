@@ -839,42 +839,46 @@ class FondosRepository{
         const connection = await db.getConnection();
         try {
             // bloque 1: ventas (params: idFondo, idCaja + fechas opcionales)
+            // IMPORTANTE (jul-2026): antes este bloque leía ventas_pagos/metodos_pago
+            // y ataba cada pago al fondo NOMINAL del método de pago (mp.idFondo), sin
+            // importar a qué fondo había llegado la plata realmente. Para cheque/
+            // tarjeta eso es incorrecto: la plata real recién entra al acreditar, a
+            // cualquier fondo que se elija en ese momento (idFondoDestino en
+            // AcreditarValor), que puede no coincidir con el nominal del método. Eso
+            // hacía aparecer "ventas" de un fondo que en realidad nunca tuvo ningún
+            // movimiento real (caso detectado: Galicia le atribuía ~$906.000 en
+            // ventas a SUCEDE SRL con Otros movimientos = 0 ese período).
+            // Ahora se ancla en movimientos_fondos con origen='VENTA' (mismo criterio
+            // ya validado en ObtenerDetalleMetodosPago más abajo) - solo cuenta una
+            // venta acá si generó un movimiento real de INGRESO en este fondo exacto.
             const ventasParams: any[] = [filtros.idFondo, filtros.idCaja];
             const ventasCond: string[] = [
-                "v.estado IN ('Finalizada','Facturada')",
-                "v.fechaBaja IS NULL"
+                "mf.origen = 'VENTA'",
+                "mf.tipo = 'INGRESO'",
+                "mf.idEmpresa IS NOT NULL"
             ];
 
             if (filtros.fechaDesde) {
-                ventasCond.push("DATE(v.fecha) >= ?");
+                ventasCond.push("DATE(mf.fecha) >= ?");
                 ventasParams.push(filtros.fechaDesde);
             }
             if (filtros.fechaHasta) {
-                ventasCond.push("DATE(v.fecha) <= ?");
+                ventasCond.push("DATE(mf.fecha) <= ?");
                 ventasParams.push(filtros.fechaHasta);
             }
 
-            const ventasWhere = `WHERE ${ventasCond.join(" AND ")}`;
+            const ventasWhere = `WHERE mf.idFondo = ? AND mf.idCaja = ? AND ${ventasCond.join(" AND ")}`;
 
-            // bloque 2: "otros" (manuales/ajustes/etc. con empresa asignada)
-            // IMPORTANTE (jul-2026): ahora que VENTA/ACREDITACION_VALOR/NOTA_CREDITO
-            // también graban idEmpresa (ver RegistrarMovimientosVenta, AcreditarValor),
-            // hay que excluir VENTA y NOTA_CREDITO acá explícitamente - si no, se
-            // duplicarían: una vez por el bloque de ventas (que lee de ventas_pagos)
-            // y otra vez acá (que lee de movimientos_fondos). Antes alcanzaba con
-            // "idEmpresa IS NOT NULL" a secas porque esos orígenes nunca lo tenían asignado.
-            //
-            // ACREDITACION_VALOR NO se excluye: el bloque de ventas cuenta un pago con
-            // cheque/tarjeta según el fondo NOMINAL del método de pago (mp.idFondo), no
-            // según a qué fondo se terminó acreditando (idFondoDestino, elegido recién al
-            // acreditar - ver AcreditarValor). Cuando ambos difieren, excluir
-            // ACREDITACION_VALOR hacía desaparecer esa plata del desglose por empresa sin
-            // que el bloque de ventas la hubiera contado nunca (caso real: valor #113,
-            // SUCEDE SRL, fondo BBVA - jul-2026).
+            // bloque 2: "otros" (todo lo demás con empresa asignada: ajustes,
+            // transferencias, cobros CC, acreditación de valores, notas de crédito...)
+            // Solo se excluye 'VENTA' porque ya se cuenta en el bloque de arriba -
+            // ACREDITACION_VALOR y NOTA_CREDITO no son duplicados de nada acá (ver
+            // comentario del bloque 1: ya no se derivan de ventas_pagos), así que
+            // entran directo en "otros".
             const manualesParams: any[] = [filtros.idFondo, filtros.idCaja];
             const manualesCond: string[] = [
                 "mf.idEmpresa IS NOT NULL",
-                "mf.origen NOT IN ('VENTA','NOTA_CREDITO')"
+                "mf.origen != 'VENTA'"
             ];
 
             if (filtros.fechaDesde) {
@@ -904,16 +908,12 @@ class FondosRepository{
                 FROM (
                     SELECT
                         emp.razonSocial AS empresa,
-                        SUM(vp.monto)   AS ventas,
+                        SUM(mf.monto)   AS ventas,
                         0               AS otros
-                    FROM ventas_pagos vp
-                    JOIN metodos_pago mp     ON mp.id = vp.idMetodo AND mp.idFondo = ?
-                    JOIN ventas v            ON v.id  = vp.idVenta  AND v.idCaja  = ?
-                    JOIN empresas emp        ON emp.id = mp.idEmpresa
-                    LEFT JOIN valores_acreditar va ON va.idVentaPago = vp.id
+                    FROM movimientos_fondos mf
+                    JOIN empresas emp ON emp.id = mf.idEmpresa
                     ${ventasWhere}
-                    AND (va.id IS NULL OR va.estado != 'PENDIENTE')
-                    GROUP BY mp.idEmpresa, emp.razonSocial
+                    GROUP BY mf.idEmpresa, emp.razonSocial
 
                     UNION ALL
 
