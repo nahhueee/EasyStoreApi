@@ -1984,7 +1984,11 @@ async function ObtenerQueryVentasCliente(filtros:any,esTotal:boolean,esReporte:b
                             tp.descripcion AS proceso,
                             CONCAT(DATE(v.fecha), ' ', TIME_FORMAT(v.hora, '%H:%i:%s')) AS fecha,
                             CASE
-                                WHEN v.idTComprobante NOT IN (99, 100) THEN
+                                -- 99 = Sin Comprobante, 100 = NC X, 101 = ND X (nota-debito-x.component.ts,
+                                -- interna, no pasa por AFIP/ARCA) - ninguna de las tres genera fila en
+                                -- ventas_factura, por eso vf.ticket es NULL y sin este caso especial el
+                                -- N° de comprobante quedaba en 0000-00000000 (mismo fix que NC X).
+                                WHEN v.idTComprobante NOT IN (99, 100, 101) THEN
                                     CONCAT(
                                         tc.descripcion, ' ',
                                         LPAD(COALESCE(vf.ptoVenta, 0), 4, '0'), '-',
@@ -2006,7 +2010,12 @@ async function ObtenerQueryVentasCliente(filtros:any,esTotal:boolean,esReporte:b
                                 ELSE 'CON DEUDA'
                             END AS estado,
                             '--' AS referencia,
-                            '' AS observaciones,
+                            -- Motivo de una ND X (ej. "CARGO POR DEPÓSITO", ver observacion en
+                            -- ventas) - antes esta columna estaba hardcodeada en '' porque el único
+                            -- consumidor de "observacion" hasta ahora era el bucket NOTAS/A FAVOR
+                            -- (NC), pero la ND X cae en ESTE bucket (no es un idTComprobante IN
+                            -- (3,8,13,100)), así que sin este cambio su motivo no se veía en el extracto.
+                            COALESCE(v.observacion, '') AS observaciones,
                             1 AS orden_tipo
                         FROM ventas v
                         LEFT JOIN ventas_factura vf ON vf.idVenta = v.id

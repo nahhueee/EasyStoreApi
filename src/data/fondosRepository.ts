@@ -475,6 +475,41 @@ class FondosRepository{
         }
     }
 
+    // Para el Excel de movimientos: misma query que ObtenerMovimientos, pero sin
+    // paginado (se arma un filtros propio sin pagina/tamanioPagina para que
+    // ObtenerQueryMovimientos no agregue LIMIT/OFFSET) y exigiendo fechaDesde/
+    // fechaHasta - sin eso, un export sin rango podría traer todo el histórico
+    // de movimientos_fondos y generar un excel impracticable.
+    async ObtenerMovimientosParaExcel(filtros: FiltrosFondos) {
+        if (!filtros.fechaDesde || !filtros.fechaHasta) {
+            throw { status: 400, message: 'Para exportar es necesario seleccionar un rango de fechas.' };
+        }
+
+        const connection = await db.getConnection();
+
+        try {
+            const filtrosSinPaginado = {
+                idCaja:     filtros.idCaja,
+                idFondo:    filtros.idFondo,
+                usuario:    filtros.usuario,
+                fechaDesde: filtros.fechaDesde,
+                fechaHasta: filtros.fechaHasta
+            };
+
+            const { query, params } = await ObtenerQueryMovimientos(filtrosSinPaginado, false);
+            const [rows]: any = await connection.query(query, params);
+
+            return rows.map((mov: any) => ({
+                ...mov,
+                monto: Number(mov.monto)
+            }));
+        } catch (error: any) {
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
     async ObtenerDetalleMetodosPago(filtros: FiltrosFondos): Promise<any[]> {
         const connection = await db.getConnection();
         try {
@@ -1008,6 +1043,7 @@ async function ObtenerQueryMovimientos(
             SELECT
                 mf.id,
                 mf.fecha,
+                c.nombre as caja,
                 f.nombre as fondo,
                 mf.tipo,
                 mf.origen,
@@ -1017,6 +1053,7 @@ async function ObtenerQueryMovimientos(
                 e.razonSocial AS empresa
             FROM movimientos_fondos mf
             INNER JOIN fondos f ON f.id = mf.idFondo
+            LEFT JOIN cajas c ON c.id = mf.idCaja
             LEFT JOIN empresas e ON e.id = mf.idEmpresa
             ${where}
             ORDER BY mf.fecha DESC

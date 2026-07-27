@@ -28,5 +28,10 @@ export enum TipoComprobante {
   NC_C = 13,
 
   COTIZACION = 99,
-  NC_X = 100
+  NC_X = 100,
+  // Nota de Débito interna (no fiscal, no pasa por AFIP/ARCA) - análoga a NC_X
+  // pero genera saldo deudor en vez de saldo a favor (nota-debito-x.component.ts
+  // en el front). Mismo id que TIPO_COMPROBANTE.ND_X en venta.constants.ts - no
+  // cambiar sin migración.
+  ND_X = 101
 }

@@ -434,15 +434,10 @@ INSERT INTO reglas_comprobante VALUES
 INSERT INTO reglas_comprobante VALUES
 (5, 'MONO', NULL, 11);
 
--- RI → Exento = Factura A (mismo criterio que RI→RI/Mono/MonoSocial)
-INSERT INTO reglas_comprobante VALUES
-(8, 'RI', 4, 1);
-
--- Monotributo → Exento = Factura C (explícita; ya cubierta por el fallback
--- MONO→cualquiera de la regla 5, pero se deja explícita por consistencia
--- documental con el resto de las condiciones)
-INSERT INTO reglas_comprobante VALUES
-(9, 'MONO', 4, 11);
+-- Exento NO tiene fila propia a propósito: RI→Exento debe caer en el fallback
+-- (RI, NULL, 6) = Factura B (regla AFIP estándar, corregido jul-2026 - se había
+-- agregado por error una regla RI→Exento=Factura A, revertida). MONO→Exento ya
+-- queda cubierto por el fallback (MONO, NULL, 11) = Factura C.
 
 -- Cotización (todas las empresas, todos los clientes)
 INSERT INTO reglas_comprobante VALUES

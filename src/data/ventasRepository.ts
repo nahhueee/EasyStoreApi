@@ -174,20 +174,24 @@ class VentasRepository{
                 -- OJO: replica los IDs 2/1 a mano porque no hay forma de reusar la función
                 -- TS desde SQL - si esa regla cambia en el front, actualizar también acá.
                 --
-                -- Excepción NC "sin productos" (NC X libre, nota-credito-x.component.ts,
-                -- modo "Sin productos"): no genera ninguna fila en ventas_productos ni
-                -- ventas_servicios, todo el importe vive solo en v.total. Sin este
+                -- Excepción "sin productos" (NC X / ND X libres, nota-credito-x.component.ts
+                -- y nota-debito-x.component.ts): no generan ninguna fila en ventas_productos
+                -- ni ventas_servicios, todo el importe vive solo en v.total. Sin este
                 -- fallback, "Venta" quedaba en $0,00 aunque "Cobrado" sí mostrara el
                 -- importe real - se detecta por ausencia total de ítems (prendas Y
-                -- servicios NULL), no por idTComprobante, porque ese mismo componente
-                -- también permite cargar productos reales (ahí sí hay que mostrar el
-                -- desglose normal).
+                -- servicios NULL), no por idTComprobante, porque la NC X sí permite cargar
+                -- productos reales (ahí sí hay que mostrar el desglose normal). La ND X en
+                -- cambio nunca tiene productos (decisión de diseño, ver nota-debito-x.component.ts),
+                -- así que ahí el fallback aplica siempre que no haya ítems.
                 IF(v.idProceso = 3,
                     IF(prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                         v.total,
                         IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
                     ) * -1,
-                    IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
+                    IF(v.idProceso = 4 AND prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
+                        v.total,
+                        IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
+                    )
                 ) AS venta,
                 IF(v.idProceso = 3, IFNULL(servicios.total_servicios, 0) * -1, IFNULL(servicios.total_servicios, 0)) AS servicio,
                 -- Suma el importeDescuento REAL persistido por ítem (productos + servicios),
@@ -238,11 +242,12 @@ class VentasRepository{
                     LPAD(
                         IFNULL(
                             CASE
-                                -- 99 = Sin Comprobante, 100 = NC "X" (nota-credito-x.component.ts,
-                                -- interna, no pasa por AFIP/ARCA) - ninguna de las dos genera fila
+                                -- 99 = Sin Comprobante, 100 = NC "X", 101 = ND "X"
+                                -- (nota-credito-x.component.ts / nota-debito-x.component.ts,
+                                -- internas, no pasan por AFIP/ARCA) - ninguna genera fila
                                 -- en ventas_factura, por eso vf.ticket es NULL y sin este caso
                                 -- especial el N° de comprobante quedaba en 0.
-                                WHEN v.idTComprobante IN (99, 100) THEN v.nroProceso
+                                WHEN v.idTComprobante IN (99, 100, 101) THEN v.nroProceso
                                 ELSE vf.ticket
                             END,
                             0
@@ -373,10 +378,10 @@ class VentasRepository{
                     LPAD(
                         IFNULL(
                             CASE
-                                -- 99 = Sin Comprobante, 100 = NC "X" (nota-credito-x.component.ts,
-                                -- interna, no pasa por AFIP/ARCA) - mismo fix que en
-                                -- ObtenerReporteVentas/nro_comprobante.
-                                WHEN v.idTComprobante IN (99, 100) THEN v.nroProceso
+                                -- 99 = Sin Comprobante, 100 = NC "X", 101 = ND "X" (nota-credito-x /
+                                -- nota-debito-x.component.ts, internas, no pasan por AFIP/ARCA) -
+                                -- mismo fix que en ObtenerReporteVentas/nro_comprobante.
+                                WHEN v.idTComprobante IN (99, 100, 101) THEN v.nroProceso
                                 ELSE vf.ticket
                             END,
                             0
@@ -534,6 +539,7 @@ class VentasRepository{
         venta.punto = row['punto'];
         venta.fecha = moment(row['fecha']).toDate();
         venta.hora = row['hora'];
+        venta.fechaEntrega = row['fechaEntrega'] ? moment(row['fechaEntrega']).toDate() : undefined;
         venta.idListaPrecio = row['idLista'];
         venta.idEmpresa = row['idEmpresa'];
         venta.empresa = row['empresa'];
@@ -619,10 +625,10 @@ class VentasRepository{
             await connection.beginTransaction();
 
             //Insertamos la venta
-            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion) " +
-                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?) ";
+            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega) " +
+                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?) ";
 
-            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null];
+            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null];
             const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
             venta.id =  resultado.insertId;
 
@@ -676,6 +682,14 @@ class VentasRepository{
                     // directo). Antes esto dependía de un booleano "desdeNotas" pasado a mano
                     // por cada caller, señal redundante con idProceso que podía desincronizarse
                     // (una NC creada desde otro flujo sin pasar el flag no devolvía stock).
+                    // Nota de Débito X (nota-debito-x.component.ts, idProceso=NOTA_DEBITO):
+                    // decisión de diseño (jul-2026) - NUNCA descuenta stock, a diferencia
+                    // de la NC X que sí puede devolver stock real. La ND X solo registra un
+                    // cargo monetario (ej. "CARGO POR DEPÓSITO") y siempre viaja con
+                    // productos=[], así que este loop no se ejecuta para ella - no hace
+                    // falta una rama explícita acá. Si en el futuro aparece un caso real de
+                    // ND con mercadería asociada, es una decisión de negocio aparte (evaluar
+                    // ahí si conviene simetría total con NC, ej. resta de stock).
                     if(venta.idProceso === IdProceso.NOTA_CREDITO){
                         await ProductosRepo.ActualizarInventario(connection, element, "+");
                     }else{
@@ -1103,6 +1117,17 @@ class VentasRepository{
             const [resultado] = await connection.query(consulta, idVenta);
             const row = resultado[0];
 
+            // Ventas sin comprobante fiscal (Sin Comprobante=99, NC X=100, ND X=101) nunca
+            // tienen fila en ventas_factura - el frontend ya evita llamar a este endpoint
+            // para esos casos (factura.service.ts), pero se deja este chequeo defensivo acá
+            // para cualquier otro caller: sin él, row queda undefined y explota con un
+            // TypeError críptico al leer row['fecha'] más abajo, envuelto por
+            // facturacionService.ObtenerQRFactura en el mensaje genérico "No se pudo generar
+            // el QR de la factura." (bug real jul-2026, visto al ver el comprobante de una ND X).
+            if (!row) {
+                throw { status: 400, message: 'Esta venta no tiene comprobante fiscal (no genera código QR).' };
+            }
+
             const objQR = new ObjQR({
                 ver: 1,
                 fecha : moment(row['fecha']).format('YYYY-MM-DD'),
@@ -1184,6 +1209,16 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
 
             filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+        }
+
+        // Filtro por fecha de entrega prometida (solo aplica a Presupuesto/Pedido/
+        // Nota de Empaque - en el resto de los procesos la columna queda NULL, por lo
+        // que este filtro simplemente no matchea nada ahí).
+        if (filtros.fechasEntrega?.length === 2 && filtros.fechasEntrega[0] && filtros.fechasEntrega[1]) {
+            const desdeEntrega = moment.utc(filtros.fechasEntrega[0]).format('YYYY-MM-DD');
+            const hastaEntrega = moment.utc(filtros.fechasEntrega[1]).add(1, 'day').format('YYYY-MM-DD');
+
+            filtro += ` AND v.fechaEntrega >= '${desdeEntrega}' AND v.fechaEntrega < '${hastaEntrega}'`;
         }
 
         if(filtros.idCliente && filtros.idCliente != 0){
@@ -1500,10 +1535,11 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " estado = ?, " +
                          " impaga = ?, " +
                          " ajusteTransf = ?, " +
-                         " observacion = ? " +
+                         " observacion = ?, " +
+                         " fechaEntrega = ? " +
                          " WHERE id = ? ";
 
-        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.id];
+        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {

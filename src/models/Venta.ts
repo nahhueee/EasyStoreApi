@@ -13,6 +13,10 @@ import { Color, TallesProducto } from "./Producto";
     punto?:string;
     fecha?:Date;
     hora?:string;
+    // Fecha de entrega prometida al cliente. Opcional, solo tiene sentido para
+    // Presupuesto/Pedido/Nota de Empaque. Ver migración
+    // 20260725120000_add_fecha_entrega_ventas.
+    fechaEntrega?:Date;
     // idCliente?:number;
     // cliente?:string;
     // clienteRazonSocial?:string;

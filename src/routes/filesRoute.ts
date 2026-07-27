@@ -7,10 +7,12 @@ import { crearExcelVentas } from '../services/excelVentasService';
 import { crearExcelProductos } from '../services/excelProductosService';
 import { crearExcelClientes } from '../services/excelClientesService';
 import { crearExcelCuentas } from '../services/excelCuentasService';
+import { crearExcelMovimientosFondos } from '../services/excelFondosService';
 import { ProductosRepo } from '../data/productosRepository';
 import { VentasRepo } from '../data/ventasRepository';
 import { ClientesRepo } from '../data/clientesRepository';
 import { CuentasRepo } from '../data/cuentasRepository';
+import { FondosRepo } from '../data/fondosRepository';
 
 //#region IMPRESION DE PDFS
 const printer = require('pdf-to-printer');
@@ -127,6 +129,36 @@ router.post('/cuentas-excel', async (req, res) => {
         let msg = "Error al intentar generar el excel de cuentas corrientes.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
+    }
+});
+router.post('/fondos-excel', async (req, res) => {
+    try {
+
+        // req.body.filtros: mismos filtros que usa la grilla (idCaja, idFondo,
+        // usuario, fechaDesde, fechaHasta). req.body.cajaNombre/fondoNombre:
+        // nombres ya resueltos en el frontend, solo para el encabezado del excel
+        // (evita otro round-trip al backend para resolverlos acá).
+        const { filtros, cajaNombre, fondoNombre } = req.body;
+
+        const movimientos = await FondosRepo.ObtenerMovimientosParaExcel(filtros);
+
+        const buffer = await crearExcelMovimientosFondos(movimientos, {
+            fechaDesde: filtros?.fechaDesde,
+            fechaHasta: filtros?.fechaHasta,
+            caja:       cajaNombre,
+            fondo:      fondoNombre,
+            usuario:    filtros?.usuario
+        });
+
+        res.setHeader('Content-Disposition', 'attachment; filename="movimientos-fondos.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch(error:any){
+        const status = error?.status ?? 500;
+        const msg = error?.message ?? "Error al intentar generar el excel de movimientos de fondos.";
+        if (status === 500) logger.error(msg + " " + (error?.message ?? ''));
+        res.status(status).send(msg);
     }
 });
 //#endregion
