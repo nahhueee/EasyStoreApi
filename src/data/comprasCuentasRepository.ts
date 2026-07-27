@@ -210,6 +210,7 @@ class ComprasCuentasRepository {
                 await InsertMovimientoFondo(connection, {
                     idCaja: data.idCaja, idFondo: metodoPago.idFondo, idEmpresa: data.idEmpresa,
                     tipo: 'EGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: idPagoProveedor,
+                    tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
                     monto: m.monto, descripcion: `Pago a proveedor #${data.idProveedor} (pago #${idPagoProveedor})`,
                     usuario
                 });
@@ -230,6 +231,7 @@ class ComprasCuentasRepository {
                 await InsertMovimientoFondo(connection, {
                     idCaja: data.idCaja, idFondo: idFondoCC, idEmpresa: data.idEmpresa,
                     tipo: 'EGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: idPagoProveedor,
+                    tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
                     monto: aplicado, descripcion: `Cancelación saldo inicial proveedor ${data.idProveedor}`, usuario
                 });
                 montoRestante -= aplicado;
@@ -256,6 +258,7 @@ class ComprasCuentasRepository {
                 await InsertMovimientoFondo(connection, {
                     idCaja: data.idCaja, idFondo: idFondoCC, idEmpresa: data.idEmpresa,
                     tipo: 'EGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: compra.id,
+                    tipoReferencia: 'COMPRA',
                     monto: montoAplicado, descripcion: `Cancelación deuda compra #${compra.id}`, usuario
                 });
                 montoRestante -= montoAplicado;
@@ -271,6 +274,7 @@ class ComprasCuentasRepository {
                 await InsertMovimientoFondo(connection, {
                     idCaja: data.idCaja, idFondo: idFondoSaldoFavor, idEmpresa: data.idEmpresa,
                     tipo: 'INGRESO', origen: 'AJUSTE', idReferencia: idPagoProveedor,
+                    tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
                     monto: montoRestante, descripcion: `Excedente a saldo a favor proveedor ${data.idProveedor}`, usuario
                 });
             }
@@ -324,6 +328,7 @@ class ComprasCuentasRepository {
                 await InsertMovimientoFondo(connection, {
                     idCaja: pago.idCaja, idFondo: metodoPago.idFondo, idEmpresa: pago.idEmpresa,
                     tipo: 'INGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: idPagoProveedor,
+                    tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
                     monto: m.monto, descripcion: `Reverso de pago a proveedor #${idPagoProveedor}`, usuario
                 });
             }
@@ -340,6 +345,7 @@ class ComprasCuentasRepository {
                     await InsertMovimientoFondo(connection, {
                         idCaja: pago.idCaja, idFondo: idFondoCC, idEmpresa: pago.idEmpresa,
                         tipo: 'INGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: idPagoProveedor,
+                        tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
                         monto: d.montoAplicado, descripcion: `Reverso cancelación saldo inicial proveedor ${pago.idProveedor}`, usuario
                     });
 
@@ -347,6 +353,7 @@ class ComprasCuentasRepository {
                     await InsertMovimientoFondo(connection, {
                         idCaja: pago.idCaja, idFondo: idFondoSaldoFavor, idEmpresa: pago.idEmpresa,
                         tipo: 'EGRESO', origen: 'AJUSTE', idReferencia: idPagoProveedor,
+                        tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
                         monto: d.montoAplicado, descripcion: `Reverso de excedente a saldo a favor proveedor ${pago.idProveedor}`, usuario
                     });
 
@@ -354,6 +361,7 @@ class ComprasCuentasRepository {
                     await InsertMovimientoFondo(connection, {
                         idCaja: pago.idCaja, idFondo: idFondoCC, idEmpresa: pago.idEmpresa,
                         tipo: 'INGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: d.idCompra,
+                        tipoReferencia: 'COMPRA',
                         monto: d.montoAplicado, descripcion: `Reverso cancelación deuda compra #${d.idCompra}`, usuario
                     });
 
@@ -691,8 +699,8 @@ async function GetFondoVirtual(connection, tipo: string): Promise<number> {
 async function InsertMovimientoFondo(connection, movimiento): Promise<void> {
     const consulta = `
         INSERT INTO movimientos_fondos
-            (idCaja, idFondo, tipo, origen, idEmpresa, idReferencia, monto, descripcion, usuario)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (idCaja, idFondo, tipo, origen, idEmpresa, idReferencia, tipoReferencia, monto, descripcion, usuario)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const parametros = [
         movimiento.idCaja,
@@ -701,6 +709,7 @@ async function InsertMovimientoFondo(connection, movimiento): Promise<void> {
         movimiento.origen,
         movimiento.idEmpresa ?? null,
         movimiento.idReferencia ?? null,
+        movimiento.tipoReferencia ?? null,
         movimiento.monto,
         movimiento.descripcion ?? null,
         movimiento.usuario ?? null

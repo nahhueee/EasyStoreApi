@@ -797,6 +797,7 @@ class CuentasRepository{
                     tipo: 'INGRESO',
                     origen: 'AJUSTE',
                     idReferencia: idEntrega,
+                    tipoReferencia: 'VENTA_ENTREGA',
                     monto: montoRestante,
                     descripcion: `Saldo a favor cliente ${data.idCliente}`,
                     usuario: usuarioActivo,
@@ -1127,7 +1128,7 @@ class CuentasRepository{
                     if (p.idVenta == null) continue;
                     await InsertMovimientoFondo(connection, {
                         idCaja, idFondo: 4, tipo: 'INGRESO', origen: 'AJUSTE',
-                        idReferencia: p.idVenta, monto: p.monto,
+                        idReferencia: p.idVenta, tipoReferencia: 'VENTA', monto: p.monto,
                         descripcion: `Baja recibo #${idRecibo} - reversión cancelación deuda venta #${p.idVenta}`,
                         usuario: usuarioActivo, idEmpresa: p.idEmpresa
                     } as any);
@@ -1141,7 +1142,7 @@ class CuentasRepository{
                 if (Number(favorGenerado.monto) > 0) {
                     await InsertMovimientoFondo(connection, {
                         idCaja, idFondo: 5, tipo: 'EGRESO', origen: 'AJUSTE',
-                        idReferencia: idEntrega, monto: favorGenerado.monto,
+                        idReferencia: idEntrega, tipoReferencia: 'VENTA_ENTREGA', monto: favorGenerado.monto,
                         descripcion: `Baja recibo #${idRecibo} - reversión saldo a favor generado cliente ${recibo.idCliente}`,
                         usuario: usuarioActivo, idEmpresa: idEmpresaEntrega
                     } as any);
@@ -1170,7 +1171,7 @@ class CuentasRepository{
                         const { idFondo } = await GetMetodoPago(connection, entregaRow.idMetodoAplicado);
                         await InsertMovimientoFondo(connection, {
                             idCaja, idFondo, tipo: 'EGRESO', origen: 'AJUSTE',
-                            idReferencia: idEntrega, monto: montoFondoReal,
+                            idReferencia: idEntrega, tipoReferencia: 'VENTA_ENTREGA', monto: montoFondoReal,
                             descripcion: `Baja recibo #${idRecibo} - reversión entrega cliente ${recibo.idCliente}`,
                             usuario: usuarioActivo, idEmpresa: idEmpresaEntrega
                         } as any);
@@ -1188,7 +1189,9 @@ class CuentasRepository{
                     const { idFondo } = await GetMetodoPago(connection, p.idMetodo);
                     await InsertMovimientoFondo(connection, {
                         idCaja, idFondo, tipo: 'EGRESO', origen: 'AJUSTE',
-                        idReferencia: p.idVenta ?? null, monto: p.monto,
+                        idReferencia: p.idVenta ?? null,
+                        tipoReferencia: p.idVenta ? 'VENTA' : null,
+                        monto: p.monto,
                         descripcion: `Baja recibo #${idRecibo}` + (p.idVenta ? ` - venta #${p.idVenta}` : ''),
                         usuario: usuarioActivo, idEmpresa: p.idEmpresa
                     } as any);
@@ -1445,12 +1448,13 @@ async function InsertMovimientoFondo(connection, movimiento:MovimientoFondo): Pr
                 tipo,
                 origen,
                 idReferencia,
+                tipoReferencia,
                 monto,
                 descripcion,
                 usuario,
                 idEmpresa
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const parametros = [
@@ -1459,6 +1463,7 @@ async function InsertMovimientoFondo(connection, movimiento:MovimientoFondo): Pr
             movimiento.tipo,
             movimiento.origen,
             movimiento.idReferencia ?? null,
+            movimiento.tipoReferencia ?? null,
             movimiento.monto,
             movimiento.descripcion ?? null,
             movimiento.usuario ?? null,

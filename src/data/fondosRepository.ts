@@ -477,12 +477,14 @@ class FondosRepository{
 
     // Para el Excel de movimientos: misma query que ObtenerMovimientos, pero sin
     // paginado (se arma un filtros propio sin pagina/tamanioPagina para que
-    // ObtenerQueryMovimientos no agregue LIMIT/OFFSET) y exigiendo fechaDesde/
-    // fechaHasta - sin eso, un export sin rango podría traer todo el histórico
-    // de movimientos_fondos y generar un excel impracticable.
+    // ObtenerQueryMovimientos no agregue LIMIT/OFFSET). Solo se exige fechaHasta:
+    // fechaDesde puede faltar a propósito (período "Todo", sin límite inferior -
+    // no hay movimientos antes del primero real, así que "todo" y "sin cota
+    // inferior" son equivalentes). Lo que sí se bloquea es no tener ningún
+    // período elegido (fechaHasta ausente), que sería un export sin ningún tope.
     async ObtenerMovimientosParaExcel(filtros: FiltrosFondos) {
-        if (!filtros.fechaDesde || !filtros.fechaHasta) {
-            throw { status: 400, message: 'Para exportar es necesario seleccionar un rango de fechas.' };
+        if (!filtros.fechaHasta) {
+            throw { status: 400, message: 'Para exportar es necesario seleccionar un período.' };
         }
 
         const connection = await db.getConnection();
@@ -1050,11 +1052,74 @@ async function ObtenerQueryMovimientos(
                 mf.descripcion,
                 mf.monto,
                 mf.usuario,
-                e.razonSocial AS empresa
+                e.razonSocial AS empresa,
+
+                -- Cliente/Proveedor derivado según origen (+ tipoReferencia para los dos
+                -- orígenes ambiguos, AJUSTE/PAGO_CC_PROVEEDOR - ver migración
+                -- 20260727120000_add_tiporeferencia_movimientos_fondos.js). Si el origen
+                -- no tiene forma de resolverlo (TRANSFERENCIA, manuales sin referencia) o
+                -- es una fila histórica de AJUSTE/PAGO_CC_PROVEEDOR sin tipoReferencia
+                -- poblado, queda NULL a propósito: no se adivina.
+                COALESCE(
+                    cli_venta.nombre,
+                    cli_entrega.nombre,
+                    cli_valor.nombre,
+                    prov_compra.razonSocial,
+                    prov_pago.razonSocial
+                ) AS clienteProveedor
+
             FROM movimientos_fondos mf
             INNER JOIN fondos f ON f.id = mf.idFondo
             LEFT JOIN cajas c ON c.id = mf.idCaja
             LEFT JOIN empresas e ON e.id = mf.idEmpresa
+
+            -- Cliente vía venta puntual: VENTA, NOTA_CREDITO, COBRO_CC (cuando no es la
+            -- cancelación de saldo inicial, que no tiene idReferencia) y AJUSTE cuando
+            -- tipoReferencia = 'VENTA'.
+            LEFT JOIN ventas v_cli
+                ON v_cli.id = mf.idReferencia
+                AND (
+                    mf.origen IN ('VENTA', 'NOTA_CREDITO', 'COBRO_CC')
+                    OR (mf.origen = 'AJUSTE' AND mf.tipoReferencia = 'VENTA')
+                )
+            LEFT JOIN clientes cli_venta ON cli_venta.id = v_cli.idCliente
+
+            -- Cliente vía Entrega de Dinero: INGRESO_MANUAL de excedente (siempre, ese
+            -- origen nunca es ambiguo) y AJUSTE cuando tipoReferencia = 'VENTA_ENTREGA'.
+            LEFT JOIN ventas_entrega ve_cli
+                ON ve_cli.id = mf.idReferencia
+                AND (
+                    mf.origen = 'INGRESO_MANUAL'
+                    OR (mf.origen = 'AJUSTE' AND mf.tipoReferencia = 'VENTA_ENTREGA')
+                )
+            LEFT JOIN clientes cli_entrega ON cli_entrega.id = ve_cli.idCliente
+
+            -- Cliente vía acreditación de valor (cheque/tarjeta): ventas_pagos puede
+            -- colgar de una venta o de un recibo (ancla de Entrega de Dinero) - mismo
+            -- patrón ya resuelto en valoresRepository.ts.
+            LEFT JOIN valores_acreditar va_cli ON va_cli.id = mf.idReferencia AND mf.origen = 'ACREDITACION_VALOR'
+            LEFT JOIN ventas_pagos vp_cli ON vp_cli.id = va_cli.idVentaPago
+            LEFT JOIN ventas v_va_cli ON v_va_cli.id = vp_cli.idVenta
+            LEFT JOIN recibos r_va_cli ON r_va_cli.id = vp_cli.idRecibo
+            LEFT JOIN clientes cli_valor ON cli_valor.id = COALESCE(v_va_cli.idCliente, r_va_cli.idCliente)
+
+            -- Proveedor vía compra puntual: PAGO_PROVEEDOR (siempre) y PAGO_CC_PROVEEDOR/
+            -- AJUSTE cuando tipoReferencia = 'COMPRA'.
+            LEFT JOIN compras cp_prov
+                ON cp_prov.id = mf.idReferencia
+                AND (
+                    mf.origen = 'PAGO_PROVEEDOR'
+                    OR (mf.origen IN ('PAGO_CC_PROVEEDOR', 'AJUSTE') AND mf.tipoReferencia = 'COMPRA')
+                )
+            LEFT JOIN proveedores prov_compra ON prov_compra.id = cp_prov.idProveedor
+
+            -- Proveedor vía header de pago a proveedor: PAGO_CC_PROVEEDOR/AJUSTE cuando
+            -- tipoReferencia = 'COMPRA_PAGO_PROVEEDOR' (pago consolidado, no una compra puntual).
+            LEFT JOIN compras_pagos_proveedor cpp_prov
+                ON cpp_prov.id = mf.idReferencia
+                AND mf.origen IN ('PAGO_CC_PROVEEDOR', 'AJUSTE') AND mf.tipoReferencia = 'COMPRA_PAGO_PROVEEDOR'
+            LEFT JOIN proveedores prov_pago ON prov_pago.id = cpp_prov.idProveedor
+
             ${where}
             ORDER BY mf.fecha DESC
             ${paginado}

@@ -2,11 +2,13 @@ import ExcelJS from 'exceljs';
 import moment from 'moment';
 
 interface MetaExcelFondos {
-  fechaDesde: string;
-  fechaHasta: string;
-  caja?:      string | null;
-  fondo?:     string | null;
-  usuario?:   string | null;
+  // Puede faltar en el período "Todo" con cero movimientos (caso borde: fondo
+  // recién creado sin uso todavía) - ver fallback más abajo.
+  fechaDesde?: string | null;
+  fechaHasta:  string;
+  caja?:       string | null;
+  fondo?:      string | null;
+  usuario?:    string | null;
 }
 
 export async function crearExcelMovimientosFondos(data: any[], meta: MetaExcelFondos) {
@@ -25,8 +27,12 @@ export async function crearExcelMovimientosFondos(data: any[], meta: MetaExcelFo
   tituloCell.font = { bold: true, size: 14 };
   worksheet.mergeCells(1, 1, 1, columnas.length);
 
+  const desdeTexto = meta.fechaDesde
+    ? moment(meta.fechaDesde).format('DD/MM/YYYY')
+    : 'Inicio (sin movimientos)';
+
   const partesPeriodo = [
-    `Período: ${moment(meta.fechaDesde).format('DD/MM/YYYY')} - ${moment(meta.fechaHasta).format('DD/MM/YYYY')}`
+    `Período: ${desdeTexto} - ${moment(meta.fechaHasta).format('DD/MM/YYYY')}`
   ];
   if (meta.caja)    partesPeriodo.push(`Caja: ${meta.caja}`);
   if (meta.fondo)   partesPeriodo.push(`Fondo: ${meta.fondo}`);

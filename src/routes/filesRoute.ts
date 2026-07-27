@@ -142,8 +142,16 @@ router.post('/fondos-excel', async (req, res) => {
 
         const movimientos = await FondosRepo.ObtenerMovimientosParaExcel(filtros);
 
+        // Período "Todo": no viene fechaDesde (sin límite inferior a propósito).
+        // Para que el encabezado del excel muestre una fecha real y no quede en
+        // blanco, se toma el movimiento más antiguo del propio resultado (ya
+        // viene ordenado DESC por fecha, así que es el último elemento) en vez
+        // de disparar una consulta MIN(fecha) aparte.
+        const fechaDesdeMostrar = filtros?.fechaDesde
+            ?? (movimientos.length ? movimientos[movimientos.length - 1].fecha : null);
+
         const buffer = await crearExcelMovimientosFondos(movimientos, {
-            fechaDesde: filtros?.fechaDesde,
+            fechaDesde: fechaDesdeMostrar,
             fechaHasta: filtros?.fechaHasta,
             caja:       cajaNombre,
             fondo:      fondoNombre,
