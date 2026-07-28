@@ -17,7 +17,7 @@ export async function crearExcelMovimientosFondos(data: any[], meta: MetaExcelFo
   const worksheet = workbook.addWorksheet('Movimientos de Fondos');
 
   const columnas = [
-    "Fecha", "Caja", "Fondo", "Tipo", "Origen", "Descripción", "Monto", "Usuario", "Empresa"
+    "Fecha", "Caja", "Fondo", "Tipo", "Origen", "Cliente/Proveedor", "Descripción", "Monto", "Usuario", "Empresa"
   ];
 
   // 2. Encabezado informativo: período y filtros aplicados (fila 1 y 2), para que
@@ -77,6 +77,7 @@ export async function crearExcelMovimientosFondos(data: any[], meta: MetaExcelFo
       mov.fondo || "",
       mov.tipo || "",
       mov.origen || "",
+      mov.clienteProveedor || "",
       mov.descripcion || "",
       monto,
       mov.usuario || "",
@@ -89,7 +90,7 @@ export async function crearExcelMovimientosFondos(data: any[], meta: MetaExcelFo
 
       // Columna Monto (índice 7, "$"): formato moneda es-AR, mismo criterio
       // que excelVentasService.ts para mantener consistencia entre reportes.
-      if (colIndex === 6) cell.numFmt = '$ #,##0.00';
+      if (colIndex === 7) cell.numFmt = '$ #,##0.00';
     });
   });
 
@@ -98,20 +99,20 @@ export async function crearExcelMovimientosFondos(data: any[], meta: MetaExcelFo
   const neto = totalIngresos - totalEgresos;
   const formatoMoneda = '$ #,##0.00';
 
-  worksheet.getCell(filaTotales, 6).value = 'TOTALES';
-  worksheet.getCell(filaTotales, 6).font = { bold: true };
-
-  worksheet.getCell(filaTotales, 7).value = neto;
+  worksheet.getCell(filaTotales, 7).value = 'TOTALES';
   worksheet.getCell(filaTotales, 7).font = { bold: true };
-  worksheet.getCell(filaTotales, 7).numFmt = formatoMoneda;
 
-  worksheet.getCell(filaTotales + 1, 6).value = 'Ingresos';
-  worksheet.getCell(filaTotales + 1, 7).value = totalIngresos;
-  worksheet.getCell(filaTotales + 1, 7).numFmt = formatoMoneda;
+  worksheet.getCell(filaTotales, 8).value = neto;
+  worksheet.getCell(filaTotales, 8).font = { bold: true };
+  worksheet.getCell(filaTotales, 8).numFmt = formatoMoneda;
 
-  worksheet.getCell(filaTotales + 2, 6).value = 'Egresos';
-  worksheet.getCell(filaTotales + 2, 7).value = totalEgresos;
-  worksheet.getCell(filaTotales + 2, 7).numFmt = formatoMoneda;
+  worksheet.getCell(filaTotales + 1, 7).value = 'Ingresos';
+  worksheet.getCell(filaTotales + 1, 8).value = totalIngresos;
+  worksheet.getCell(filaTotales + 1, 8).numFmt = formatoMoneda;
+
+  worksheet.getCell(filaTotales + 2, 7).value = 'Egresos';
+  worksheet.getCell(filaTotales + 2, 8).value = totalEgresos;
+  worksheet.getCell(filaTotales + 2, 8).numFmt = formatoMoneda;
 
   // 7. Ajustar ancho de columnas automáticamente (a partir de la fila de headers,
   // para que el título/período largo no infle todas las columnas)
