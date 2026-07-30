@@ -426,18 +426,22 @@ INSERT INTO reglas_comprobante VALUES
 INSERT INTO reglas_comprobante VALUES
 (3, 'RI', 13, 1);
 
--- RI → cualquiera = Factura B
+-- RI → Consumidor Final = Factura B
+-- Nota: no existe una fila fallback genérica (RI, NULL, X) para Factura B -
+-- cada condición IVA necesita su propia fila explícita (confirmado jul-2026
+-- contra producción). El único NULL real para RI es el de Cotización, más abajo.
 INSERT INTO reglas_comprobante VALUES
-(4, 'RI', NULL, 6);
+(4, 'RI', 5, 6);
+
+-- RI → Exento = Factura B (regla AFIP estándar: A solo aplica si el receptor
+-- también es RI/Mono/MonoSocial). Corregido jul-2026 - se había agregado por
+-- error una regla RI→Exento=Factura A, revertida.
+INSERT INTO reglas_comprobante VALUES
+(8, 'RI', 4, 6);
 
 -- Monotributo → cualquiera = Factura C
 INSERT INTO reglas_comprobante VALUES
 (5, 'MONO', NULL, 11);
-
--- Exento NO tiene fila propia a propósito: RI→Exento debe caer en el fallback
--- (RI, NULL, 6) = Factura B (regla AFIP estándar, corregido jul-2026 - se había
--- agregado por error una regla RI→Exento=Factura A, revertida). MONO→Exento ya
--- queda cubierto por el fallback (MONO, NULL, 11) = Factura C.
 
 -- Cotización (todas las empresas, todos los clientes)
 INSERT INTO reglas_comprobante VALUES

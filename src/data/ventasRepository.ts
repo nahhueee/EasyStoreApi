@@ -183,17 +183,27 @@ class VentasRepository{
                 -- productos reales (ahí sí hay que mostrar el desglose normal). La ND X en
                 -- cambio nunca tiene productos (decisión de diseño, ver nota-debito-x.component.ts),
                 -- así que ahí el fallback aplica siempre que no haya ítems.
+                -- TEMPORAL (jul-2026, sacar cuando el cliente deje de facturar así):
+                -- idServicio 8/12/13/14 son "venta sin stock" cargada como servicio a
+                -- pedido puntual del cliente, no servicios reales. Se reclasifican acá
+                -- a la columna "Venta" solo para el reporte (servicios.total_servicios_venta
+                -- más abajo) - no se toca ventas_servicios ni el catálogo de servicios.
                 IF(v.idProceso = 3,
                     IF(prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                         v.total,
-                        IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
+                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
                     ) * -1,
                     IF(v.idProceso = 4 AND prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                         v.total,
-                        IFNULL(prendas.total_prendas, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
+                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
                     )
                 ) AS venta,
-                IF(v.idProceso = 3, IFNULL(servicios.total_servicios, 0) * -1, IFNULL(servicios.total_servicios, 0)) AS servicio,
+                -- "servicio" = total_servicios (todos) menos el subtotal ya reclasificado
+                -- arriba (total_servicios_venta), para no duplicarlo.
+                IF(v.idProceso = 3,
+                    (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0)) * -1,
+                    (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0))
+                ) AS servicio,
                 -- Suma el importeDescuento REAL persistido por ítem (productos + servicios),
                 -- no un recálculo de venta.descuento% asumiendo que el descuento nunca toca
                 -- Servicio. Ese supuesto es la política general (topeDescuento=0 para
@@ -316,7 +326,10 @@ class VentasRepository{
                 SELECT
                     idVenta,
                     SUM(total) AS total_servicios,
-                    SUM(importeDescuento) AS descuento_servicios
+                    SUM(importeDescuento) AS descuento_servicios,
+                    -- TEMPORAL (jul-2026): subtotal de los idServicio usados para
+                    -- facturar "venta sin stock" - ver comentario en columna "venta".
+                    SUM(CASE WHEN idServicio IN (6, 8, 12, 13, 14) THEN total ELSE 0 END) AS total_servicios_venta
                 FROM ventas_servicios
                 GROUP BY idVenta
             ) servicios
