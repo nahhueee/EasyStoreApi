@@ -61,14 +61,18 @@ router.put('/modificar', async (req:Request, res:Response) => {
     }
 });
 
-router.delete('/eliminar/:id', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await ClientesRepo.Eliminar(req.params.id));
+router.put('/dar-baja', async (req:Request, res:Response) => {
+    try{
+        res.json(await ClientesRepo.DarBajaCliente(req.body));
 
     } catch(error:any){
-        let msg = "Error al intentar eliminar el cliente.";
+        let msg = "No se pudo dar de baja el cliente.";
         logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
+        // DarBajaCliente tira { status, message } para los bloqueos de negocio (cliente
+        // inexistente, ya dado de baja, con movimientos o saldo inicial) - mismo patrón
+        // que cuentasCorrientesRoute.ts (dar-baja-recibo), para que el front pueda mostrar
+        // el motivo específico en vez de un 500 genérico.
+        res.status(error.status || 500).send(error.message || msg);
     }
 });
 //#endregion
