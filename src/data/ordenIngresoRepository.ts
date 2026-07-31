@@ -736,17 +736,18 @@ async function ObtenerProductosOrden(connection, idOrden:number, unico:boolean =
             }
         }
 
-        let estadoOrden = 'Nueva';
+        // Estado de la orden derivado del estado real de cada ítem (no de totales agregados):
+        // agregar totales podía "compensar" un ítem realmente pendiente con bajas/recepciones
+        // de otros ítems de la misma orden y marcar la orden como Incompleta/Finalizada
+        // aunque quedara trabajo real por recepcionar.
+        const hayPendienteOParcial = productos.some(p => p.estado === 'Pendiente' || p.estado === 'Parcial');
+        const hayIncompletos = productos.some(p => p.estado === 'Incompleto');
+        const hayIngresados = productos.some(p => p.estado === 'Ingresado');
 
-        const hayBajas = bajas && Array.isArray(bajas) && (bajas as any[]).length > 0;
-
-        if (totalOrdenRecibido === 0 && !hayBajas) {
-            estadoOrden = 'Nueva';
-        } else if (hayBajas && totalOrdenRecibido === 0) {
-            estadoOrden = 'Incompleta';
-        } else if (totalOrdenRecibido < totalOrdenOriginal) {
-            estadoOrden = 'Pendiente';
-        } else if (hayBajas) {
+        let estadoOrden: string;
+        if (hayPendienteOParcial) {
+            estadoOrden = (hayIngresados || hayIncompletos) ? 'Pendiente' : 'Nueva';
+        } else if (hayIncompletos) {
             estadoOrden = 'Incompleta';
         } else {
             estadoOrden = 'Finalizada';
