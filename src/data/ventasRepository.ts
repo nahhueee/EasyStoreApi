@@ -266,6 +266,10 @@ class VentasRepository{
                 ) AS nro_comprobante,
                 pagos.metodos, pagos.montos,
                 IF(v.idProceso = 3, prendas.cantidad_prendas * -1, prendas.cantidad_prendas) cantidad_prendas,
+                -- Mismo criterio de signo que cantidad_prendas: la NC guarda la cantidad
+                -- en positivo en ventas_servicios (ver InsertServicioVenta) y se niega aca,
+                -- para que el neto del periodo sea "vendido - acreditado".
+                IF(v.idProceso = 3, servicios.cantidad_servicios * -1, servicios.cantidad_servicios) cantidad_servicios,
                 e.razonSocial AS facturante
             FROM ventas v
 
@@ -327,6 +331,15 @@ class VentasRepository{
                     idVenta,
                     SUM(total) AS total_servicios,
                     SUM(importeDescuento) AS descuento_servicios,
+                    -- Cantidad de unidades de servicio facturadas en la venta. A diferencia
+                    -- de las columnas de importe, NO excluye los idServicio reclasificados
+                    -- abajo (6/8/12/13/14, el parche de "venta sin stock"): decision
+                    -- explicita del cliente (ago-2026). El motivo es que la hoja "Servicios"
+                    -- del Excel desglosa por idServicio, asi que esas lineas quedan
+                    -- visibles e identificables en vez de fundirse en un unico numero, y
+                    -- el dia que se migre el parche a items no catalogados desaparecen
+                    -- solas sin tener que tocar esta query.
+                    SUM(cantidad) AS cantidad_servicios,
                     -- TEMPORAL (jul-2026): subtotal de los idServicio usados para
                     -- facturar "venta sin stock" - ver comentario en columna "venta".
                     SUM(CASE WHEN idServicio IN (6, 8, 12, 13, 14) THEN total ELSE 0 END) AS total_servicios_venta
@@ -449,6 +462,70 @@ class VentasRepository{
                 AND IFNULL(vp.cantidad, 0) <> 0
                 ${filtro}
             ORDER BY v.fecha DESC, v.hora DESC;
+            `
+
+            const [rows] = await connection.query<RowDataPacket[]>(query);
+            return rows.map(r => ({ ...r }));
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    // Reporte agrupado POR SERVICIO (no por venta): responde "cuantas unidades netas de
+    // cada servicio se facturaron en el periodo", que es la pregunta que la columna
+    // cantidad_servicios de ObtenerReporteVentas no puede contestar (ahi el numero sale
+    // agregado por venta, mezclando servicios de unidades distintas - "LOGO" cuenta
+    // prendas bordadas, "Flete" cuenta 1 = una vez).
+    // Neto = facturado menos acreditado: la NC (idProceso 3) guarda cantidad/total en
+    // positivo y se niegan aca, mismo criterio que el resto de los reportes.
+    async ObtenerReporteServicios(filtros:any){
+        const connection = await db.getConnection();
+        let filtro:string = "";
+
+        if (filtros.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
+            const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+            const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
+
+            filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+        }
+        if(filtros.idProceso != 0){
+            filtro += " AND v.idProceso = " + filtros.idProceso;
+        }
+        if(filtros.cliente != 0){
+            filtro += " AND v.idCliente = " + filtros.cliente;
+        }
+        if(filtros.nroProceso && filtros.nroProceso != 0){
+            filtro += " AND v.nroProceso = " + filtros.nroProceso;
+        }
+
+        try {
+            //Obtengo la query segun los filtros
+            let query = `
+            SELECT
+                vs.idServicio,
+                IFNULL(s.codigo, '') AS codigo,
+                -- LEFT JOIN + fallback a proposito: si un idServicio quedo huerfano
+                -- (borrado del catalogo, ver EliminarServicio) la fila tiene que seguir
+                -- apareciendo con su cantidad, no desaparecer en silencio del reporte.
+                IFNULL(s.descripcion, CONCAT('(servicio eliminado #', vs.idServicio, ')')) AS descripcion,
+                SUM(IF(v.idProceso = 3, vs.cantidad * -1, vs.cantidad)) AS cantidad_neta,
+                SUM(IF(v.idProceso = 3, vs.total * -1, vs.total)) AS importe_neto
+            FROM ventas v
+                INNER JOIN ventas_servicios vs ON vs.idVenta = v.id
+                LEFT JOIN servicios s ON s.id = vs.idServicio
+            WHERE
+                v.fechaBaja IS NULL
+                AND v.estado IN ('Finalizada', 'Facturada')
+                -- Mismo recorte que ObtenerReporteVentas/ObtenerReporteDetalles: solo
+                -- comprobantes reales, excluye Presupuesto/Pedido/Nota de Empaque aunque
+                -- su estado final coincida en el string (ver ObtenerReporteAcumulado).
+                AND v.idProceso IN (${IdProceso.FACTURA}, ${IdProceso.COTIZACION}, ${IdProceso.NOTA_CREDITO}, ${IdProceso.NOTA_DEBITO})
+                ${filtro}
+            GROUP BY vs.idServicio, s.codigo, s.descripcion
+            ORDER BY cantidad_neta DESC;
             `
 
             const [rows] = await connection.query<RowDataPacket[]>(query);
