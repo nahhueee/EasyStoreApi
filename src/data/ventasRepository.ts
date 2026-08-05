@@ -1623,20 +1623,21 @@ async function ObtenerFacturaVenta(connection, idVenta:number){
 
 async function ObtenerNotasVenta(connection, nroProceso:number){
     try {
-        const consulta = " SELECT id, nroProceso, total FROM ventas " + 
+        const consulta = " SELECT id, nroProceso, total, idTComprobante FROM ventas " +
                          " WHERE nroRelacionado = ? AND idProceso = 3 "
 
         const [rows] = await connection.query(consulta, [nroProceso]);
         const notas:NotaCreditoVenta[] = [];
 
         if (Array.isArray(rows)) {
-            for (let i = 0; i < rows.length; i++) { 
+            for (let i = 0; i < rows.length; i++) {
                 const row = rows[i];
-                
+
                 const nota:NotaCreditoVenta = new NotaCreditoVenta();
                 nota.idNotaVenta = row['id'];
                 nota.nroProceso = row['nroProceso'];
                 nota.total = row['total'];
+                nota.idTipoComprobante = row['idTComprobante'];
 
                 notas.push(nota);
               }

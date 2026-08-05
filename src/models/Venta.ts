@@ -177,6 +177,11 @@ import { Color, TallesProducto } from "./Producto";
     idNotaVenta:number = 0;
     nroProceso:number = 0;
     total:number = 0;
+    // Tipo de comprobante de la NC (3/8/13 = fiscal NC A/B/C, 100 = interna/X).
+    // Ver TipoComprobante en el front (ObjFacturar.ts) - permite distinguir qué
+    // tipo de NC ya se emitió sobre una venta, para bloquear solo la repetida
+    // (ago-2026, ver ObtenerNotasVenta).
+    idTipoComprobante:number = 0;
   }
   
   
