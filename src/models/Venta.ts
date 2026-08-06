@@ -56,6 +56,14 @@ import { Color, TallesProducto } from "./Producto";
   export class ProductosVenta{
     idVenta?:number;
     idProducto? : number;
+    // Origen de idProducto: 'CATALOGO' -> tabla productos, 'PRESUPUESTO' ->
+    // productos_presupuesto. Ver TipoItemVenta en ventaEstados.ts y la migración
+    // 20260801120000_add_tipoitem_ventas_productos. Un ítem PRESUPUESTO no mueve
+    // stock, no tiene talles/color y no entra en el descuento general.
+    tipoItem?: string;
+    // Snapshot del nombre al momento de la venta, solo para ítems no catalogados.
+    // Congela lo que se imprimió en el comprobante aunque después renombren el ítem.
+    descripcion?: string;
     codProducto?: string;
     nomProducto?: string;
     color?:string;
@@ -88,6 +96,8 @@ import { Color, TallesProducto } from "./Producto";
     constructor(data?: any) {
       if (data) {
         this.idProducto = data.idProducto;
+        this.tipoItem = data.tipoItem;
+        this.descripcion = data.descripcion;
         this.codProducto = data.codProducto;
         this.cantidad = data.cantidad;
         this.idLineaTalle = data.idLineaTalle;
@@ -167,6 +177,11 @@ import { Color, TallesProducto } from "./Producto";
     idNotaVenta:number = 0;
     nroProceso:number = 0;
     total:number = 0;
+    // Tipo de comprobante de la NC (3/8/13 = fiscal NC A/B/C, 100 = interna/X).
+    // Ver TipoComprobante en el front (ObjFacturar.ts) - permite distinguir qué
+    // tipo de NC ya se emitió sobre una venta, para bloquear solo la repetida
+    // (ago-2026, ver ObtenerNotasVenta).
+    idTipoComprobante:number = 0;
   }
   
   

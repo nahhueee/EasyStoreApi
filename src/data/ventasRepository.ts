@@ -6,7 +6,7 @@ import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
 import { SesionServ } from '../services/sesionService';
-import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja } from '../models/ventaEstados';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado } from '../models/ventaEstados';
 const moment = require('moment');
 
 // Actualiza el estado del proceso relacionado (Presupuesto/Pedido/Nota de Empaque)
@@ -266,6 +266,10 @@ class VentasRepository{
                 ) AS nro_comprobante,
                 pagos.metodos, pagos.montos,
                 IF(v.idProceso = 3, prendas.cantidad_prendas * -1, prendas.cantidad_prendas) cantidad_prendas,
+                -- Mismo criterio de signo que cantidad_prendas: la NC guarda la cantidad
+                -- en positivo en ventas_servicios (ver InsertServicioVenta) y se niega aca,
+                -- para que el neto del periodo sea "vendido - acreditado".
+                IF(v.idProceso = 3, servicios.cantidad_servicios * -1, servicios.cantidad_servicios) cantidad_servicios,
                 e.razonSocial AS facturante
             FROM ventas v
 
@@ -314,7 +318,12 @@ class VentasRepository{
             LEFT JOIN (
                 SELECT
                     idVenta,
-                    SUM(cantidad) AS cantidad_prendas,
+                    -- cantidad_prendas cuenta SOLO items de catalogo: un item no catalogado
+                    -- (tipoItem='PRESUPUESTO') no tiene talles ni stock y no es una prenda,
+                    -- asi que sumarlo desvirtuaba el conteo. Los importes (total_prendas /
+                    -- descuento_prendas) SI los incluyen: son plata facturada y tienen que
+                    -- seguir cerrando contra "Cobrado".
+                    SUM(CASE WHEN tipoItem = '${TipoItemVenta.CATALOGO}' THEN cantidad ELSE 0 END) AS cantidad_prendas,
                     SUM(total) AS total_prendas,
                     SUM(importeDescuento) AS descuento_prendas
                 FROM ventas_productos
@@ -327,6 +336,15 @@ class VentasRepository{
                     idVenta,
                     SUM(total) AS total_servicios,
                     SUM(importeDescuento) AS descuento_servicios,
+                    -- Cantidad de unidades de servicio facturadas en la venta. A diferencia
+                    -- de las columnas de importe, NO excluye los idServicio reclasificados
+                    -- abajo (6/8/12/13/14, el parche de "venta sin stock"): decision
+                    -- explicita del cliente (ago-2026). El motivo es que la hoja "Servicios"
+                    -- del Excel desglosa por idServicio, asi que esas lineas quedan
+                    -- visibles e identificables en vez de fundirse en un unico numero, y
+                    -- el dia que se migre el parche a items no catalogados desaparecen
+                    -- solas sin tener que tocar esta query.
+                    SUM(cantidad) AS cantidad_servicios,
                     -- TEMPORAL (jul-2026): subtotal de los idServicio usados para
                     -- facturar "venta sin stock" - ver comentario en columna "venta".
                     SUM(CASE WHEN idServicio IN (6, 8, 12, 13, 14) THEN total ELSE 0 END) AS total_servicios_venta
@@ -427,7 +445,12 @@ class VentasRepository{
                 LEFT JOIN ventas_factura vf ON vf.idVenta = v.id
                 LEFT JOIN procesos_venta pv ON pv.id = v.idProceso
                 LEFT JOIN ventas_productos vp ON vp.idVEnta = v.id
-                LEFT JOIN productos prod ON prod.id = vp.idProducto
+                -- El JOIN al catalogo va condicionado por tipoItem: sin eso, una linea no
+                -- catalogada (idProducto apunta a productos_presupuesto) matcheaba el
+                -- producto del catalogo que tuviera ese mismo id y el reporte mostraba
+                -- articulo/color/material de un producto ajeno. Las dos tablas tienen
+                -- numeracion independiente y ambas arrancan en 1.
+                LEFT JOIN productos prod ON prod.id = vp.idProducto AND vp.tipoItem = '${TipoItemVenta.CATALOGO}'
                 LEFT JOIN tipos_producto tp ON tp.id = prod.idTipo
                 LEFT JOIN subtipos_producto sp ON sp.id = prod.idSubtipo
                 LEFT JOIN materiales m ON m.id = prod.idMaterial
@@ -447,8 +470,77 @@ class VentasRepository{
                 -- caso Graciela Bolzan). Ninguna de las dos afecta stock real, no
                 -- deberían aparecer en un reporte pensado por cantidad de prendas.
                 AND IFNULL(vp.cantidad, 0) <> 0
+                -- Mismo criterio: los items no catalogados no tienen NINGUNA de las columnas
+                -- de esta hoja (tipo, genero, material, color, talles) - solo aportarian una
+                -- fila en blanco. Se excluyen del desglose por talle; su importe sigue
+                -- contando en la hoja Ventas, que es donde corresponde.
+                AND vp.tipoItem = '${TipoItemVenta.CATALOGO}'
                 ${filtro}
             ORDER BY v.fecha DESC, v.hora DESC;
+            `
+
+            const [rows] = await connection.query<RowDataPacket[]>(query);
+            return rows.map(r => ({ ...r }));
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    // Reporte agrupado POR SERVICIO (no por venta): responde "cuantas unidades netas de
+    // cada servicio se facturaron en el periodo", que es la pregunta que la columna
+    // cantidad_servicios de ObtenerReporteVentas no puede contestar (ahi el numero sale
+    // agregado por venta, mezclando servicios de unidades distintas - "LOGO" cuenta
+    // prendas bordadas, "Flete" cuenta 1 = una vez).
+    // Neto = facturado menos acreditado: la NC (idProceso 3) guarda cantidad/total en
+    // positivo y se niegan aca, mismo criterio que el resto de los reportes.
+    async ObtenerReporteServicios(filtros:any){
+        const connection = await db.getConnection();
+        let filtro:string = "";
+
+        if (filtros.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
+            const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+            const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
+
+            filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+        }
+        if(filtros.idProceso != 0){
+            filtro += " AND v.idProceso = " + filtros.idProceso;
+        }
+        if(filtros.cliente != 0){
+            filtro += " AND v.idCliente = " + filtros.cliente;
+        }
+        if(filtros.nroProceso && filtros.nroProceso != 0){
+            filtro += " AND v.nroProceso = " + filtros.nroProceso;
+        }
+
+        try {
+            //Obtengo la query segun los filtros
+            let query = `
+            SELECT
+                vs.idServicio,
+                IFNULL(s.codigo, '') AS codigo,
+                -- LEFT JOIN + fallback a proposito: si un idServicio quedo huerfano
+                -- (borrado del catalogo, ver EliminarServicio) la fila tiene que seguir
+                -- apareciendo con su cantidad, no desaparecer en silencio del reporte.
+                IFNULL(s.descripcion, CONCAT('(servicio eliminado #', vs.idServicio, ')')) AS descripcion,
+                SUM(IF(v.idProceso = 3, vs.cantidad * -1, vs.cantidad)) AS cantidad_neta,
+                SUM(IF(v.idProceso = 3, vs.total * -1, vs.total)) AS importe_neto
+            FROM ventas v
+                INNER JOIN ventas_servicios vs ON vs.idVenta = v.id
+                LEFT JOIN servicios s ON s.id = vs.idServicio
+            WHERE
+                v.fechaBaja IS NULL
+                AND v.estado IN ('Finalizada', 'Facturada')
+                -- Mismo recorte que ObtenerReporteVentas/ObtenerReporteDetalles: solo
+                -- comprobantes reales, excluye Presupuesto/Pedido/Nota de Empaque aunque
+                -- su estado final coincida en el string (ver ObtenerReporteAcumulado).
+                AND v.idProceso IN (${IdProceso.FACTURA}, ${IdProceso.COTIZACION}, ${IdProceso.NOTA_CREDITO}, ${IdProceso.NOTA_DEBITO})
+                ${filtro}
+            GROUP BY vs.idServicio, s.codigo, s.descripcion
+            ORDER BY cantidad_neta DESC;
             `
 
             const [rows] = await connection.query<RowDataPacket[]>(query);
@@ -630,7 +722,18 @@ class VentasRepository{
     //#region ABM
     async Agregar(venta:Venta): Promise<string>{
         const connection = await db.getConnection();
-        
+
+        // Un Presupuesto facturado es una conversión FIEL: las líneas no se pueden tocar
+        // (decisión de negocio, ago-2026). El front bloquea la grilla, pero ese bloqueo es
+        // cosmético - cualquiera puede armar el POST a mano. Esta es la validación real.
+        // Va ANTES de abrir la transacción, mismo patrón de retorno de string que usa
+        // proveedoresRepository.Agregar para los errores de validación.
+        const errorPresupuesto = await ValidarFacturacionDePresupuesto(connection, venta);
+        if (errorPresupuesto) {
+            connection.release();
+            return errorPresupuesto;
+        }
+
         try {
             //Iniciamos una transaccion
             await connection.beginTransaction();
@@ -710,6 +813,17 @@ class VentasRepository{
                     // falta una rama explícita acá. Si en el futuro aparece un caso real de
                     // ND con mercadería asociada, es una decisión de negocio aparte (evaluar
                     // ahí si conviene simetría total con NC, ej. resta de stock).
+                    // Un ítem no catalogado (tipoItem = PRESUPUESTO) NUNCA mueve stock: su
+                    // idProducto no existe en `productos`/`talles_producto`, y no tiene
+                    // talles ni línea de talle. Sin este gate, ActualizarInventario llamaba
+                    // a ObtenerLineaDeTalle(null) -> devuelve undefined -> TypeError al leer
+                    // lineaTalle.talles -> rollback de toda la transacción. Como el CAE se
+                    // pide a AFIP ANTES de guardar (ver comentario en Guardar(),
+                    // addmod-ventas), eso dejaba un comprobante fiscal emitido y sin registro
+                    // en el sistema. Confirmado por diagnóstico (ago-2026) que nunca llegó a
+                    // pasar en producción sólo porque nadie facturó un presupuesto todavía.
+                    if(element.tipoItem === TipoItemVenta.PRESUPUESTO) continue;
+
                     if(venta.idProceso === IdProceso.NOTA_CREDITO){
                         await ProductosRepo.ActualizarInventario(connection, element, "+");
                     }else{
@@ -1055,6 +1169,9 @@ class VentasRepository{
                     element.idVenta = venta.id;
                     await InsertProductoVenta(connection, element);
 
+                    // Mismo gate que en Agregar: un ítem no catalogado no mueve stock.
+                    if(element.tipoItem === TipoItemVenta.PRESUPUESTO) continue;
+
                     if(venta.factura)
                         await ProductosRepo.ActualizarInventario(connection, element, "-")
                 }
@@ -1193,8 +1310,10 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 
             if(filtros.soloAbiertas){
                 // Excluye todo lo que ya fue usado/cerrado: Asociado/a (en uso por otro
-                // proceso), Facturado/a (ya facturado), Finalizado/a y Relacionado (estado
-                // de cierre exclusivo del Presupuesto, ver EstadoVenta.RELACIONADO).
+                // proceso, todavía sin comprobante), Facturado/a (circuito cerrado con
+                // comprobante - incluye al Presupuesto facturado directo desde ago-2026,
+                // ver RELACION_CIERRE en ventaEstados.ts), Finalizado/a y Relacionado
+                // (Presupuesto usado para armar un Pedido/Nota, ver EstadoVenta.RELACIONADO).
                 filtro += " AND (estado <> 'Asociado' AND estado <> 'Asociada' AND estado <> 'Facturado' AND estado <> 'Facturada' AND estado <> 'Finalizado' AND estado <> 'Finalizada' AND estado <> 'Relacionado')";
                 // Una Nota de Empaque no debe poder elegirse para relacionar/facturar
                 // hasta que fue validada (Aprobada): mientras está Pendiente no aparece.
@@ -1386,22 +1505,34 @@ async function ObtenerServiciosVenta(connection, idVenta:number){
     }
 }
 
+// Resuelve las líneas de una venta sin mirar `idProceso`: cada fila declara su propio
+// origen en `tipoItem` (ver TipoItemVenta / migración 20260801120000). Antes esto
+// brancheaba por `idProceso == 5`, heurística que se rompía al facturar un Presupuesto:
+// la venta pasaba a idProceso 1/2 pero las líneas seguían apuntando a
+// productos_presupuesto, así que el INNER JOIN contra `productos` hacía desaparecer la
+// línea o - peor - matcheaba otro producto con el mismo id y lo imprimía en el
+// comprobante (las dos tablas tienen numeración independiente y ambas arrancan en 1).
+//
+// LEFT JOIN a las dos tablas en una sola query: si una línea quedara huérfana (ítem
+// borrado del catálogo) la fila igual se devuelve, con `descripcion` -el snapshot
+// guardado al facturar- como fallback del nombre. El INNER JOIN anterior la hacía
+// desaparecer en silencio, que en un comprobante es peor que mostrarla incompleta.
 async function ObtenerProductosVenta(connection, idVenta:number, idProceso:number){
     try {
-        let consulta = "";
+        const consulta =
+            "SELECT vp.*, " +
+            "       COALESCE(cat.codigo, pre.codigo)   AS codigo, " +
+            "       COALESCE(cat.nombre, pre.nombre, vp.descripcion) AS nombre, " +
+            "       col.id AS idColor, col.descripcion AS color, col.hexa " +
+            "FROM ventas_productos vp " +
+            "LEFT JOIN productos cat " +
+            "       ON cat.id = vp.idProducto AND vp.tipoItem = ? " +
+            "LEFT JOIN productos_presupuesto pre " +
+            "       ON pre.id = vp.idProducto AND vp.tipoItem = ? " +
+            "LEFT JOIN colores col ON col.id = cat.idColor " +
+            "WHERE vp.idVenta = ? ";
 
-        if(idProceso == 5){
-            consulta = "SELECT vp.*, p.codigo, p.nombre FROM ventas_productos vp " + 
-                       "INNER JOIN productos_presupuesto p ON p.id = vp.idProducto " + 
-                       "WHERE vp.idVenta = ? ";
-        }else{
-            consulta = "SELECT vp.*, p.codigo, p.nombre, c.id idColor, c.descripcion color, c.hexa FROM ventas_productos vp " + 
-                        "INNER JOIN productos p ON p.id = vp.idProducto " + 
-                        "INNER JOIN colores c ON c.id = p.idColor " +
-                        "WHERE vp.idVenta = ? ";
-        }
-
-        const [rows] = await connection.query(consulta, [idVenta]);
+        const [rows] = await connection.query(consulta, [TipoItemVenta.CATALOGO, TipoItemVenta.PRESUPUESTO, idVenta]);
         const productos:ProductosVenta[] = [];
 
         if (Array.isArray(rows)) {
@@ -1411,6 +1542,10 @@ async function ObtenerProductosVenta(connection, idVenta:number, idProceso:numbe
                 let producto:ProductosVenta = new ProductosVenta();
                 producto.idVenta = row['idVenta'];
                 producto.idProducto = row['idProducto'];
+                // Default defensivo a CATALOGO: filas anteriores a la migración no tienen
+                // el campo, y ese era su comportamiento efectivo.
+                producto.tipoItem = row['tipoItem'] ?? TipoItemVenta.CATALOGO;
+                producto.descripcion = row['descripcion'] ?? undefined;
                 producto.codProducto = row['codigo'];
                 producto.nomProducto = row['nombre'];
                 producto.cantidad = row['cantidad'];
@@ -1437,7 +1572,12 @@ async function ObtenerProductosVenta(connection, idVenta:number, idProceso:numbe
                 producto.tallesSeleccionados = row['talles'];
                 producto.color = row['color'];
                 producto.hexa = row['hexa'];
-                producto.talles = await ProductosRepo.ObtenerTallesProducto(producto.idProducto!);
+                // Solo el catálogo real tiene talles. Para un ítem de presupuesto este id
+                // no existe en `talles_producto`, y consultarlo devolvía los talles de OTRO
+                // producto (el que tuviera ese mismo id en el catálogo).
+                producto.talles = producto.tipoItem === TipoItemVenta.CATALOGO
+                    ? await ProductosRepo.ObtenerTallesProducto(producto.idProducto!)
+                    : [];
 
                 productos.push(producto);
               }
@@ -1490,20 +1630,21 @@ async function ObtenerFacturaVenta(connection, idVenta:number){
 
 async function ObtenerNotasVenta(connection, nroProceso:number){
     try {
-        const consulta = " SELECT id, nroProceso, total FROM ventas " + 
+        const consulta = " SELECT id, nroProceso, total, idTComprobante FROM ventas " +
                          " WHERE nroRelacionado = ? AND idProceso = 3 "
 
         const [rows] = await connection.query(consulta, [nroProceso]);
         const notas:NotaCreditoVenta[] = [];
 
         if (Array.isArray(rows)) {
-            for (let i = 0; i < rows.length; i++) { 
+            for (let i = 0; i < rows.length; i++) {
                 const row = rows[i];
-                
+
                 const nota:NotaCreditoVenta = new NotaCreditoVenta();
                 nota.idNotaVenta = row['id'];
                 nota.nroProceso = row['nroProceso'];
                 nota.total = row['total'];
+                nota.idTipoComprobante = row['idTComprobante'];
 
                 notas.push(nota);
               }
@@ -1701,10 +1842,82 @@ async function InsertMovimientoFondo(connection, movimiento): Promise<void> {
     }
 }
 
+// Valida que una venta que se factura a partir de un Presupuesto sea una copia fiel de
+// ese presupuesto: mismos ítems, mismas cantidades, mismos precios unitarios. Devuelve
+// null si está OK, o el mensaje de error si no.
+//
+// Por qué existe: el bloqueo de la grilla en addmod-ventas es solo UI. Sin este chequeo,
+// un POST armado a mano podría facturar cualquier cosa "en nombre de" un presupuesto
+// aprobado, que es justamente lo que el circuito busca impedir (el presupuesto se
+// verifica ANTES de relacionarlo; si después se puede editar, la verificación no vale).
+//
+// Solo aplica al alta desde Presupuesto. No se toca Pedido/Nota de Empaque: esos SÍ
+// admiten ajuste al facturar (el precio de un Pedido se negocia, ver permiteEditarPrecio)
+// y meterlos acá cambiaría un comportamiento vigente que nadie pidió cambiar.
+async function ValidarFacturacionDePresupuesto(connection, venta:Venta): Promise<string | null> {
+    const esFacturaDesdePresupuesto =
+        venta.tipoRelacionado === TipoRelacionado.PRESUPUESTO &&
+        [IdProceso.FACTURA, IdProceso.COTIZACION].includes(venta.idProceso!);
+
+    if (!esFacturaDesdePresupuesto || !venta.nroRelacionado) return null;
+
+    const [ventasOrigen] = await connection.query(
+        `SELECT id FROM ventas WHERE idProceso = ${IdProceso.PRESUPUESTO} AND nroProceso = ? AND fechaBaja IS NULL ORDER BY id DESC LIMIT 1`,
+        [venta.nroRelacionado]
+    );
+    if (!Array.isArray(ventasOrigen) || ventasOrigen.length === 0)
+        return `No se encontró el presupuesto Nro ${venta.nroRelacionado} al que se quiere facturar.`;
+
+    const [lineasOrigen] = await connection.query(
+        "SELECT idProducto, cantidad, precio FROM ventas_productos WHERE idVenta = ?",
+        [ventasOrigen[0].id]
+    );
+    const [serviciosOrigen] = await connection.query(
+        "SELECT idServicio, cantidad, precio FROM ventas_servicios WHERE idVenta = ?",
+        [ventasOrigen[0].id]
+    );
+
+    const productosEnviados = venta.productos ?? [];
+    const serviciosEnviados = venta.servicios ?? [];
+
+    if (productosEnviados.length !== lineasOrigen.length || serviciosEnviados.length !== serviciosOrigen.length)
+        return `Los ítems no coinciden con el presupuesto Nro ${venta.nroRelacionado}. Un presupuesto se factura tal cual fue aprobado.`;
+
+    // Comparación por contenido, no por orden: el front puede reordenar la grilla.
+    // El importe se compara con tolerancia de 1 centavo por el redondeo de los decimales.
+    const claveProducto = (idProducto, cantidad, precio) => `${idProducto}|${cantidad}|${Number(precio).toFixed(2)}`;
+
+    const esperados = new Map<string, number>();
+    for (const l of lineasOrigen) {
+        const k = claveProducto(l.idProducto, l.cantidad, l.precio);
+        esperados.set(k, (esperados.get(k) ?? 0) + 1);
+    }
+    for (const p of productosEnviados) {
+        const k = claveProducto(p.idProducto, p.cantidad, p.unitario);
+        const restantes = esperados.get(k);
+        if (!restantes) return `Los ítems no coinciden con el presupuesto Nro ${venta.nroRelacionado}. Un presupuesto se factura tal cual fue aprobado.`;
+        esperados.set(k, restantes - 1);
+    }
+
+    const esperadosServicio = new Map<string, number>();
+    for (const s of serviciosOrigen) {
+        const k = claveProducto(s.idServicio, s.cantidad, s.precio);
+        esperadosServicio.set(k, (esperadosServicio.get(k) ?? 0) + 1);
+    }
+    for (const s of serviciosEnviados) {
+        const k = claveProducto(s.idServicio, s.cantidad, s.unitario);
+        const restantes = esperadosServicio.get(k);
+        if (!restantes) return `Los servicios no coinciden con el presupuesto Nro ${venta.nroRelacionado}. Un presupuesto se factura tal cual fue aprobado.`;
+        esperadosServicio.set(k, restantes - 1);
+    }
+
+    return null;
+}
+
 async function InsertProductoVenta(connection, producto): Promise<void> {
     try {
-        const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, idLineaTalle, cantidad, precio, precioLista, total, importeDescuento, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, tipoItem, descripcion, idLineaTalle, cantidad, precio, precioLista, total, importeDescuento, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         // precioLista = producto.precio (precio de lista calculado por calcularPrecioCliente en el
         // front, previo a cualquier edición manual). producto.unitario es el precio final cobrado,
         // que puede diferir si el vendedor lo editó (ver permiteEditarPrecio en addmod-ventas).
@@ -1712,7 +1925,17 @@ async function InsertProductoVenta(connection, producto): Promise<void> {
         // respetando el topeDescuento del producto (ver aplicarDescuentoAItems en addmod-ventas).
         // Se persiste porque el tope no se guarda en ningún lado; sin esto, listado-ventas no puede
         // reconstruir correctamente el descuento al volver a mostrar la venta.
-        const parametros = [producto.idVenta, producto.idProducto, producto.idLineaTalle, producto.cantidad, producto.unitario, producto.precio, producto.total, producto.importeDescuento ?? 0, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
+        // tipoItem: se normaliza server-side a CATALOGO si el front no lo manda, que es
+        // el comportamiento histórico de toda línea existente. Nunca se confía en un
+        // string arbitrario del body: cualquier valor distinto de PRESUPUESTO cae a
+        // CATALOGO, porque de este campo depende si la línea mueve stock.
+        // descripcion: solo tiene sentido para líneas no catalogadas (para el catálogo el
+        // nombre sale del JOIN, y guardarlo duplicado invita a que se desincronicen).
+        const esItemPresupuesto = producto.tipoItem === TipoItemVenta.PRESUPUESTO;
+        const tipoItem = esItemPresupuesto ? TipoItemVenta.PRESUPUESTO : TipoItemVenta.CATALOGO;
+        const descripcion = esItemPresupuesto ? (producto.descripcion ?? producto.nomProducto ?? null) : null;
+
+        const parametros = [producto.idVenta, producto.idProducto, tipoItem, descripcion, producto.idLineaTalle, producto.cantidad, producto.unitario, producto.precio, producto.total, producto.importeDescuento ?? 0, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
         await connection.query(consulta, parametros);
     } catch (error) {
         throw error;

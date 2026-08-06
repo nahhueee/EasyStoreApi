@@ -163,7 +163,16 @@ CREATE TABLE ventas_productos (
     t8 INT,
     t9 INT,
     t10 INT,
-    talles VARCHAR(100)
+    talles VARCHAR(100),
+    -- Discriminador de a que catalogo apunta idProducto: 'CATALOGO' -> productos,
+    -- 'PRESUPUESTO' -> productos_presupuesto. Antes se adivinaba por ventas.idProceso,
+    -- lo que fallaba al facturar un Presupuesto (la venta deja de serlo pero las
+    -- lineas siguen apuntando a la otra tabla). Ver migracion
+    -- 20260801120000_add_tipoitem_ventas_productos.
+    tipoItem VARCHAR(12) NOT NULL DEFAULT 'CATALOGO',
+    -- Snapshot del nombre del item al momento de la venta. Solo se llena para
+    -- tipoItem <> 'CATALOGO'; para el catalogo el nombre sigue saliendo del JOIN.
+    descripcion VARCHAR(150) NULL
 )
 ENGINE=InnoDB;
 

@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 
-export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
+export async function crearExcelVentas(res1: any[], res2: any[], res3: any[], res4: any[]) {
   const workbook = new ExcelJS.Workbook();
 
   // =========================
@@ -72,6 +72,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
     { header: 'Métodos de pago', key: 'metodos', width: 40 },
     { header: 'Montos de pago', key: 'montos', width: 40 },
     { header: 'Cant. prendas', key: 'cantidad_prendas', width: 15 },
+    { header: 'Cant. servicios', key: 'cantidad_servicios', width: 15 },
     { header: 'Facturante', key: 'facturante', width: 25 }
   ];
 
@@ -89,13 +90,19 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
       iva21,
       cobradoNeto: cobrado - iva21,
       montos: formatearMontosPago(r.montos, Number(r.idProceso) === 3),
-      cantidad_prendas: Number(r.cantidad_prendas)
+      cantidad_prendas: Number(r.cantidad_prendas),
+      // Number(null) = 0, igual que cantidad_prendas: una venta sin servicios sale del
+      // LEFT JOIN con NULL y se muestra 0, no vacío. Comportamiento heredado a propósito.
+      cantidad_servicios: Number(r.cantidad_servicios)
     });
   });
 
+  // 20 columnas (A..T) desde que se agregó "Cant. servicios". Si se suma otra columna
+  // arriba hay que correr este rango: ExcelJS no valida que coincida con sheet2.columns,
+  // simplemente deja la columna nueva afuera del filtro sin tirar error.
   sheet2.autoFilter = {
     from: 'A1',
-    to: 'S1'
+    to: 'T1'
   };
 
 
@@ -158,9 +165,59 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
 
 
   // =========================
+  // HOJA 4: SERVICIOS
+  // =========================
+  // Agrupado por servicio, no por venta: es la hoja que responde "cuántas unidades netas
+  // de cada servicio se facturaron en el período". La columna "Cant. servicios" de la
+  // hoja Ventas responde otra pregunta (qué había en esa venta puntual) y su total no es
+  // comparable, porque mezcla servicios con unidades distintas.
+  const sheet4 = workbook.addWorksheet('Servicios');
+
+  sheet4.columns = [
+    { header: 'Código', key: 'codigo', width: 15 },
+    { header: 'Servicio', key: 'descripcion', width: 40 },
+    { header: 'Cant. neta', key: 'cantidad_neta', width: 15 },
+    { header: 'Importe neto', key: 'importe_neto', width: 20 }
+  ];
+
+  res4.forEach(r => {
+    sheet4.addRow({
+      codigo: r.codigo,
+      descripcion: r.descripcion,
+      cantidad_neta: Number(r.cantidad_neta),
+      importe_neto: Number(r.importe_neto)
+    });
+  });
+
+  sheet4.autoFilter = {
+    from: 'A1',
+    to: 'D1'
+  };
+
+  // Fila TOTAL con el mismo guard de referencia circular que la hoja Acumulado: sin
+  // filas de datos, lastDataRow=1 y SUM(C2:C1) se normaliza a C1:C2, incluyéndose a sí
+  // misma. Ver comentario extendido en la hoja 1.
+  const lastDataRowServicios = sheet4.rowCount;
+  const totalRowServicios = lastDataRowServicios + 1;
+
+  sheet4.getCell(`A${totalRowServicios}`).value = 'TOTAL';
+
+  sheet4.getCell(`C${totalRowServicios}`).value = res4.length > 0
+    ? { formula: `SUM(C2:C${lastDataRowServicios})` }
+    : 0;
+
+  sheet4.getCell(`D${totalRowServicios}`).value = res4.length > 0
+    ? { formula: `SUM(D2:D${lastDataRowServicios})` }
+    : 0;
+
+  sheet4.getRow(totalRowServicios).font = { bold: true };
+  sheet4.getCell(`D${totalRowServicios}`).numFmt = '$ #,##0.00';
+
+
+  // =========================
   // ESTILO GENERAL
   // =========================
-  [sheet1, sheet2, sheet3].forEach(sheet => {
+  [sheet1, sheet2, sheet3, sheet4].forEach(sheet => {
     const headerRow = sheet.getRow(1);
 
     headerRow.eachCell(cell => {
@@ -190,6 +247,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
   autoFitColumns(sheet1);
   autoFitColumns(sheet2);
   autoFitColumns(sheet3);
+  autoFitColumns(sheet4);
 
   // Formato talles
   aplicarFormatoTalles(sheet3);
@@ -204,6 +262,10 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[]) {
   sheet2.getColumn('iva21').numFmt = '$ #,##0.00';
   sheet2.getColumn('cobrado').numFmt = '$ #,##0.00';
   sheet2.getColumn('cobradoNeto').numFmt = '$ #,##0.00';
+  sheet4.getColumn('importe_neto').numFmt = '$ #,##0.00';
+  // Entero con signo: una NC puede dejar la cantidad neta en negativo si en el período
+  // se acreditó más de lo que se facturó (ej. NC de un servicio vendido el mes anterior).
+  sheet4.getColumn('cantidad_neta').numFmt = '#,##0;-#,##0';
 
   // =========================
   // EXPORTAR

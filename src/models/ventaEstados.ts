@@ -13,6 +13,25 @@ export enum IdProceso {
 }
 
 /**
+ * Origen del `idProducto` de cada línea de `ventas_productos` (columna `tipoItem`).
+ * Se persiste en BD, no cambiar los valores sin migración. Debe coincidir con
+ * TIPO_ITEM en el front (venta.constants.ts).
+ *
+ * `idProducto` es una FK polimórfica: sin este discriminador la única forma de
+ * saber contra qué tabla resolverla era mirar `ventas.idProceso`, heurística que
+ * se rompía al facturar un Presupuesto (la venta deja de ser presupuesto pero las
+ * líneas siguen apuntando a `productos_presupuesto`). Ver migración
+ * 20260801120000_add_tipoitem_ventas_productos.
+ *
+ * PRESUPUESTO = ítem no catalogado: no mueve stock, no tiene talles ni color, y
+ * no entra en el descuento general de la venta.
+ */
+export enum TipoItemVenta {
+    CATALOGO = "CATALOGO",
+    PRESUPUESTO = "PRESUPUESTO",
+}
+
+/**
  * Strings que identifican el tipo de proceso relacionado a una venta
  * (columna `tipoRelacionado`). Se persisten en BD, no cambiar los valores
  * sin migración. Deben coincidir con TIPO_RELACIONADO en el front
@@ -36,10 +55,11 @@ export enum EstadoVenta {
 
     ASOCIADO = "Asociado",
     ASOCIADA = "Asociada",
-    // Estado de cierre exclusivo del Presupuesto: a diferencia de Pedido/Nota
-    // de Empaque, el Presupuesto no tiene un estado "Facturado" propio (no es
-    // un documento que se facture) - una vez usado para cualquier cosa
-    // (armar un Pedido/Nota, o facturarlo directo) queda en RELACIONADO.
+    // Estado "en uso" del Presupuesto cuando se usó para armar un Pedido o una
+    // Nota de Empaque (circuito abierto en otro documento, todavía no hay
+    // comprobante ni cobro). Si en cambio el Presupuesto se factura directo
+    // (Factura/Cotización), el cierre es real y pasa a FACTURADO (ver
+    // RELACION_CIERRE) - ago-2026, antes los dos casos quedaban mezclados acá.
     RELACIONADO = "Relacionado",
 
     FACTURADO = "Facturado",
@@ -65,6 +85,11 @@ export const RELACION_PROCESO: Record<TipoRelacionado, { idProceso: IdProceso; e
 export const RELACION_CIERRE: Partial<Record<TipoRelacionado, EstadoVenta>> = {
     [TipoRelacionado.PEDIDO]:       EstadoVenta.FACTURADO,
     [TipoRelacionado.NOTA_EMPAQUE]: EstadoVenta.FACTURADA,
+    // Presupuesto facturado directo (sin pasar por Pedido/Nota de Empaque): el
+    // circuito cierra con comprobante y cobro, igual que los otros dos. Antes
+    // caía a RELACIONADO (ver comentario de EstadoVenta.RELACIONADO), que mezclaba
+    // "se usó para armar un Pedido" con "se facturó" - ago-2026.
+    [TipoRelacionado.PRESUPUESTO]:  EstadoVenta.FACTURADO,
 };
 
 /**
