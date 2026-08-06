@@ -948,6 +948,7 @@ async function ObtenerQuery(filtros:any, pedidos:boolean = false, proyectados:bo
 
                         FROM ordenes_productos op
                         INNER JOIN productos p ON p.id = op.idProducto
+                        INNER JOIN ordenes_ingreso oi ON oi.id = op.idOrden AND oi.baja IS NULL
 
                         LEFT JOIN (
                             SELECT 
