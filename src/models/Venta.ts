@@ -66,6 +66,10 @@ import { Color, TallesProducto } from "./Producto";
     descripcion?: string;
     codProducto?: string;
     nomProducto?: string;
+    // Tope de descuento (%) del catálogo. NO se persiste en ventas_productos: se lee de
+    // `productos` al armar la respuesta, para que el front pueda aplicar el descuento
+    // general respetando el límite del ítem al facturar un Presupuesto/Pedido.
+    topeDescuento?: number;
     color?:string;
     hexa?:string;
     cantidad?: number;
@@ -99,6 +103,7 @@ import { Color, TallesProducto } from "./Producto";
         this.tipoItem = data.tipoItem;
         this.descripcion = data.descripcion;
         this.codProducto = data.codProducto;
+        this.topeDescuento = data.topeDescuento;
         this.cantidad = data.cantidad;
         this.idLineaTalle = data.idLineaTalle;
         this.color = data.color;
@@ -130,6 +135,8 @@ import { Color, TallesProducto } from "./Producto";
     idServicio? : number;
     codServicio?: string;
     nomServicio?: string;
+    // Ver comentario equivalente en ProductosVenta.topeDescuento. Se lee de `servicios`.
+    topeDescuento?: number;
     cantidad?: number;
     unitario?: number;
     total?: number;
@@ -140,6 +147,7 @@ import { Color, TallesProducto } from "./Producto";
       if (data) {
         this.idServicio = data.idServicio;
         this.codServicio = data.codServicio;
+        this.topeDescuento = data.topeDescuento;
         this.cantidad = data.cantidad;
         this.unitario = data.unitario;
         this.nomServicio = data.nomServicio;

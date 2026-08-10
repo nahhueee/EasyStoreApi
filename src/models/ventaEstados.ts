@@ -23,8 +23,10 @@ export enum IdProceso {
  * líneas siguen apuntando a `productos_presupuesto`). Ver migración
  * 20260801120000_add_tipoitem_ventas_productos.
  *
- * PRESUPUESTO = ítem no catalogado: no mueve stock, no tiene talles ni color, y
- * no entra en el descuento general de la venta.
+ * PRESUPUESTO = ítem no catalogado: no mueve stock y no tiene talles ni color. El
+ * descuento general de la venta SÍ le aplica (se resuelve en el front, ver
+ * TopeDescuentoDe en addmod-ventas; acá solo se persiste el importeDescuento ya
+ * calculado).
  */
 export enum TipoItemVenta {
     CATALOGO = "CATALOGO",
