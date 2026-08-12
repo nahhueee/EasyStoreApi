@@ -1473,7 +1473,14 @@ async function ObtenerPagosVenta(connection, idVenta:number){
 
 async function ObtenerServiciosVenta(connection, idVenta:number){
     try {
-        const consulta = "SELECT vs.*, s.descripcion, s.codigo FROM ventas_servicios vs " + 
+        // topeDescuento sale del catálogo `servicios`, NO de la línea: `ventas_servicios`
+        // nunca lo persistió (por eso existe `importeDescuento`, ver migración
+        // 20260707120000). Sin traerlo acá, al facturar un Presupuesto/Pedido los
+        // servicios llegaban al front con topeDescuento undefined y el cálculo caía al
+        // `?? 100` (descuento pleno), aplicando el descuento general a servicios con tope
+        // 0. Bug real reportado ago-2026: presupuesto de $300.000 en productos + $12.500
+        // en servicios con 10% -> descontaba $31.250 en vez de $30.000.
+        const consulta = "SELECT vs.*, s.descripcion, s.codigo, s.topeDescuento FROM ventas_servicios vs " +
                          "LEFT JOIN servicios s ON s.id = vs.idServicio " +
                          "WHERE vs.idVenta = ? "
 
@@ -1493,6 +1500,12 @@ async function ObtenerServiciosVenta(connection, idVenta:number){
                 servicio.cantidad = parseInt(row['cantidad']);
                 servicio.unitario = parseFloat(row['precio']);
                 servicio.total = parseFloat(row['total']);
+                // Tope vigente HOY en el catálogo, no el que tenía al momento de la venta
+                // original (ese dato no se persiste). Es lo correcto para este uso: el
+                // consumidor es el flujo de facturar un Presupuesto/Pedido, donde el
+                // descuento se aplica AHORA. Para reconstruir una venta ya cerrada hay que
+                // seguir usando el importeDescuento persistido, no recalcular con esto.
+                servicio.topeDescuento = row['topeDescuento'] != null ? parseFloat(row['topeDescuento']) : undefined;
                 servicio.importeDescuento = row['importeDescuento'] != null ? parseFloat(row['importeDescuento']) : undefined;
                 servicios.push(servicio);
               }
@@ -1523,6 +1536,13 @@ async function ObtenerProductosVenta(connection, idVenta:number, idProceso:numbe
             "SELECT vp.*, " +
             "       COALESCE(cat.codigo, pre.codigo)   AS codigo, " +
             "       COALESCE(cat.nombre, pre.nombre, vp.descripcion) AS nombre, " +
+            // Mismo motivo que en ObtenerServiciosVenta: el tope vive en el catálogo, no
+            // en la línea. Sin esto, al facturar un Pedido/Nota de Empaque los productos
+            // perdían su tope y recibían el descuento general completo.
+            // Para tipoItem='PRESUPUESTO' queda NULL (no hay fila en `productos` ni columna
+            // equivalente en `productos_presupuesto`) -> el front cae al `?? 100`, que es
+            // el comportamiento decidido para esos ítems.
+            "       cat.topeDescuento, " +
             "       col.id AS idColor, col.descripcion AS color, col.hexa " +
             "FROM ventas_productos vp " +
             "LEFT JOIN productos cat " +
@@ -1568,6 +1588,7 @@ async function ObtenerProductosVenta(connection, idVenta:number, idProceso:numbe
                 producto.precioLista = row['precioLista'] != null ? parseFloat(row['precioLista']) : undefined;
                 producto.unitario = parseFloat(row['precio']);
                 producto.total = parseFloat(row['total']);
+                producto.topeDescuento = row['topeDescuento'] != null ? parseFloat(row['topeDescuento']) : undefined;
                 producto.importeDescuento = row['importeDescuento'] != null ? parseFloat(row['importeDescuento']) : undefined;
                 producto.tallesSeleccionados = row['talles'];
                 producto.color = row['color'];

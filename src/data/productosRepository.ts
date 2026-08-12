@@ -548,32 +548,55 @@ class ProductosRepository{
             await connection.query(consulta, parametros);
             //#endregion
 
-            //Tomamos la cantidad real (stock) que ya existe en BD por talle, ANTES de borrar.
-            //La cantidad es propia de cada color/producto y se administra vía Órdenes de Ingreso/Ventas,
-            //nunca desde esta pantalla: el payload del front puede traer un valor de cantidad heredado
-            //de otro color (addmod-productos reutiliza un único FormArray de talles para todos los
-            //colores seleccionados) y no debe pisar el stock real.
-            const [rowsCantidadActual] = await connection.query(
-                "SELECT talle, cantidad FROM talles_producto WHERE idProducto = ?",
+            //Sincronizamos talles SIN borrar/reinsertar filas existentes.
+            //La cantidad es propia de cada color/producto y se administra vía Órdenes de
+            //Ingreso/Ventas, nunca desde esta pantalla. El patrón anterior (DELETE de todos
+            //los talles + INSERT con la cantidad leída al principio de la transacción) dejaba
+            //una ventana de carrera: si una recepción o venta sobre el mismo producto comiteaba
+            //su UPDATE de stock entre nuestro SELECT y nuestro COMMIT, esta transacción volvía
+            //a escribir el valor viejo y esa cantidad se perdía sin dejar rastro de error
+            //(bug real detectado en producción, ago-2026, orden de ingreso #87 / producto #104).
+            //Ahora: talles existentes se actualizan por UPDATE sin tocar `cantidad`; talles
+            //nuevos se insertan en 0; talles deseleccionados se borran.
+            const [rowsTallesActuales] = await connection.query(
+                "SELECT talle FROM talles_producto WHERE idProducto = ?",
                 [producto.id]
             );
-            const cantidadActualPorTalle = new Map<string, number>();
-            if (Array.isArray(rowsCantidadActual)) {
-                for (const row of rowsCantidadActual as any[]) {
-                    cantidadActualPorTalle.set(row.talle, row.cantidad);
+            const tallesExistentes = new Set<string>();
+            if (Array.isArray(rowsTallesActuales)) {
+                for (const row of rowsTallesActuales as any[]) {
+                    tallesExistentes.add(row.talle);
                 }
             }
 
-            //Borramos talles anteriores
-            await connection.query("DELETE FROM talles_producto WHERE idProducto = ?", [producto.id]);
+            const tallesNuevos = new Set<string>((producto.talles ?? []).map((t: any) => t.talle));
 
-            //Insertamos los talles del producto, preservando la cantidad real existente
-            //(si el talle es nuevo -ej. se amplió la línea de talles- arranca en 0)
-            for (const element of  producto.talles!) {
+            for (const element of producto.talles!) {
                 element.idProducto = producto.id;
-                element.cantidad = cantidadActualPorTalle.get(element.talle ?? '') ?? 0;
-                await InsertTalleProducto(connection, element);
+
+                if (tallesExistentes.has(element.talle ?? '')) {
+                    //Talle ya existe: actualizamos solo datos estructurales, NUNCA `cantidad`
+                    await connection.query(
+                        `UPDATE talles_producto
+                         SET idLineaTalle = ?, ubicacion = ?, precio = ?, codigo_barra = ?
+                         WHERE idProducto = ? AND talle = ?`,
+                        [element.idLineaTalle, element.ubicacion, element.precio, element.codigoBarra, producto.id, element.talle]
+                    );
+                } else {
+                    //Talle nuevo (ej. se amplió la línea de talles): arranca en 0
+                    element.cantidad = 0;
+                    await InsertTalleProducto(connection, element);
+                }
             };
+
+            //Borramos los talles que el usuario deseleccionó en esta edición
+            const tallesABorrar = [...tallesExistentes].filter(t => !tallesNuevos.has(t));
+            if (tallesABorrar.length > 0) {
+                await connection.query(
+                    "DELETE FROM talles_producto WHERE idProducto = ? AND talle IN (?)",
+                    [producto.id, tallesABorrar]
+                );
+            }
 
             //Borramos colores anteriores
             //await connection.query("DELETE FROM colores_producto WHERE idProducto = ?", [producto.id]);

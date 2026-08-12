@@ -471,9 +471,16 @@ async function ObtenerDireccionesCliente(connection, idCliente:number){
 
 async function ObtenerUltimoDescuento(connection, idCliente:number){
     try {
-        const consulta = " SELECT descuento, idTDescuento, td.descripcion FROM ventas v " + 
+        // idProceso IN (1,2,3,4) = Factura/Cotización/Nota Crédito/Nota Débito - excluye
+        // Presupuesto/Pedido/Nota de Empaque (5,6,7). Sin este filtro, si el movimiento
+        // más reciente del cliente era un Presupuesto/Pedido, esta consulta devolvía su
+        // descuento en vez del de la última Factura real (antes ago-2026 esos procesos
+        // siempre grababan 0%, así que no se notaba - dejó de ser inofensivo al habilitar
+        // descuento propio en Presupuesto/Pedido/Nota de Empaque).
+        const consulta = " SELECT descuento, idTDescuento, td.descripcion FROM ventas v " +
                          " LEFT JOIN tipos_descuento td ON td.id = v.idTDescuento " +
                          " WHERE v.idCliente = ? AND v.descuento IS NOT NULL AND v.fechaBaja IS NULL " +
+                         " AND v.idProceso IN (1,2,3,4) " +
                          " ORDER BY v.fecha DESC LIMIT 1";
 
         const rows = await connection.query(consulta, [idCliente]);
