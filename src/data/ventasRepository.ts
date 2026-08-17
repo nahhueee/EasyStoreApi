@@ -244,7 +244,23 @@ class VentasRepository{
                 -- en addmod-ventas.component.ts.
                 IF(v.idProceso = 3, IFNULL(vf.iva, 0) * -1, IFNULL(vf.iva, 0)) AS iva21,
                 IF(v.idProceso = 3, v.total * -1, v.total) cobrado,
-                CONCAT(IFNULL(v.descuento, 0), ' %') AS descuento,
+                -- % efectivo (Descuento$/Bruto$), no v.descuento (cabecera) directo: con
+                -- descuento por ítem (ago-2026) la cabecera puede quedar en 0% mientras
+                -- "des" (arriba) sí tiene plata real -> mostraba "0 %" al lado de un
+                -- Descuento $ distinto de cero, contradictorio en la misma fila. Reusa las
+                -- mismas subqueries que ya alimenta "des", sin JOINs nuevos. NULLIF evita
+                -- división por cero en ventas sin ítems (NC/ND "X" libre) - el IFNULL de
+                -- afuera resuelve ese caso a "0 %".
+                CONCAT(
+                    IFNULL(
+                        ROUND(
+                            (IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0))
+                            / NULLIF(IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0), 0)
+                            * 100,
+                        2),
+                    0),
+                    ' %'
+                ) AS descuento,
                 com.descripcion AS comprobante,
                 CONCAT(
                     LPAD(IFNULL(e.puntoVta, 0), 4, '0'),
@@ -735,10 +751,17 @@ class VentasRepository{
         }
 
         try {
-            //Obtenemos el proximo nro de venta a insertar
-            venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
             //Iniciamos una transaccion
             await connection.beginTransaction();
+
+            // Obtenemos el proximo nro de venta a insertar. Va DESPUES de abrir la
+            // transacción y a propósito adentro (no antes): el SELECT usa FOR UPDATE
+            // para bloquear la última fila de este idProceso hasta el commit, así una
+            // segunda venta del mismo tipo guardada en simultáneo espera a que esta
+            // termine en vez de leer el mismo "último número" y calcular el mismo
+            // nroProceso. Bug real: Pedidos duplicados con el mismo nroProceso
+            // (condición de carrera, sin lock ni UNIQUE constraint) - ago-2026.
+            venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
 
             //Insertamos la venta
             const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega) " +
@@ -1674,7 +1697,12 @@ async function ObtenerNotasVenta(connection, nroProceso:number){
 //#region INSERT
 async function ObtenerProximoNroProceso(connection, idProceso):Promise<number>{
     try {
-        const rows = await connection.query(" SELECT nroProceso FROM ventas WHERE idProceso = ? ORDER BY id DESC LIMIT 1 ", idProceso);
+        // FOR UPDATE: si esta lectura corre dentro de una transacción (caso real,
+        // ver Agregar()), bloquea esta fila hasta el commit/rollback - evita que dos
+        // ventas del mismo idProceso guardadas en simultáneo calculen el mismo
+        // "próximo número". Fuera de una transacción (ver wrapper de clase, usado
+        // para preview) no cambia nada: el lock se toma y libera en el acto.
+        const rows = await connection.query(" SELECT nroProceso FROM ventas WHERE idProceso = ? ORDER BY id DESC LIMIT 1 FOR UPDATE ", idProceso);
         let resultado:number = 0;
 
         if([rows][0][0].length==0){

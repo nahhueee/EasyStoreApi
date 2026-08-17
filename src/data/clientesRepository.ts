@@ -81,15 +81,14 @@ class ClientesRepository{
         cliente.direcciones = await ObtenerDireccionesCliente(connection, row['id']);
         cliente.ultimoDescuento = await ObtenerUltimoDescuento(connection, row['id']);
 
+        // Lista 3.5 (case 3) se eliminó ago-2026 - confirmado sin clientes asignados
+        // antes de sacarla (ver Diagnostico impacto Lista 3.5 - ago-2026.sql).
         switch (cliente.idListaPrecio) {
             case 1:
                 cliente.listaPrecio = "CONSUMIDOR FINAL"
                 break;
             case 2:
                 cliente.listaPrecio = "LISTA 3"
-                break;
-            case 3:
-                cliente.listaPrecio = "LISTA 3.5"
                 break;
             case 4:
                 cliente.listaPrecio = "LISTA 4"
@@ -408,10 +407,11 @@ async function ObtenerQueryParaExcel(filtros:any):Promise<string>{
 // Duplica intencionalmente el switch de CompletarObjeto (no hay tabla listas_precio en BD).
 // Se mantiene local a este export para no tocar CompletarObjeto sin necesidad.
 function MapearListaPrecio(idListaPrecio:number):string{
+    // Lista 3.5 (case 3) se eliminó ago-2026 - confirmado sin clientes asignados antes
+    // de sacarla (ver Diagnostico impacto Lista 3.5 - ago-2026.sql).
     switch (idListaPrecio) {
         case 1: return "CONSUMIDOR FINAL";
         case 2: return "LISTA 3";
-        case 3: return "LISTA 3.5";
         case 4: return "LISTA 4";
         case 5: return "LISTA 4.5";
         case 6: return "LISTA 5";
