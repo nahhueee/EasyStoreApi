@@ -2,6 +2,12 @@ import moment from 'moment';
 import db from '../db';
 import { DireccionesProveedor, Proveedor } from '../models/Proveedor';
 
+// Ver clientesRepository.DarBajaCliente: mismo criterio (motivo obligatorio + guard estricto).
+interface DarBajaProveedorDTO {
+    idProveedor: number;
+    motivo: string;
+}
+
 class ProveedoresRepository{
 
     //#region OBTENER
@@ -213,12 +219,71 @@ class ProveedoresRepository{
 
     async Eliminar(id:string): Promise<string>{
         const connection = await db.getConnection();
-        
+
         try {
             await connection.query("UPDATE proveedores SET fechaBaja = ? WHERE id = ?", [new Date(), id]);
             return "OK";
 
         } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    // Mismo criterio que clientesRepository.DarBajaCliente: motivo obligatorio + guard estricto
+    // (no permite la baja si el proveedor tiene compras o pagos CC vigentes, ni saldo inicial cargado).
+    // A diferencia de Eliminar() (UPDATE directo sin validar nada, usado hoy solo desde otros flujos),
+    // este es el método que expone el botón "Dar de baja" del listado.
+    async DarBajaProveedor(data: DarBajaProveedorDTO): Promise<string>{
+        const { idProveedor } = data;
+        const motivo = (data.motivo || '').trim();
+        if (!motivo) {
+            throw { status: 400, message: 'El motivo de la baja es obligatorio.' };
+        }
+
+        const connection = await db.getConnection();
+
+        try {
+            await connection.beginTransaction();
+
+            const [[proveedor]]: any = await connection.query(
+                "SELECT id, fechaBaja, inicial, inicialHistorico FROM proveedores WHERE id = ? FOR UPDATE",
+                [idProveedor]
+            );
+            if (!proveedor) throw { status: 404, message: 'El proveedor no existe.' };
+            if (proveedor.fechaBaja) throw { status: 400, message: 'El proveedor ya fue dado de baja.' };
+
+            // compras/compras_pagos_proveedor no se borran nunca (baja lógica, columna "baja"): una compra
+            // o un pago ya anulados no deben bloquear la baja del proveedor, por eso el filtro "baja IS NULL".
+            const [[conteos]]: any = await connection.query(
+                `SELECT
+                    (SELECT COUNT(*) FROM compras                  WHERE idProveedor = ? AND baja IS NULL) AS compras,
+                    (SELECT COUNT(*) FROM compras_pagos_proveedor   WHERE idProveedor = ? AND baja IS NULL) AS pagos`,
+                [idProveedor, idProveedor]
+            );
+
+            const bloqueos: string[] = [];
+            if (conteos.compras > 0) bloqueos.push(`${conteos.compras} compra${conteos.compras > 1 ? 's' : ''} vigente${conteos.compras > 1 ? 's' : ''}`);
+            if (conteos.pagos > 0) bloqueos.push(`${conteos.pagos} pago${conteos.pagos > 1 ? 's' : ''} vigente${conteos.pagos > 1 ? 's' : ''} en cuenta corriente`);
+
+            if (bloqueos.length > 0) {
+                throw { status: 400, message: `No se puede dar de baja: el proveedor tiene ${bloqueos.join(', ')}.` };
+            }
+            if (parseFloat(proveedor.inicial ?? 0) !== 0 || parseFloat(proveedor.inicialHistorico ?? 0) !== 0) {
+                throw { status: 400, message: 'No se puede dar de baja: el proveedor tiene saldo inicial cargado.' };
+            }
+
+            await connection.query(
+                "UPDATE proveedores SET fechaBaja = ?, observacionBaja = ? WHERE id = ?",
+                [new Date(), motivo, idProveedor]
+            );
+
+            await connection.commit();
+            return "OK";
+
+        } catch (error:any) {
+            await connection.rollback();
             throw error;
         } finally{
             connection.release();
