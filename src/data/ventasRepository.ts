@@ -167,12 +167,15 @@ class VentasRepository{
                 -- "Cobrado". En el caso normal (sin lista propia), ventas_productos.total
                 -- YA incluye IVA - no hace falta sumar nada. Pero para Mayorista con lista
                 -- propia (idCategoria=2/MAYORISTA y v.idLista distinto de 1/
-                -- CONSUMIDOR_FINAL - misma regla que esMayoristaConListaPropia() en
-                -- venta.constants.ts, usada en addmod-ventas/listado-ventas/notas-venta/
-                -- vista-previa/factura.service) el precio persistido es NETO y el IVA se
-                -- agrega aparte al facturar, hay que sumarlo acá para mostrar el bruto real.
+                -- CONSUMIDOR_FINAL), O para cualquier cliente con Lista 3 (v.idLista=2,
+                -- sin importar idCategoria - excepción confirmada por el usuario ago-2026,
+                -- ver esMayoristaConListaPropia() en venta.constants.ts, usada en
+                -- addmod-ventas/listado-ventas/notas-venta/vista-previa/factura.service)
+                -- el precio persistido es NETO y el IVA se agrega aparte al facturar, hay
+                -- que sumarlo acá para mostrar el bruto real.
                 -- OJO: replica los IDs 2/1 a mano porque no hay forma de reusar la función
-                -- TS desde SQL - si esa regla cambia en el front, actualizar también acá.
+                -- TS desde SQL - si esa regla vuelve a cambiar en el front, actualizar
+                -- también acá (los 2 IF de abajo).
                 --
                 -- Excepción "sin productos" (NC X / ND X libres, nota-credito-x.component.ts
                 -- y nota-debito-x.component.ts): no generan ninguna fila en ventas_productos
@@ -191,11 +194,11 @@ class VentasRepository{
                 IF(v.idProceso = 3,
                     IF(prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                         v.total,
-                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
+                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0) + IF((c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1) OR v.idLista = 2, IFNULL(vf.iva, 0), 0)
                     ) * -1,
                     IF(v.idProceso = 4 AND prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                         v.total,
-                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
+                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0) + IF((c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1) OR v.idLista = 2, IFNULL(vf.iva, 0), 0)
                     )
                 ) AS venta,
                 -- "servicio" = total_servicios (todos) menos el subtotal ya reclasificado

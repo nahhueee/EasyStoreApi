@@ -88,6 +88,41 @@ class ProveedoresRepository{
             connection.release();
         }
     }
+
+    async ObtenerParaExcel(filtros:any){
+        const connection = await db.getConnection();
+
+        try {
+            const query = await ObtenerQueryParaExcel(filtros);
+            const [rows] = await connection.query(query);
+
+            const proveedores:any[] = [];
+
+            if (Array.isArray(rows)) {
+                for (const row of rows) {
+                    proveedores.push({
+                        Codigo: row['id'],
+                        RazonSocial: row['razonSocial'],
+                        Documento: row['documento'],
+                        TipoDocumento: row['tipoDocumento'],
+                        CondicionIva: row['condicion'],
+                        Telefono: row['telefono'],
+                        Celular: row['celular'],
+                        Contacto: row['contacto'],
+                        Email: row['email'],
+                        FechaAlta: row['fechaAlta'] ? moment(row['fechaAlta']).format('DD/MM/YYYY') : ''
+                    });
+                }
+            }
+
+            return proveedores;
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
     //#endregion
 
     //#region ABM
@@ -203,14 +238,14 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         //#endregion
 
         // #region FILTROS
-        if (filtros.razonSocial != null && filtros.razonSocial != "") 
-            filtro += " AND c.razonSocial LIKE '%"+ filtros.razonSocial.toUpperCase().trim() + "%'";
-        if (filtros.condicionIva != null && filtros.condicionIva != "") 
-            filtro += " AND c.idCondIva = "+ filtros.condicionIva;
-        if (filtros.documento != null && filtros.documento != 0) 
-            filtro += " AND c.documento = " + filtros.documento;
-        if (filtros.idProveedor != null && filtros.idProveedor != 0) 
-            filtro += " AND c.id = "+ filtros.idProveedor;
+        if (filtros.razonSocial != null && filtros.razonSocial != "")
+            filtro += " AND p.razonSocial LIKE '%"+ filtros.razonSocial.toUpperCase().trim() + "%'";
+        if (filtros.condicionIva != null && filtros.condicionIva != "")
+            filtro += " AND p.idCondIva = "+ filtros.condicionIva;
+        if (filtros.documento != null && filtros.documento != 0)
+            filtro += " AND p.documento = " + filtros.documento;
+        if (filtros.idProveedor != null && filtros.idProveedor != 0)
+            filtro += " AND p.id = "+ filtros.idProveedor;
         // #endregion
 
         if (esTotal)
@@ -240,6 +275,31 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             
     } catch (error) {
         throw error; 
+    }
+}
+
+async function ObtenerQueryParaExcel(filtros:any):Promise<string>{
+    try {
+        let filtro:string = "";
+
+        if (filtros.razonSocial != null && filtros.razonSocial != "")
+            filtro += " AND p.razonSocial LIKE '%"+ filtros.razonSocial.toUpperCase().trim() + "%'";
+        if (filtros.condicionIva != null && filtros.condicionIva != "")
+            filtro += " AND p.idCondIva = "+ filtros.condicionIva;
+        if (filtros.documento != null && filtros.documento != 0)
+            filtro += " AND p.documento = " + filtros.documento;
+
+        return " SELECT p.id, p.razonSocial, p.documento, p.telefono, p.celular, p.contacto, p.email, p.fechaAlta, " +
+            " ci.descripcion condicion, td.descripcion tipoDocumento " +
+            " FROM proveedores p" +
+            " LEFT JOIN condiciones_iva ci on ci.id = p.idCondIva " +
+            " LEFT JOIN tipos_documento td on td.id = p.idTipoDocumento " +
+            " WHERE fechaBaja IS NULL " +
+            filtro +
+            " ORDER BY p.razonSocial ASC";
+
+    } catch (error) {
+        throw error;
     }
 }
 
