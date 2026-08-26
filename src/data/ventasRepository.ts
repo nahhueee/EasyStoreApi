@@ -738,22 +738,39 @@ class VentasRepository{
             //Iniciamos una transaccion
             await connection.beginTransaction();
 
-            // Obtenemos el proximo nro de venta a insertar. Va DESPUES de abrir la
-            // transacción y a propósito adentro (no antes): el SELECT usa FOR UPDATE
-            // para bloquear la última fila de este idProceso hasta el commit, así una
-            // segunda venta del mismo tipo guardada en simultáneo espera a que esta
-            // termine en vez de leer el mismo "último número" y calcular el mismo
-            // nroProceso. Bug real: Pedidos duplicados con el mismo nroProceso
-            // (condición de carrera, sin lock ni UNIQUE constraint) - ago-2026.
-            venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
-
-            //Insertamos la venta
+            // Obtenemos el proximo nro de venta e insertamos, con reintento si choca
+            // contra UNIQUE(idProceso, nroProceso). El FOR UPDATE de abajo debería
+            // alcanzar solo para serializar guardados concurrentes, pero en
+            // producción se siguieron viendo nroProceso duplicados incluso con ese
+            // lock puesto (causa de fondo todavía no identificada - ago-2026, ver
+            // memoria pedidos-nroproceso-duplicados). Este reintento es la red de
+            // seguridad real: no importa por qué se calculó mal el número, la base
+            // lo rechaza (ER_DUP_ENTRY) y acá se recalcula contra el estado actual
+            // en vez de dejar que el duplicado se guarde en silencio.
             const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega) " +
                              " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?) ";
 
-            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null];
-            const [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
-            venta.id =  resultado.insertId;
+            let resultado: ResultSetHeader;
+            let intentos = 0;
+            while (true) {
+                venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
+                const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null];
+
+                try {
+                    [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
+                    break;
+                } catch (errorInsert: any) {
+                    intentos++;
+                    // Log explícito (no silencioso) para poder cruzar timestamp/usuario
+                    // la próxima vez que esto dispare - ver memoria pedidos-nroproceso-duplicados.
+                    if (errorInsert.code === 'ER_DUP_ENTRY' && intentos < 5) {
+                        console.warn(`[nroProceso duplicado] idProceso=${venta.idProceso} nroProceso=${venta.nroProceso} chocó contra UNIQUE, reintento ${intentos}/5`);
+                        continue;
+                    }
+                    throw errorInsert;
+                }
+            }
+            venta.id =  resultado!.insertId;
 
             //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
             await ActualizarEstadoRelacionado(connection, venta);
