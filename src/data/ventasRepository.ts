@@ -1703,10 +1703,21 @@ async function ObtenerProximoNroProceso(connection, idProceso):Promise<number>{
         // ventas del mismo idProceso guardadas en simultáneo calculen el mismo
         // "próximo número". Fuera de una transacción (ver wrapper de clase, usado
         // para preview) no cambia nada: el lock se toma y libera en el acto.
-        const rows = await connection.query(" SELECT nroProceso FROM ventas WHERE idProceso = ? ORDER BY id DESC LIMIT 1 FOR UPDATE ", idProceso);
+        //
+        // MAX(nroProceso) en vez de "ORDER BY id DESC LIMIT 1" (bug real, ago-2026):
+        // la versión anterior asumía que la fila con el id más alto siempre tiene el
+        // nroProceso más alto. Esa asunción se rompe apenas se hace cualquier
+        // renumeración manual de datos (ver correcciones de nroProceso duplicado,
+        // memoria pedidos-nroproceso-duplicados) - quedan filas con id bajo y
+        // nroProceso alto, y esta función volvía a calcular sobre un nroProceso
+        // viejo, chocando una y otra vez contra el mismo número incluso con el
+        // reintento de Agregar() (los 5 intentos fallaban igual, porque siempre
+        // recalculaba lo mismo). MAX() es correcto sin importar la relación entre
+        // id y nroProceso.
+        const rows = await connection.query(" SELECT MAX(nroProceso) AS nroProceso FROM ventas WHERE idProceso = ? FOR UPDATE ", idProceso);
         let resultado:number = 0;
 
-        if([rows][0][0].length==0){
+        if(rows[0][0].nroProceso == null){
             resultado = 1;
         }else{
             resultado = rows[0][0].nroProceso + 1;
@@ -1714,7 +1725,7 @@ async function ObtenerProximoNroProceso(connection, idProceso):Promise<number>{
         return resultado;
 
     } catch (error) {
-        throw error; 
+        throw error;
     }
 }
 
