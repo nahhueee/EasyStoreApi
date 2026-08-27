@@ -18,5 +18,25 @@
     "message": "ERR 600: ValidacionDeToken: No apareció CUIT en lista de relaciones: 30714907626",
     "level": "error",
     "timestamp": "09-04-26 13:54"
+  },
+  {
+    "message": "ERR 501: Error interno de base de datos - FECAEcSolicitar CabInsert",
+    "level": "error",
+    "timestamp": "18-08-26 23:23"
+  },
+  {
+    "message": "ERR 501: Error interno de base de datos - FECAEcSolicitar CabInsert",
+    "level": "error",
+    "timestamp": "18-08-26 23:24"
+  },
+  {
+    "message": "ERR 501: Error interno de base de datos - FECAEcSolicitar CabInsert",
+    "level": "error",
+    "timestamp": "18-08-26 23:35"
+  },
+  {
+    "message": "ERR 501: Error interno de base de datos - FECAEcSolicitar CabInsert",
+    "level": "error",
+    "timestamp": "18-08-26 23:43"
   }
 ]

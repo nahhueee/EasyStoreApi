@@ -164,15 +164,17 @@ class VentasRepository{
                 ) AS fecha_hora,
                 c.nombre AS cliente,
                 -- "Venta" se muestra en bruto (IVA incluido) para cerrar siempre contra
-                -- "Cobrado". En el caso normal (sin lista propia), ventas_productos.total
-                -- YA incluye IVA - no hace falta sumar nada. Pero para Mayorista con lista
-                -- propia (idCategoria=2/MAYORISTA y v.idLista distinto de 1/
-                -- CONSUMIDOR_FINAL - misma regla que esMayoristaConListaPropia() en
-                -- venta.constants.ts, usada en addmod-ventas/listado-ventas/notas-venta/
-                -- vista-previa/factura.service) el precio persistido es NETO y el IVA se
-                -- agrega aparte al facturar, hay que sumarlo acá para mostrar el bruto real.
-                -- OJO: replica los IDs 2/1 a mano porque no hay forma de reusar la función
-                -- TS desde SQL - si esa regla cambia en el front, actualizar también acá.
+                -- "Cobrado". ventas_productos.total YA incluye IVA para CUALQUIER cliente/
+                -- lista - no hace falta sumar nada (ago-2026, decisión comercial: se
+                -- eliminó la excepción de Mayorista con lista propia/Lista 3, que hasta acá
+                -- persistía el precio en NETO y necesitaba este ajuste para mostrar el
+                -- bruto real - ver esMayoristaConListaPropia() en el historial de git de
+                -- venta.constants.ts).
+                -- DEUDA TÉCNICA ACEPTADA (ago-2026, decisión del usuario, sin migración):
+                -- ventas HISTÓRICAS de Mayorista con lista propia/Lista 3 hechas ANTES de
+                -- este cambio quedaron persistidas en NETO en ventas_productos.total - para
+                -- esas, esta columna "Venta" va a mostrar de menos (falta el 21% de IVA) en
+                -- este reporte. No se corrige con fecha de corte ni backfill a propósito.
                 --
                 -- Excepción "sin productos" (NC X / ND X libres, nota-credito-x.component.ts
                 -- y nota-debito-x.component.ts): no generan ninguna fila en ventas_productos
@@ -191,11 +193,11 @@ class VentasRepository{
                 IF(v.idProceso = 3,
                     IF(prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                         v.total,
-                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
+                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0)
                     ) * -1,
                     IF(v.idProceso = 4 AND prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                         v.total,
-                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0) + IF(c.idCategoria = 2 AND v.idLista IS NOT NULL AND v.idLista <> 1, IFNULL(vf.iva, 0), 0)
+                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0)
                     )
                 ) AS venta,
                 -- "servicio" = total_servicios (todos) menos el subtotal ya reclasificado
@@ -236,15 +238,34 @@ class VentasRepository{
                 -- recalcula acá para no reabrir la discusión neto/bruto por lista de
                 -- precio, ya resuelta en ese servicio). NULL cuando no hay comprobante
                 -- fiscal con IVA (Factura C, Sin Comprobante, etc.) -> 0.
-                -- OJO: esta columna es informativa, no siempre aditiva. En Consumidor
-                -- Final el precio de venta YA INCLUYE el IVA (se discrimina, no se suma),
-                -- así que Venta+Servicio-Descuento+Ajuste ya cierra contra Cobrado SIN
-                -- sumarle esta columna. Solo en mayorista con lista propia (precio neto)
-                -- el IVA se agrega arriba y ahí sí es aditivo. Ver EsMayoristaConListaPropia()
-                -- en addmod-ventas.component.ts.
+                -- OJO: esta columna es puramente informativa, no aditiva. El precio de
+                -- venta YA INCLUYE el IVA para CUALQUIER cliente/lista (ago-2026, se
+                -- eliminó la excepción de mayorista con lista propia que hasta acá tenía
+                -- precio neto con IVA sumado aparte - ver esMayoristaConListaPropia() en el
+                -- historial de git de venta.constants.ts), así que Venta+Servicio-Descuento
+                -- +Ajuste ya cierra contra Cobrado SIN sumarle esta columna, sin excepciones.
+                -- Ventas HISTÓRICAS de mayorista con lista propia (anteriores a este cambio)
+                -- siguen siendo la excepción real en los datos - deuda técnica aceptada, ver
+                -- comentario de la columna "venta" más arriba.
                 IF(v.idProceso = 3, IFNULL(vf.iva, 0) * -1, IFNULL(vf.iva, 0)) AS iva21,
                 IF(v.idProceso = 3, v.total * -1, v.total) cobrado,
-                CONCAT(IFNULL(v.descuento, 0), ' %') AS descuento,
+                -- % efectivo (Descuento$/Bruto$), no v.descuento (cabecera) directo: con
+                -- descuento por ítem (ago-2026) la cabecera puede quedar en 0% mientras
+                -- "des" (arriba) sí tiene plata real -> mostraba "0 %" al lado de un
+                -- Descuento $ distinto de cero, contradictorio en la misma fila. Reusa las
+                -- mismas subqueries que ya alimenta "des", sin JOINs nuevos. NULLIF evita
+                -- división por cero en ventas sin ítems (NC/ND "X" libre) - el IFNULL de
+                -- afuera resuelve ese caso a "0 %".
+                CONCAT(
+                    IFNULL(
+                        ROUND(
+                            (IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0))
+                            / NULLIF(IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0), 0)
+                            * 100,
+                        2),
+                    0),
+                    ' %'
+                ) AS descuento,
                 com.descripcion AS comprobante,
                 CONCAT(
                     LPAD(IFNULL(e.puntoVta, 0), 4, '0'),

@@ -8,11 +8,13 @@ import { crearExcelProductos } from '../services/excelProductosService';
 import { crearExcelClientes } from '../services/excelClientesService';
 import { crearExcelCuentas } from '../services/excelCuentasService';
 import { crearExcelMovimientosFondos } from '../services/excelFondosService';
+import { crearExcelProveedores } from '../services/excelProveedoresService';
 import { ProductosRepo } from '../data/productosRepository';
 import { VentasRepo } from '../data/ventasRepository';
 import { ClientesRepo } from '../data/clientesRepository';
 import { CuentasRepo } from '../data/cuentasRepository';
 import { FondosRepo } from '../data/fondosRepository';
+import { ProveedoresRepo } from '../data/proveedoresRepository';
 
 //#region IMPRESION DE PDFS
 const printer = require('pdf-to-printer');
@@ -108,6 +110,26 @@ router.post('/clientes-excel', async (req, res) => {
         res.send(buffer);
     } catch(error:any){
         let msg = "Error al intentar generar el excel de clientes.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.post('/proveedores-excel', async (req, res) => {
+    try {
+
+        const proveedores = await ProveedoresRepo.ObtenerParaExcel(req.body);
+
+        // Generar Excel usando el servicio
+        const buffer = await crearExcelProveedores(proveedores);
+
+        // Configurar headers para descarga
+        res.setHeader('Content-Disposition', 'attachment; filename="proveedores.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch(error:any){
+        let msg = "Error al intentar generar el excel de proveedores.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }
