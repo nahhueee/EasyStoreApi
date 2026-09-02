@@ -4,6 +4,7 @@ import logger from '../log/loggerGeneral';
 const router : Router  = Router();
 
 import { crearExcelVentas } from '../services/excelVentasService';
+import { crearExcelLibroIvaVentas } from '../services/excelLibroIvaService';
 import { crearExcelProductos } from '../services/excelProductosService';
 import { crearExcelClientes } from '../services/excelClientesService';
 import { crearExcelCuentas } from '../services/excelCuentasService';
@@ -11,6 +12,7 @@ import { crearExcelMovimientosFondos } from '../services/excelFondosService';
 import { crearExcelProveedores } from '../services/excelProveedoresService';
 import { ProductosRepo } from '../data/productosRepository';
 import { VentasRepo } from '../data/ventasRepository';
+import { LibrosIvaRepo } from '../data/librosIvaRepository';
 import { ClientesRepo } from '../data/clientesRepository';
 import { CuentasRepo } from '../data/cuentasRepository';
 import { FondosRepo } from '../data/fondosRepository';
@@ -94,6 +96,28 @@ router.post('/ventas-excel', async (req, res) => {
     }
 });
 
+
+router.post('/libro-iva-ventas-excel', async (req, res) => {
+    try {
+
+        const libro = await LibrosIvaRepo.ObtenerLibroIvaVentas(req.body);
+        const correlatividad = await LibrosIvaRepo.ObtenerCorrelatividadVentas(req.body);
+        const excluidos = await LibrosIvaRepo.ObtenerExcluidosDelLibro(req.body);
+
+        // Generar Excel usando el servicio
+        const buffer = await crearExcelLibroIvaVentas(libro, correlatividad, excluidos);
+
+        // Configurar headers para descarga
+        res.setHeader('Content-Disposition', 'attachment; filename="libro-iva-ventas.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch(error:any){
+        let msg = "Error al intentar generar el Libro IVA Ventas.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 
 router.post('/clientes-excel', async (req, res) => {
     try {
