@@ -7,10 +7,11 @@
  * y si existe, trae CAE, fecha, documento del receptor e importe. Cruza el documento
  * contra la tabla `clientes` de la base para intentar resolver la razon social.
  *
- * Ademas, para las Notas de Credito B ya conocidas en el rango afectado, consulta
- * su CbtesAsoc para detectar si alguna ya esta formalmente asociada a alguno de los
- * numeros de Factura A/B faltantes (o sea, si ya fue "cancelada" aunque el sistema
- * nunca la haya visto).
+ * Las Notas de Credito B que tambien son parte de los huecos (existen en ARCA pero
+ * nunca se guardaron en el sistema) se consultan igual que las facturas, y se lee su
+ * propio CbtesAsoc para saber a que Factura A/B especifica cancelan -> asi se puede
+ * marcar, dentro de esta misma corrida, cuales de las facturas faltantes ya estan
+ * canceladas por una de estas NC (aunque el sistema nunca haya visto ninguna de las dos).
  *
  * Requiere: certificados de PRODUCCION de SUCEDE en src/certs/30714907626/{cert,key}
  * y config.pc.json con acceso de lectura a la base.
@@ -89,6 +90,7 @@ async function main() {
 
     // --- 1) Consultar cada comprobante faltante ---
     const filas = [];
+    const asociaciones = []; // CbtesAsoc leido de las NC B que tambien estaban faltantes
     for (const grupo of HUECOS) {
         const numeros = grupo.rangos.flatMap(([d, h]) => expandirRango(d, h));
         for (const numero of numeros) {
@@ -119,6 +121,13 @@ async function main() {
             const r = info.ResultGet;
             console.log(`EXISTE - CAE ${r.CodAutorizacion} - Resultado ${r.Resultado}`);
 
+            if (grupo.tipoFactura === 8 && r.CbtesAsoc) {
+                const lista = Array.isArray(r.CbtesAsoc) ? r.CbtesAsoc : [r.CbtesAsoc];
+                for (const a of lista) {
+                    asociaciones.push({ ncNumero: numero, tipoAsociado: a.Tipo, ptoVentaAsociado: a.PtoVta, nroAsociado: a.Nro });
+                }
+            }
+
             let razonSocial = '';
             if (r.DocNro) {
                 const [clientes] = await conn.query(
@@ -141,14 +150,14 @@ async function main() {
         }
     }
 
-    // --- 2) Cruzar contra NC B ya conocidas en el sistema, buscando CbtesAsoc ---
-    console.log('\nBuscando Notas de Credito B propias del sistema para revisar CbtesAsoc...');
+    // --- 2) Adicionalmente, revisar tambien las NC B que SI estan en el sistema
+    //         (por si alguna de ellas -ya conocida- cancela alguna factura faltante) ---
+    console.log('\nBuscando Notas de Credito B ya registradas en el sistema para revisar CbtesAsoc...');
     const [ncConocidas] = await conn.query(
         `SELECT vf.ticket FROM ventas_factura vf INNER JOIN ventas v ON v.id = vf.idVenta
          WHERE v.idEmpresa = 1 AND vf.tipoFactura = 8 AND vf.ptoVenta = ? ORDER BY vf.ticket`,
         [PTO_VENTA]
     );
-    const asociaciones = [];
     for (const nc of ncConocidas) {
         const info = await afip.electronicBillingService.getVoucherInfo(nc.ticket, PTO_VENTA, 8);
         const asoc = info?.ResultGet?.CbtesAsoc;
@@ -159,7 +168,7 @@ async function main() {
             }
         }
     }
-    console.log(`NC B revisadas: ${ncConocidas.length}. Asociaciones encontradas: ${asociaciones.length}`);
+    console.log(`NC B (faltantes + registradas) con asociacion encontrada: ${asociaciones.length}`);
 
     for (const fila of filas) {
         if (fila.tipoFactura === 'NOTA DE CREDITO B') continue;

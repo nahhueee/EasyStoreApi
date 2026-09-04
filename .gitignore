@@ -22,3 +22,4 @@
 # Script de investigacion Libro IVA (branch investigacion-libro-iva-comprobantes-faltantes)
 tokens-investigacion/
 Investigacion_Comprobantes_Faltantes_*.xlsx
+~$*.xlsx
