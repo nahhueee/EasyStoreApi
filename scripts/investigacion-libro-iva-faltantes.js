@@ -121,10 +121,13 @@ async function main() {
             const r = info.ResultGet;
             console.log(`EXISTE - CAE ${r.CodAutorizacion} - Resultado ${r.Resultado}`);
 
-            if (grupo.tipoFactura === 8 && r.CbtesAsoc) {
-                const lista = Array.isArray(r.CbtesAsoc) ? r.CbtesAsoc : [r.CbtesAsoc];
+            // OJO: el WSDL de AFIP envuelve el array en un contenedor -> CbtesAsoc.CbteAsoc,
+            // NO es directamente un array (ese fue el bug de la primera version del script).
+            if (grupo.tipoFactura === 8 && r.CbtesAsoc?.CbteAsoc) {
+                const lista = Array.isArray(r.CbtesAsoc.CbteAsoc) ? r.CbtesAsoc.CbteAsoc : [r.CbtesAsoc.CbteAsoc];
                 for (const a of lista) {
-                    asociaciones.push({ ncNumero: numero, tipoAsociado: a.Tipo, ptoVentaAsociado: a.PtoVta, nroAsociado: a.Nro });
+                    console.log(`   -> CbteAsoc de NC ${numero}: Tipo=${a.Tipo} PtoVta=${a.PtoVta} Nro=${a.Nro}`);
+                    asociaciones.push({ ncNumero: numero, tipoAsociado: Number(a.Tipo), ptoVentaAsociado: Number(a.PtoVta), nroAsociado: Number(a.Nro) });
                 }
             }
 
@@ -160,11 +163,11 @@ async function main() {
     );
     for (const nc of ncConocidas) {
         const info = await afip.electronicBillingService.getVoucherInfo(nc.ticket, PTO_VENTA, 8);
-        const asoc = info?.ResultGet?.CbtesAsoc;
+        const asoc = info?.ResultGet?.CbtesAsoc?.CbteAsoc;
         if (asoc) {
             const lista = Array.isArray(asoc) ? asoc : [asoc];
             for (const a of lista) {
-                asociaciones.push({ ncNumero: nc.ticket, tipoAsociado: a.Tipo, ptoVentaAsociado: a.PtoVta, nroAsociado: a.Nro });
+                asociaciones.push({ ncNumero: nc.ticket, tipoAsociado: Number(a.Tipo), ptoVentaAsociado: Number(a.PtoVta), nroAsociado: Number(a.Nro) });
             }
         }
     }
