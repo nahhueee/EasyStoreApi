@@ -10,6 +10,7 @@ import { crearExcelClientes } from '../services/excelClientesService';
 import { crearExcelCuentas } from '../services/excelCuentasService';
 import { crearExcelMovimientosFondos } from '../services/excelFondosService';
 import { crearExcelProveedores } from '../services/excelProveedoresService';
+import { crearExcelCompras } from '../services/excelComprasService';
 import { ProductosRepo } from '../data/productosRepository';
 import { VentasRepo } from '../data/ventasRepository';
 import { LibrosIvaRepo } from '../data/librosIvaRepository';
@@ -17,6 +18,7 @@ import { ClientesRepo } from '../data/clientesRepository';
 import { CuentasRepo } from '../data/cuentasRepository';
 import { FondosRepo } from '../data/fondosRepository';
 import { ProveedoresRepo } from '../data/proveedoresRepository';
+import { ComprasRepo } from '../data/comprasRepository';
 
 //#region IMPRESION DE PDFS
 const printer = require('pdf-to-printer');
@@ -156,6 +158,27 @@ router.post('/proveedores-excel', async (req, res) => {
         let msg = "Error al intentar generar el excel de proveedores.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
+    }
+});
+
+router.post('/compras-excel', async (req, res) => {
+    try {
+
+        const compras = await ComprasRepo.ObtenerParaExcel(req.body);
+
+        // Generar Excel usando el servicio
+        const buffer = await crearExcelCompras(compras);
+
+        // Configurar headers para descarga
+        res.setHeader('Content-Disposition', 'attachment; filename="compras.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch(error:any){
+        const status = error?.status ?? 500;
+        const msg = error?.message ?? "Error al intentar generar el excel de compras.";
+        if (status === 500) logger.error(msg + " " + (error?.message ?? ''));
+        res.status(status).send(msg);
     }
 });
 

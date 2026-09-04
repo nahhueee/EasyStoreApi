@@ -59,6 +59,35 @@ class ComprasRepository {
         }
     }
 
+    // Export a Excel del listado de Compras (files/compras-excel). Sin paginado (trae todo el
+    // rango) y sin incluirBaja: una compra dada de baja no debe aparecer en el export (decisión del
+    // usuario, a diferencia del listado en pantalla que sí las muestra marcadas). Reutiliza el mismo
+    // ObtenerQuery del listado para no duplicar los JOIN de proveedor/condición IVA/tipo comprobante/
+    // resumen de método de pago.
+    async ObtenerParaExcel(filtros: any) {
+        const connection = await db.getConnection();
+
+        try {
+            if (!filtros?.fechas || filtros.fechas.length !== 2) {
+                throw { status: 400, message: 'Debe indicar un rango de fechas.' };
+            }
+
+            const query = ObtenerQuery({ ...filtros, tamanioPagina: null, incluirBaja: false }, false);
+            const [rows] = await connection.query(query);
+
+            if (Array.isArray(rows)) {
+                for (const row of rows) ParsearTotalesCompra(row);
+            }
+
+            return rows as any[];
+
+        } catch (error: any) {
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
     async SelectorMetodosPago(idEmpresa: any) {
         const connection = await db.getConnection();
 
