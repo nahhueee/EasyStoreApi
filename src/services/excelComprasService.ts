@@ -17,6 +17,7 @@ export async function crearExcelCompras(data: any[]) {
 
   sheet.columns = [
     { header: 'Fecha', key: 'fecha', width: 14 },
+    { header: 'Código Proveedor', key: 'idProveedor', width: 16 },
     { header: 'Proveedor', key: 'proveedor', width: 30 },
     { header: 'Cond. IVA Proveedor', key: 'condicionIvaProveedor', width: 20 },
     { header: 'Tipo Comprobante', key: 'tipoComprobante', width: 20 },
@@ -35,6 +36,7 @@ export async function crearExcelCompras(data: any[]) {
   data.forEach(c => {
     sheet.addRow({
       fecha: c.fecha ? moment(c.fecha).format('DD/MM/YYYY') : '',
+      idProveedor: c.idProveedor ?? '',
       proveedor: c.proveedor ?? '',
       condicionIvaProveedor: c.condicionIvaProveedor ?? '',
       tipoComprobante: c.tipoComprobante ?? '',
@@ -51,7 +53,7 @@ export async function crearExcelCompras(data: any[]) {
     });
   });
 
-  sheet.autoFilter = { from: 'A1', to: 'N1' };
+  sheet.autoFilter = { from: 'A1', to: 'O1' };
 
   // Fila TOTAL. Mismo guard de referencia circular que excelVentasService/excelFondosService:
   // sin filas de datos, lastDataRow=1 y SUM(F2:F1) se normaliza a F1:F2 (se incluye a sí misma).
