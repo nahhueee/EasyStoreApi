@@ -39,6 +39,9 @@ import { Color, TallesProducto } from "./Producto";
     pagos?:PagosVenta[];
     factura?:FacturaVenta;
     notas?:NotaCreditoVenta[];
+    // Cantidades ya acreditadas por NC FISCALES previas sobre esta venta (sep-2026,
+    // devoluciones parciales sucesivas) - ver ObtenerCantidadesAcreditadas.
+    cantidadesAcreditadas?: CantidadesAcreditadas;
 
     nroRelacionado?:number;
     tipoRelacionado?:string;
@@ -181,6 +184,42 @@ import { Color, TallesProducto } from "./Producto";
   }
   
   
+  export class CantidadAcreditadaProducto{
+    idLineaTalle:number = 0;
+    cantidad:number = 0;
+    t1:number = 0;
+    t2:number = 0;
+    t3:number = 0;
+    t4:number = 0;
+    t5:number = 0;
+    t6:number = 0;
+    t7:number = 0;
+    t8:number = 0;
+    t9:number = 0;
+    t10:number = 0;
+  }
+
+  export class CantidadAcreditadaServicio{
+    idServicio:number = 0;
+    cantidad:number = 0;
+  }
+
+  /**
+   * Cantidades ya acreditadas por NCs FISCALES previas sobre esta venta (NC_A/B/C -
+   * ver TipoComprobante en objFacturar.ts), agrupadas por idLineaTalle (productos) e
+   * idServicio (servicios). Permite al front calcular el remanente disponible al
+   * emitir una nueva NC fiscal (devoluciones parciales sucesivas, sep-2026). NO
+   * incluye NC internas (X): esas no acreditan contra el comprobante fiscal
+   * original, así que no restan saldo disponible. Ver ObtenerCantidadesAcreditadas
+   * en ventasRepository.ts.
+   */
+  export class CantidadesAcreditadas{
+    totalAcreditado:number = 0;
+    productos:CantidadAcreditadaProducto[] = [];
+    servicios:CantidadAcreditadaServicio[] = [];
+  }
+
+
   export class NotaCreditoVenta{
     idNotaVenta:number = 0;
     nroProceso:number = 0;

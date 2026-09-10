@@ -1,5 +1,5 @@
 import db from '../db';
-import { NotaCreditoVenta, PagosVenta, ProductosVenta, ServiciosVenta, Venta } from '../models/Venta';
+import { CantidadAcreditadaProducto, CantidadAcreditadaServicio, CantidadesAcreditadas, NotaCreditoVenta, PagosVenta, ProductosVenta, ServiciosVenta, Venta } from '../models/Venta';
 import { ObjQR } from '../models/ObjQR';
 import { FacturaVenta } from '../models/FacturaVenta';
 import { ProductosRepo } from './productosRepository';
@@ -7,6 +7,7 @@ import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
 import { SesionServ } from '../services/sesionService';
 import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado } from '../models/ventaEstados';
+import { TipoComprobante } from '../models/objFacturar';
 const moment = require('moment');
 
 // Actualiza el estado del proceso relacionado (Presupuesto/Pedido/Nota de Empaque)
@@ -701,6 +702,7 @@ class VentasRepository{
         venta.productos = await ObtenerProductosVenta(connection, venta.id!, venta.idProceso!);
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
         venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!);
+        venta.cantidadesAcreditadas = await ObtenerCantidadesAcreditadas(connection, venta.nroProceso!);
         return venta;
     }
 
@@ -1713,6 +1715,90 @@ async function ObtenerNotasVenta(connection, nroProceso:number){
 
     } catch (error) {
         throw error; 
+    }
+}
+
+
+// Cantidades ya acreditadas por NCs FISCALES (NC_A/B/C, no internas/X) ya emitidas
+// sobre esta venta - permite al front (PrepararPreciosVenta) calcular el remanente
+// disponible al emitir una nueva NC fiscal, para devoluciones parciales sucesivas
+// (sep-2026). Mismo criterio de nroRelacionado/idProceso=3 que ObtenerNotasVenta,
+// filtrando además por tipo fiscal (una NC interna/X no resta saldo del comprobante
+// fiscal original).
+async function ObtenerCantidadesAcreditadas(connection, nroProceso:number): Promise<CantidadesAcreditadas> {
+    try {
+        const resultado = new CantidadesAcreditadas();
+
+        const [notasFiscales] = await connection.query(
+            "SELECT id, total FROM ventas WHERE nroRelacionado = ? AND idProceso = 3 AND idTComprobante IN (?, ?, ?)",
+            [nroProceso, TipoComprobante.NC_A, TipoComprobante.NC_B, TipoComprobante.NC_C]
+        );
+
+        if (!Array.isArray(notasFiscales) || notasFiscales.length === 0) {
+            return resultado;
+        }
+
+        const idsNotas = notasFiscales.map(n => n['id']);
+        resultado.totalAcreditado = notasFiscales.reduce(
+            (acc, n) => acc + (parseFloat(n['total']) || 0), 0
+        );
+
+        const placeholders = idsNotas.map(() => '?').join(',');
+
+        // Se suma por idLineaTalle (identifica la misma línea de producto a través de
+        // las distintas ventas - ver idLineaTalle en InsertProductoVenta) para poder
+        // descontar del remanente disponible por talle, no solo por producto.
+        const [productos] = await connection.query(
+            `SELECT idLineaTalle,
+                    SUM(cantidad) cantidad,
+                    SUM(t1) t1, SUM(t2) t2, SUM(t3) t3, SUM(t4) t4, SUM(t5) t5,
+                    SUM(t6) t6, SUM(t7) t7, SUM(t8) t8, SUM(t9) t9, SUM(t10) t10
+             FROM ventas_productos
+             WHERE idVenta IN (${placeholders})
+             GROUP BY idLineaTalle`,
+            idsNotas
+        );
+
+        if (Array.isArray(productos)) {
+            resultado.productos = productos.map(p => {
+                const item = new CantidadAcreditadaProducto();
+                item.idLineaTalle = p['idLineaTalle'];
+                item.cantidad = parseFloat(p['cantidad']) || 0;
+                item.t1 = parseInt(p['t1']) || 0;
+                item.t2 = parseInt(p['t2']) || 0;
+                item.t3 = parseInt(p['t3']) || 0;
+                item.t4 = parseInt(p['t4']) || 0;
+                item.t5 = parseInt(p['t5']) || 0;
+                item.t6 = parseInt(p['t6']) || 0;
+                item.t7 = parseInt(p['t7']) || 0;
+                item.t8 = parseInt(p['t8']) || 0;
+                item.t9 = parseInt(p['t9']) || 0;
+                item.t10 = parseInt(p['t10']) || 0;
+                return item;
+            });
+        }
+
+        const [servicios] = await connection.query(
+            `SELECT idServicio, SUM(cantidad) cantidad
+             FROM ventas_servicios
+             WHERE idVenta IN (${placeholders})
+             GROUP BY idServicio`,
+            idsNotas
+        );
+
+        if (Array.isArray(servicios)) {
+            resultado.servicios = servicios.map(s => {
+                const item = new CantidadAcreditadaServicio();
+                item.idServicio = s['idServicio'];
+                item.cantidad = parseFloat(s['cantidad']) || 0;
+                return item;
+            });
+        }
+
+        return resultado;
+
+    } catch (error) {
+        throw error;
     }
 }
 
