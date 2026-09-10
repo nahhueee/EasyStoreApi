@@ -473,10 +473,10 @@ class CuentasRepository{
             // lo que efectivamente cancela/acredita la cuenta del cliente)
             const [res] = await connection.query<ResultSetHeader>(
                 `
-                INSERT INTO ventas_entrega (idCliente, monto, fecha)
-                VALUES (?, ?, NOW())
+                INSERT INTO ventas_entrega (idCliente, idEmpresa, monto, fecha)
+                VALUES (?, ?, ?, NOW())
                 `,
-                [data.idCliente, montoTotalAplicar]
+                [data.idCliente, data.idEmpresa ?? null, montoTotalAplicar]
             );
             const idEntrega = res.insertId;
             //=====================================
@@ -1100,7 +1100,19 @@ class CuentasRepository{
             // borde: cancelación 100% de saldo inicial, sin ancla ni ventas), queda en
             // null - no hay de dónde derivarlo de forma confiable, mismo gap que existía
             // en el insert original (ver EntregaDinero).
-            const idEmpresaEntrega: number | null = pagos.find((p: any) => p.idEmpresa != null)?.idEmpresa ?? null;
+            // Empresa real que cobró esta entrega: se lee directo de ventas_entrega
+            // (persistida desde sep-2026, ver 20260908120000_add_idempresa_ventas_entrega.js)
+            // en vez de inferirla de las ventas canceladas - esas son la empresa que
+            // FACTURÓ la venta, no necesariamente la que cobró el dinero (selector de
+            // empresa del formulario de Entrega de Dinero). Fallback a la inferencia
+            // anterior solo para recibos anteriores a la migración (columna en NULL).
+            const [[entregaEmpresaRow]]: any = idEntrega != null
+                ? await connection.query(`SELECT idEmpresa FROM ventas_entrega WHERE id = ?`, [idEntrega])
+                : [null];
+            const idEmpresaEntrega: number | null =
+                entregaEmpresaRow?.idEmpresa
+                ?? pagos.find((p: any) => p.idEmpresa != null)?.idEmpresa
+                ?? null;
 
             if (idEntrega != null) {
                 // ---- Entrega de Dinero: reversión completa ----
@@ -1264,13 +1276,23 @@ class CuentasRepository{
                 throw new Error("El monto entregado supera la deuda");
             }
 
+            // Empresa de la venta: en este flujo (a diferencia de EntregaDinero) no hay
+            // selector de empresa - siempre se cobra a nombre de la empresa que facturó
+            // la venta, así que es el mismo valor que se usa en los movimientos de fondo
+            // de abajo y el que se persiste en ventas_entrega.idEmpresa (ver
+            // 20260908120000_add_idempresa_ventas_entrega.js / DarBajaRecibo).
+            const [[ventaRow]]: any = await connection.query(
+                "SELECT idEmpresa FROM ventas WHERE id = ?",
+                [entrega.idVenta]
+            );
+
             //Insertamos la cabecera del registro de historial
             const [res] = await connection.query<ResultSetHeader>(
                 `
-                INSERT INTO ventas_entrega (idCliente, monto, fecha)
-                VALUES (?, ?, NOW())
+                INSERT INTO ventas_entrega (idCliente, idEmpresa, monto, fecha)
+                VALUES (?, ?, ?, NOW())
                 `,
-                [entrega.idCliente, deudaCancelada]
+                [entrega.idCliente, ventaRow?.idEmpresa ?? null, deudaCancelada]
             );
             const idEntrega = res.insertId;
 
@@ -1288,13 +1310,6 @@ class CuentasRepository{
             );
             const idRecibo = reciboRes.insertId;
             const usuarioActivo = SesionServ.LeerSesion().usuario;
-
-            // Necesario para poder registrar en valores_acreditar los pagos con
-            // Cheque/Crédito (ver comentario más abajo).
-            const [[ventaRow]]: any = await connection.query(
-                "SELECT idEmpresa FROM ventas WHERE id = ?",
-                [entrega.idVenta]
-            );
 
             for (const element of entrega.pagos) {
                 // El monto que cancela la venta incluye la retención (si hay): para el
