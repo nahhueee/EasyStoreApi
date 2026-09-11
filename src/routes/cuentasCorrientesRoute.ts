@@ -1,6 +1,7 @@
 import {CuentasRepo} from '../data/cuentasRepository';
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
+import { authMiddleware } from '../middlewares/authMiddleware';
 const router : Router  = Router();
 
 router.post('/obtener', async (req:Request, res:Response) => {
@@ -57,9 +58,9 @@ router.get('/recibo/:idRecibo', async (req:Request, res:Response) => {
     }
 });
 
-router.put('/entrega', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await CuentasRepo.EntregaDinero(req.body));
+router.put('/entrega', authMiddleware, async (req:Request, res:Response) => {
+    try{
+        res.json(await CuentasRepo.EntregaDinero(req.body, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "No se pudo realizar el proceso de entrega de dinero.";
@@ -79,9 +80,9 @@ router.put('/revertir-entrega', async (req:Request, res:Response) => {
     }
 });
 
-router.put('/dar-baja-recibo', async (req:Request, res:Response) => {
+router.put('/dar-baja-recibo', authMiddleware, async (req:Request, res:Response) => {
     try{
-        res.json(await CuentasRepo.DarBajaRecibo(req.body));
+        res.json(await CuentasRepo.DarBajaRecibo(req.body, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "No se pudo dar de baja el recibo.";
@@ -94,9 +95,9 @@ router.put('/dar-baja-recibo', async (req:Request, res:Response) => {
     }
 });
 
-router.put('/actualizar-pago', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await CuentasRepo.ActualizarPagosVenta(req.body));
+router.put('/actualizar-pago', authMiddleware, async (req:Request, res:Response) => {
+    try{
+        res.json(await CuentasRepo.ActualizarPagosVenta(req.body, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "No se pudo actualizar el estado de pago.";

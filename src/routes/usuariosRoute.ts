@@ -1,7 +1,8 @@
 import {UsuariosRepo} from '../data/usuariosRepository';
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
-import { SesionServ } from '../services/sesionService';
+import jwt from 'jsonwebtoken';
+import config from '../conf/app.config';
 const router : Router  = Router();
 
 //#region OBTENER
@@ -65,21 +66,25 @@ router.post('/login', async (req:Request, res:Response) => {
         // 200 + null en credenciales inválidas (usuario inexistente o pass incorrecta):
         // mismo contrato que ya consumía el frontend, sin distinguir el motivo del rechazo.
         const usuario = await UsuariosRepo.Login(req.body.usuario, req.body.pass);
-        res.json(usuario);
+
+        if (!usuario) {
+            res.json(null);
+            return;
+        }
+
+        // Token stateless: reemplaza al viejo archivo de sesión único en el server
+        // (se pisaba con el último login). Cada request se identifica con su propio
+        // token, sin estado compartido - ver authMiddleware.ts.
+        const token = jwt.sign(
+            { id: usuario.id, usuario: usuario.usuario, nombre: usuario.nombre, idCargo: usuario.idCargo, cargo: usuario.cargo },
+            config.jwtSecret,
+            { expiresIn: '12h' }
+        );
+
+        res.json({ ...usuario, token });
 
     } catch(error:any){
         let msg = "Error al intentar iniciar sesion.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
-    }
-});
-
-router.put('/guardar-sesion', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await SesionServ.GuardarSesion(req.body.id, req.body.usuario, req.body.nombre, req.body.cargo.nombre));
-
-    } catch(error:any){
-        let msg = "Error al intentar guardar la sesion.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

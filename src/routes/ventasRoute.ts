@@ -2,6 +2,7 @@ import {VentasRepo} from '../data/ventasRepository';
 import {FacturacionServ} from '../services/facturacionService';
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
+import { authMiddleware } from '../middlewares/authMiddleware';
 const router : Router  = Router();
 
 //#region OBTENER
@@ -74,9 +75,9 @@ router.get('/verificar-nota/:nroNota', async (req:Request, res:Response) => {
 //#endregion
 
 //#region ABM
-router.post('/agregar', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await VentasRepo.Agregar(req.body.venta));
+router.post('/agregar', authMiddleware, async (req:Request, res:Response) => {
+    try{
+        res.json(await VentasRepo.Agregar(req.body.venta, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "Error al intentar agregar la venta.";
@@ -85,9 +86,9 @@ router.post('/agregar', async (req:Request, res:Response) => {
     }
 });
 
-router.put('/modificar', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await VentasRepo.Modificar(req.body));
+router.put('/modificar', authMiddleware, async (req:Request, res:Response) => {
+    try{
+        res.json(await VentasRepo.Modificar(req.body, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "Error al intentar modificar la venta.";

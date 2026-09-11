@@ -1,6 +1,7 @@
 import {ComprasCuentasRepo} from '../data/comprasCuentasRepository';
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
+import { authMiddleware } from '../middlewares/authMiddleware';
 const router : Router  = Router();
 
 //#region OBTENER
@@ -39,9 +40,9 @@ router.get('/pago/:idPagoProveedor', async (req:Request, res:Response) => {
 //#endregion
 
 //#region ABM
-router.put('/pagar', async (req:Request, res:Response) => {
+router.put('/pagar', authMiddleware, async (req:Request, res:Response) => {
     try{
-        res.json(await ComprasCuentasRepo.PagarProveedor(req.body));
+        res.json(await ComprasCuentasRepo.PagarProveedor(req.body, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "No se pudo realizar el pago al proveedor.";
@@ -50,9 +51,9 @@ router.put('/pagar', async (req:Request, res:Response) => {
     }
 });
 
-router.put('/revertir-pago', async (req:Request, res:Response) => {
+router.put('/revertir-pago', authMiddleware, async (req:Request, res:Response) => {
     try{
-        res.json(await ComprasCuentasRepo.RevertirPagoProveedor(req.body?.idPagoProveedor));
+        res.json(await ComprasCuentasRepo.RevertirPagoProveedor(req.body?.idPagoProveedor, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "No se pudo revertir el pago al proveedor.";

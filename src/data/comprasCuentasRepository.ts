@@ -1,6 +1,5 @@
 import db from '../db';
 import { ResultSetHeader } from 'mysql2';
-import { SesionServ } from '../services/sesionService';
 const moment = require('moment');
 
 // Cuenta Corriente de Proveedores (Compras F2, ver ROADMAP-modulo-compras.md sección 9).
@@ -164,7 +163,7 @@ class ComprasCuentasRepository {
     //#endregion
 
     //#region ABM
-    async PagarProveedor(data: PagarProveedorDTO): Promise<string> {
+    async PagarProveedor(data: PagarProveedorDTO, usuario: string): Promise<string> {
         const connection = await db.getConnection();
 
         try {
@@ -174,7 +173,6 @@ class ComprasCuentasRepository {
             if (montoTotal <= 0) throw { status: 400, message: 'El monto del pago debe ser mayor a cero.' };
 
             await connection.beginTransaction();
-            const usuario = SesionServ.LeerSesion().usuario;
 
             const [rowsProveedor]: any = await connection.query(
                 "SELECT inicial FROM proveedores WHERE id = ? FOR UPDATE",
@@ -293,12 +291,11 @@ class ComprasCuentasRepository {
     // Baja lógica + contra-asientos (NUNCA delete, NUNCA editar el movimiento original) - mejora
     // deliberada sobre el patrón de Clientes (RevertirEntrega borra registros sin revertir fondos,
     // ver comentario al inicio del archivo). Decisión validada con el usuario el 23-jun-2026.
-    async RevertirPagoProveedor(idPagoProveedor: any): Promise<string> {
+    async RevertirPagoProveedor(idPagoProveedor: any, usuario: string): Promise<string> {
         const connection = await db.getConnection();
 
         try {
             await connection.beginTransaction();
-            const usuario = SesionServ.LeerSesion().usuario;
 
             const [rowsPago]: any = await connection.query(
                 "SELECT idEmpresa, idCaja, idProveedor, baja FROM compras_pagos_proveedor WHERE id = ? FOR UPDATE",

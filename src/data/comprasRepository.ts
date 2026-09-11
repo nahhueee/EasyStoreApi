@@ -1,7 +1,6 @@
 import db from '../db';
 import { Compra, DetalleCompra, CompraIva, CompraPercepcionIibb, PagoCompra } from '../models/Compra';
 import { ResultSetHeader } from 'mysql2';
-import { SesionServ } from '../services/sesionService';
 import { ObtenerSaldoAFavorProveedor } from './comprasCuentasRepository';
 const moment = require('moment');
 
@@ -118,7 +117,7 @@ class ComprasRepository {
     //#endregion
 
     //#region ABM
-    async Agregar(compra: Compra): Promise<string> {
+    async Agregar(compra: Compra, usuario: string): Promise<string> {
         const connection = await db.getConnection();
 
         try {
@@ -163,8 +162,6 @@ class ComprasRepository {
             }
 
             await connection.beginTransaction();
-
-            const usuario = SesionServ.LeerSesion().usuario;
 
             // Cuenta Corriente (Proveedor) marca la compra como impaga (es deuda, no egreso real) - mismo
             // criterio que ventas.impaga. Con multi-método basta con que UNO de los pagos sea CC para que
@@ -243,13 +240,11 @@ class ComprasRepository {
         }
     }
 
-    async Eliminar(compra: any): Promise<string> {
+    async Eliminar(compra: any, usuario: string): Promise<string> {
         const connection = await db.getConnection();
 
         try {
             await connection.beginTransaction();
-
-            const usuario = SesionServ.LeerSesion().usuario;
 
             // No confiamos en lo que venga del front: traemos el estado real de la compra con FOR UPDATE
             // (bloquea la fila dentro de la transacción) para decidir si hay que revertir el egreso en Fondos

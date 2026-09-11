@@ -5,7 +5,6 @@ import { FacturaVenta } from '../models/FacturaVenta';
 import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
-import { SesionServ } from '../services/sesionService';
 import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 const moment = require('moment');
@@ -743,7 +742,7 @@ class VentasRepository{
     //#endregion
 
     //#region ABM
-    async Agregar(venta:Venta): Promise<string>{
+    async Agregar(venta:Venta, usuario: string): Promise<string>{
         const connection = await db.getConnection();
 
         // Un Presupuesto facturado es una conversión FIEL: las líneas no se pueden tocar
@@ -799,7 +798,7 @@ class VentasRepository{
             await ActualizarEstadoRelacionado(connection, venta);
 
             //insertamos los datos del pago de la venta
-            const usuarioActivo = SesionServ.LeerSesion().usuario;
+            const usuarioActivo = usuario;
             let pagosProcesados = [...(venta.pagos || [])];
 
             if(venta.idProceso === IdProceso.NOTA_CREDITO)
@@ -1136,7 +1135,7 @@ class VentasRepository{
         }
     }
 
-    async Modificar(venta:Venta): Promise<string>{
+    async Modificar(venta:Venta, usuario: string): Promise<string>{
         const connection = await db.getConnection();
         
         try {
@@ -1196,8 +1195,7 @@ class VentasRepository{
                             [totalPagado, idReciboExistente]
                         );
                     } else {
-                        const usuarioActivo = SesionServ.LeerSesion().usuario;
-                        await this.ProcesarCobroVenta(connection, venta, pagosProcesados, usuarioActivo);
+                        await this.ProcesarCobroVenta(connection, venta, pagosProcesados, usuario);
                     }
                 }
             }

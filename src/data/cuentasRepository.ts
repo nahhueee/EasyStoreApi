@@ -3,7 +3,6 @@ import db from '../db';
 import { ResultSetHeader } from 'mysql2';
 import { CuentaCorriente, VentasClienteCuenta } from '../models/CuentaCorriente';
 import { MovimientoFondo } from '../models/MovimientoFondo';
-import { SesionServ } from '../services/sesionService';
 import { GetMetodoPago, GetIdFondoValoresAcreditar, GetIdFondoRetenciones, InsertValorAcreditar, InsertCheque, InsertRetencion } from './ventasRepository';
 
 // Retención sufrida (Ganancias/IIBB/SUSS) al cobrar. Hoy solo se habilita en la UI
@@ -421,7 +420,7 @@ class CuentasRepository{
 
     //#endregion
 
-    async EntregaDinero(data: EntregaDineroDTO): Promise<string> {
+    async EntregaDinero(data: EntregaDineroDTO, usuario: string): Promise<string> {
         const connection = await db.getConnection();
 
         //Obtengo el inicial del cliente para cancelarlo primero
@@ -439,7 +438,7 @@ class CuentasRepository{
 
             // Obtener ventas a cancelar
             let ventasImpagas = await ObtenerVentasImpagas(connection, data.idCliente);
-            const usuarioActivo = SesionServ.LeerSesion().usuario;
+            const usuarioActivo = usuario;
 
             // Se resuelve una sola vez: toda la entrega usa el mismo método de pago.
             // Si es Cheque/Crédito, la plata no es real todavía y va a "Valores a
@@ -944,14 +943,14 @@ class CuentasRepository{
     //
     // Ver HANDOFF-dar-de-baja-recibo.md para el diseño completo y el razonamiento
     // detrás de cada decisión.
-    async DarBajaRecibo(data: DarBajaReciboDTO): Promise<any> {
+    async DarBajaRecibo(data: DarBajaReciboDTO, usuario: string): Promise<any> {
         const { idRecibo, idCaja } = data;
         const motivo = (data.motivo || '').trim();
         if (!motivo) {
             throw { status: 400, message: 'El motivo es obligatorio para dar de baja un recibo.' };
         }
 
-        const usuarioActivo = SesionServ.LeerSesion().usuario;
+        const usuarioActivo = usuario;
         const connection = await db.getConnection();
         let enTransaccion = false;
 
@@ -1257,7 +1256,7 @@ class CuentasRepository{
     }
 
 
-    async ActualizarPagosVenta(entrega:EntregaDineroVentaDTO): Promise<string>{
+    async ActualizarPagosVenta(entrega:EntregaDineroVentaDTO, usuario: string): Promise<string>{
         const connection = await db.getConnection();
         try {
             //Iniciamos una transaccion
@@ -1309,7 +1308,7 @@ class CuentasRepository{
                 ]
             );
             const idRecibo = reciboRes.insertId;
-            const usuarioActivo = SesionServ.LeerSesion().usuario;
+            const usuarioActivo = usuario;
 
             for (const element of entrega.pagos) {
                 // El monto que cancela la venta incluye la retención (si hay): para el

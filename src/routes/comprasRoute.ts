@@ -1,6 +1,7 @@
 import {ComprasRepo} from '../data/comprasRepository';
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
+import { authMiddleware } from '../middlewares/authMiddleware';
 const router : Router  = Router();
 
 //#region OBTENER
@@ -39,9 +40,9 @@ router.get('/metodos-pago/:idEmpresa', async (req:Request, res:Response) => {
 //#endregion
 
 //#region ABM
-router.post('/agregar', async (req:Request, res:Response) => {
+router.post('/agregar', authMiddleware, async (req:Request, res:Response) => {
     try{
-        res.json(await ComprasRepo.Agregar(req.body));
+        res.json(await ComprasRepo.Agregar(req.body, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "Error al intentar agregar la compra.";
@@ -50,9 +51,9 @@ router.post('/agregar', async (req:Request, res:Response) => {
     }
 });
 
-router.put('/eliminar', async (req:Request, res:Response) => {
+router.put('/eliminar', authMiddleware, async (req:Request, res:Response) => {
     try{
-        res.json(await ComprasRepo.Eliminar(req.body));
+        res.json(await ComprasRepo.Eliminar(req.body, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "Error al intentar eliminar la compra.";
