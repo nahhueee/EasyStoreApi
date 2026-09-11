@@ -185,7 +185,16 @@ import { Color, TallesProducto } from "./Producto";
   
   
   export class CantidadAcreditadaProducto{
-    idLineaTalle:number = 0;
+    // Se agrupa por idProducto (no idLineaTalle: confirmado con datos reales que
+    // idLineaTalle se repite entre líneas de DISTINTO color/idProducto dentro de
+    // la misma venta - es un id de "tanda" del alta en el carrito, no un
+    // identificador único por línea. Bug real detectado sep-2026: acreditar 1
+    // color marcaba como acreditados los otros 2 colores del mismo producto).
+    // tipoItem también entra en el agrupado porque idProducto es una FK
+    // polimórfica (productos vs productos_presupuesto, ver ProductosVenta) y
+    // los ids pueden repetirse entre esas dos tablas.
+    idProducto:number = 0;
+    tipoItem:string = "";
     cantidad:number = 0;
     t1:number = 0;
     t2:number = 0;
@@ -206,12 +215,12 @@ import { Color, TallesProducto } from "./Producto";
 
   /**
    * Cantidades ya acreditadas por NCs FISCALES previas sobre esta venta (NC_A/B/C -
-   * ver TipoComprobante en objFacturar.ts), agrupadas por idLineaTalle (productos) e
-   * idServicio (servicios). Permite al front calcular el remanente disponible al
-   * emitir una nueva NC fiscal (devoluciones parciales sucesivas, sep-2026). NO
-   * incluye NC internas (X): esas no acreditan contra el comprobante fiscal
-   * original, así que no restan saldo disponible. Ver ObtenerCantidadesAcreditadas
-   * en ventasRepository.ts.
+   * ver TipoComprobante en objFacturar.ts), agrupadas por idProducto+tipoItem
+   * (productos) e idServicio (servicios). Permite al front calcular el remanente
+   * disponible al emitir una nueva NC fiscal (devoluciones parciales sucesivas,
+   * sep-2026). NO incluye NC internas (X): esas no acreditan contra el
+   * comprobante fiscal original, así que no restan saldo disponible. Ver
+   * ObtenerCantidadesAcreditadas en ventasRepository.ts.
    */
   export class CantidadesAcreditadas{
     totalAcreditado:number = 0;

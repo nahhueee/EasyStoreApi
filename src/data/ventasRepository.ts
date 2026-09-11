@@ -1745,24 +1745,29 @@ async function ObtenerCantidadesAcreditadas(connection, nroProceso:number): Prom
 
         const placeholders = idsNotas.map(() => '?').join(',');
 
-        // Se suma por idLineaTalle (identifica la misma línea de producto a través de
-        // las distintas ventas - ver idLineaTalle en InsertProductoVenta) para poder
-        // descontar del remanente disponible por talle, no solo por producto.
+        // Se suma por idProducto+tipoItem, NO por idLineaTalle: confirmado con datos
+        // reales (sep-2026) que idLineaTalle se repite entre líneas de DISTINTO
+        // color/idProducto dentro de la misma venta (es un id de "tanda" del alta
+        // en el carrito, no un identificador único por línea) - agrupar por ahí
+        // hacía que acreditar 1 color marcara como acreditados los otros colores
+        // del mismo producto. tipoItem entra en el agrupado porque idProducto es
+        // FK polimórfica (productos vs productos_presupuesto).
         const [productos] = await connection.query(
-            `SELECT idLineaTalle,
+            `SELECT idProducto, tipoItem,
                     SUM(cantidad) cantidad,
                     SUM(t1) t1, SUM(t2) t2, SUM(t3) t3, SUM(t4) t4, SUM(t5) t5,
                     SUM(t6) t6, SUM(t7) t7, SUM(t8) t8, SUM(t9) t9, SUM(t10) t10
              FROM ventas_productos
              WHERE idVenta IN (${placeholders})
-             GROUP BY idLineaTalle`,
+             GROUP BY idProducto, tipoItem`,
             idsNotas
         );
 
         if (Array.isArray(productos)) {
             resultado.productos = productos.map(p => {
                 const item = new CantidadAcreditadaProducto();
-                item.idLineaTalle = p['idLineaTalle'];
+                item.idProducto = p['idProducto'];
+                item.tipoItem = p['tipoItem'] ?? '';
                 item.cantidad = parseFloat(p['cantidad']) || 0;
                 item.t1 = parseInt(p['t1']) || 0;
                 item.t2 = parseInt(p['t2']) || 0;

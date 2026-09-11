@@ -19,19 +19,23 @@ export async function crearExcelLibroIvaVentas(libro: any[], correlatividad: any
   const sheet1 = workbook.addWorksheet('Libro IVA Ventas');
 
   sheet1.columns = [
-    { header: 'Fecha', key: 'fecha', width: 18 },
+    { header: 'Fecha', key: 'fecha', width: 14 },
     { header: 'Tipo', key: 'tipo', width: 20 },
+    { header: 'Cod. Tipo Cbte.', key: 'codTipoCbte', width: 15 },
     { header: 'Pto. Vta.', key: 'ptoVenta', width: 12 },
     { header: 'Comprobante', key: 'comprobante', width: 15 },
-    { header: 'Tipo Doc.', key: 'tipoDoc', width: 12 },
+    { header: 'Tipo Doc.', key: 'tipoDoc', width: 16 },
+    { header: 'Cod. Tipo Doc.', key: 'codTipoDoc', width: 14 },
     { header: 'CUIT', key: 'cuit', width: 18 },
     { header: 'Razon social', key: 'razonSocial', width: 35 },
     { header: 'Cond. IVA', key: 'condIva', width: 22 },
-    { header: 'Grabado', key: 'grabado', width: 15 },
+    { header: 'Gravado', key: 'grabado', width: 15 },
     { header: 'Tasa', key: 'tasa', width: 8 },
     { header: 'IVA', key: 'iva', width: 15 },
     { header: 'Total', key: 'total', width: 15 },
     { header: 'CAE', key: 'cae', width: 18 },
+    { header: 'Vto. CAE', key: 'caeVto', width: 14 },
+    { header: 'Estado', key: 'estado', width: 12 },
     { header: 'Comp. asociado', key: 'compAsociado', width: 18 },
     { header: 'Observación', key: 'observacion', width: 40 },
   ];
@@ -48,13 +52,15 @@ export async function crearExcelLibroIvaVentas(libro: any[], correlatividad: any
     const iva = Number(r.iva);
     const total = Number(r.total);
 
-    sheet1.addRow({
-      fecha: formatearFechaHora(r.fecha, r.hora),
+    const fila = sheet1.addRow({
+      fecha: moment.utc(r.fecha).startOf('day').toDate(),
       tipo: meta?.descripcion ?? `TIPO ${r.tipoFactura} (SIN MAPEAR)`,
+      codTipoCbte: r.tipoFactura,
       ptoVenta: String(r.ptoVenta ?? '').padStart(5, '0'),
       comprobante: r.ticket,
       tipoDoc: descripcionTipoDoc(r.tipoDni),
-      cuit: formatearDocumento(r.dni, r.tipoDni),
+      codTipoDoc: r.tipoDni ?? '',
+      cuit: formatearDocumento(r.dni),
       razonSocial: r.razonSocial,
       condIva: r.condicionIva,
       grabado: neto * signo,
@@ -62,23 +68,29 @@ export async function crearExcelLibroIvaVentas(libro: any[], correlatividad: any
       iva: iva * signo,
       total: total * signo,
       cae: r.cae != null ? String(r.cae) : '',
+      caeVto: r.caeVto ? moment.utc(r.caeVto).startOf('day').toDate() : null,
+      estado: r.fechaBaja ? 'Anulado' : 'Emitido',
       compAsociado: esNota && r.ticketRelacionado
         ? `${r.tipoRelacionado}-${String(r.ptoVentaRelacionado ?? '').padStart(5, '0')}-${r.ticketRelacionado}`
         : '',
       observacion: armarObservacion(r, meta, neto, iva, total, esNota),
     });
+
+    fila.getCell('fecha').numFmt = 'dd/mm/yyyy';
+    fila.getCell('cuit').numFmt = '@';
+    if (r.caeVto) fila.getCell('caeVto').numFmt = 'dd/mm/yyyy';
   });
 
-  sheet1.autoFilter = { from: 'A1', to: 'O1' };
+  sheet1.autoFilter = { from: 'A1', to: 'S1' };
 
-  // Fila TOTAL sobre Grabado (I), IVA (K) y Total (L). Mismo guard de referencia
-  // circular que excelVentasService: sin filas de datos, SUM(I2:I1) se normaliza
-  // a I1:I2 e incluye la fila de totales - se pone 0 literal en ese caso.
+  // Fila TOTAL sobre Gravado (K), IVA (M) y Total (N). Mismo guard de referencia
+  // circular que excelVentasService: sin filas de datos, SUM(K2:K1) se normaliza
+  // a K1:K2 e incluye la fila de totales - se pone 0 literal en ese caso.
   const lastDataRow1 = sheet1.rowCount;
   const totalRow1 = lastDataRow1 + 1;
 
   sheet1.getCell(`A${totalRow1}`).value = 'TOTAL';
-  for (const col of ['I', 'K', 'L']) {
+  for (const col of ['K', 'M', 'N']) {
     sheet1.getCell(`${col}${totalRow1}`).value = libro.length > 0
       ? { formula: `SUM(${col}2:${col}${lastDataRow1})` }
       : 0;
@@ -190,11 +202,6 @@ export async function crearExcelLibroIvaVentas(libro: any[], correlatividad: any
   return buffer;
 }
 
-// Formato del ejemplo del cliente: "dd/mm/yyyy hh:mm".
-function formatearFechaHora(fecha: Date, hora: string | null): string {
-  return `${moment.utc(fecha).format('DD/MM/YYYY')} ${hora ?? ''}`.trim();
-}
-
 // Códigos de tipo de documento ARCA/AFIP más frecuentes en el negocio. Un código
 // no contemplado se muestra igual (con su número), no se oculta ni se rompe.
 const TIPOS_DOC_ARCA: Record<number, string> = {
@@ -209,26 +216,18 @@ function descripcionTipoDoc(tipoDni: number | null): string {
   return TIPOS_DOC_ARCA[tipoDni] ?? `TIPO ${tipoDni}`;
 }
 
-// CUIT/CUIL con guiones (XX-XXXXXXXX-X), igual al formato del ejemplo del cliente.
-// Solo se aplica a documentos de 11 dígitos con tipo CUIT/CUIL - un DNI de 7-8
-// dígitos (Factura B a consumidor final) se muestra tal cual, sin guiones.
-function formatearDocumento(dni: number | null, tipoDni: number | null): string {
+// Número de documento (CUIT/CUIL/DNI) sin separadores, apto para importación
+// automática. La celda se exporta con numFmt '@' (texto) para que Excel no lo
+// convierta a notación científica ni le agregue ceros/exponente.
+function formatearDocumento(dni: number | null): string {
   if (dni == null) return '';
-
-  const esCuitOCuil = tipoDni === 80 || tipoDni === 86;
-  const str = String(dni);
-
-  if (esCuitOCuil && str.length === 11) {
-    return `${str.slice(0, 2)}-${str.slice(2, 10)}-${str.slice(10)}`;
-  }
-  return str;
+  return String(dni);
 }
 
 // Concatena las alertas de la columna Observación. Vacía si no hay nada que mirar.
 function armarObservacion(r: any, meta: any, neto: number, iva: number, total: number, esNota: boolean): string {
   const alertas: string[] = [];
 
-  if (r.fechaBaja) alertas.push('ANULADA EN SISTEMA');
   if (Math.abs(total - (neto + iva)) > 0.02) alertas.push('NETO+IVA NO CIERRA CONTRA TOTAL');
   if ([11, 12, 13].includes(r.tipoFactura)) alertas.push('FACTURA C EN EMPRESA RI - REVISAR');
   if (!meta) alertas.push('CODIGO DE COMPROBANTE NO MAPEADO - REVISAR');

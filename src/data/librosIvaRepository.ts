@@ -60,6 +60,7 @@ class LibrosIvaRepository {
                     vf.ticket,
                     vf.tipoDni,
                     vf.dni,
+                    vf.caeVto,
                     IFNULL(NULLIF(c.razonSocial, ''), c.nombre)   AS razonSocial,
                     ci.descripcion                                AS condicionIva,
                     vf.neto,
