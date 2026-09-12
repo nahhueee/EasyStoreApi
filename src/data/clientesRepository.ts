@@ -78,6 +78,7 @@ class ClientesRepository{
         cliente.idCategoria = row['idCategoria'];
         cliente.inicial = parseFloat(row['inicial']);
         cliente.fechaAlta = row['fechaAlta'];
+        cliente.diasVencimiento = row['diasVencimiento'];
         cliente.direcciones = await ObtenerDireccionesCliente(connection, row['id']);
         cliente.ultimoDescuento = await ObtenerUltimoDescuento(connection, row['id']);
 
@@ -179,9 +180,9 @@ class ClientesRepository{
             //Iniciamos una transaccion
             await connection.beginTransaction();
 
-            const consulta = "INSERT INTO clientes(nombre,razonSocial,telefono,celular,contacto,email,idCondIva,idTipoDocumento,documento,idCondicionPago,idCategoria,inicial,inicialHistorico,idListaPrecio,fechaAlta) " +
-                             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-            const parametros = [cliente.nombre.toUpperCase(), cliente.razonSocial, cliente.telefono, cliente.celular, cliente.contacto, cliente.email, cliente.idCondicionIva, cliente.idTipoDocumento, cliente.documento, cliente.idCondicionPago, cliente.idCategoria, cliente.inicial, cliente.inicial, cliente.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss')];
+            const consulta = "INSERT INTO clientes(nombre,razonSocial,telefono,celular,contacto,email,idCondIva,idTipoDocumento,documento,idCondicionPago,idCategoria,inicial,inicialHistorico,idListaPrecio,fechaAlta,diasVencimiento) " +
+                             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            const parametros = [cliente.nombre.toUpperCase(), cliente.razonSocial, cliente.telefono, cliente.celular, cliente.contacto, cliente.email, cliente.idCondicionIva, cliente.idTipoDocumento, cliente.documento, cliente.idCondicionPago, cliente.idCategoria, cliente.inicial, cliente.inicial, cliente.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss'), cliente.diasVencimiento ?? 0];
 
             const [result]: any = await connection.query(consulta, parametros);
             cliente.id = result.insertId;
@@ -230,10 +231,11 @@ class ClientesRepository{
                     idCondicionPago = ?,
                     idCategoria = ?,
                     idListaPrecio = ?,
-                    fechaAlta = ?
+                    fechaAlta = ?,
+                    diasVencimiento = ?
                 WHERE id = ? `;
 
-            const parametros = [data.nombre.toUpperCase(), data.razonSocial, data.telefono, data.celular, data.contacto, data.email, data.idCondicionIva, data.idTipoDocumento, data.documento, data.idCondicionPago, data.idCategoria, data.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss'), data.id];
+            const parametros = [data.nombre.toUpperCase(), data.razonSocial, data.telefono, data.celular, data.contacto, data.email, data.idCondicionIva, data.idTipoDocumento, data.documento, data.idCondicionPago, data.idCategoria, data.idListaPrecio, moment().format('YYYY-MM-DD HH:mm:ss'), data.diasVencimiento ?? 0, data.id];
             await connection.query(consulta, parametros);
                
             //Borramos las direcciones del cliente

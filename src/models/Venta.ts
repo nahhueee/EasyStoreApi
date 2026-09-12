@@ -17,6 +17,13 @@ import { Color, TallesProducto } from "./Producto";
     // Presupuesto/Pedido/Nota de Empaque. Ver migración
     // 20260725120000_add_fecha_entrega_ventas.
     fechaEntrega?:Date;
+    // Vencimiento del comprobante: fecha emisión + diasVencimiento del cliente
+    // al momento de emitir. Calculado y persistido en el backend (no editable
+    // desde el front), solo para Factura/Cotización - undefined para el resto
+    // de los procesos (Presupuesto/Pedido/Nota de Empaque/NC/ND). Ver
+    // esProcesoDeCierre en ventaEstados.ts y migración
+    // 20260912120000_add_vencimiento_clientes_ventas.
+    fechaVencimiento?:Date;
     // idCliente?:number;
     // cliente?:string;
     // clienteRazonSocial?:string;

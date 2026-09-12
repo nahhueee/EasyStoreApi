@@ -18,6 +18,11 @@ export class Cliente {
     idCategoria?:number;
     inicial?:number;
     fechaAlta?:Date;
+    // Plazo de pago habitual del cliente, en días. Se usa para calcular
+    // ventas.fechaVencimiento al emitir Factura/Cotización (fecha emisión +
+    // diasVencimiento). 0 = no configurado (sin vencimiento). Ver migración
+    // 20260912120000_add_vencimiento_clientes_ventas.
+    diasVencimiento?:number;
     direcciones?:DireccionesCliente[];
     ultimoDescuento?:UltimoDescuentoCliente;
 }

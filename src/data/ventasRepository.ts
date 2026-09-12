@@ -5,7 +5,7 @@ import { FacturaVenta } from '../models/FacturaVenta';
 import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
-import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado } from '../models/ventaEstados';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 const moment = require('moment');
 
@@ -28,6 +28,24 @@ async function ActualizarEstadoRelacionado(connection, venta: Venta) {
         "UPDATE ventas SET estado = ? WHERE nroProceso = ? AND idProceso = ? ",
         [resultado.estado, venta.nroRelacionado, resultado.idProceso]
     );
+}
+
+// Calcula la fecha de vencimiento del comprobante (fecha emisión + diasVencimiento
+// del cliente), solo para procesos de cierre (Factura/Cotización - ver
+// esProcesoDeCierre en ventaEstados.ts). Presupuesto/Pedido/Nota de Empaque/NC/ND
+// quedan siempre en null (decisión de negocio, sep-2026). diasVencimiento se lee
+// fresco de `clientes` en vez de confiar en el valor que venga en el payload del
+// front, para que el cálculo sea auditable contra lo configurado en el ABM al
+// momento de emitir. diasVencimiento = 0 (no configurado) también da null. Ver
+// migración 20260912120000_add_vencimiento_clientes_ventas.
+async function ObtenerFechaVencimiento(connection, idProceso: number | undefined, idCliente: number | undefined, fecha: Date | undefined): Promise<string | null> {
+    if (!esProcesoDeCierre(idProceso) || !idCliente) return null;
+
+    const [rows] = await connection.query("SELECT diasVencimiento FROM clientes WHERE id = ?", [idCliente]);
+    const diasVencimiento = rows?.[0]?.diasVencimiento ?? 0;
+    if (!diasVencimiento) return null;
+
+    return moment(fecha).add(diasVencimiento, 'days').format('YYYY-MM-DD');
 }
 
 class VentasRepository{
@@ -666,6 +684,7 @@ class VentasRepository{
         venta.fecha = moment(row['fecha']).toDate();
         venta.hora = row['hora'];
         venta.fechaEntrega = row['fechaEntrega'] ? moment(row['fechaEntrega']).toDate() : undefined;
+        venta.fechaVencimiento = row['fechaVencimiento'] ? moment(row['fechaVencimiento']).toDate() : undefined;
         venta.idListaPrecio = row['idLista'];
         venta.idEmpresa = row['idEmpresa'];
         venta.empresa = row['empresa'];
@@ -700,8 +719,8 @@ class VentasRepository{
         venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
         venta.productos = await ObtenerProductosVenta(connection, venta.id!, venta.idProceso!);
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
-        venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!);
-        venta.cantidadesAcreditadas = await ObtenerCantidadesAcreditadas(connection, venta.nroProceso!);
+        venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!, venta.proceso!);
+        venta.cantidadesAcreditadas = await ObtenerCantidadesAcreditadas(connection, venta.nroProceso!, venta.proceso!);
         return venta;
     }
 
@@ -769,14 +788,16 @@ class VentasRepository{
             // seguridad real: no importa por qué se calculó mal el número, la base
             // lo rechaza (ER_DUP_ENTRY) y acá se recalcula contra el estado actual
             // en vez de dejar que el duplicado se guarde en silencio.
-            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega) " +
-                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?) ";
+            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega,fechaVencimiento) " +
+                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?) ";
+
+            const fechaVencimiento = await ObtenerFechaVencimiento(connection, venta.idProceso, venta.cliente?.id, venta.fecha);
 
             let resultado: ResultSetHeader;
             let intentos = 0;
             while (true) {
                 venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
-                const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null];
+                const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, fechaVencimiento];
 
                 try {
                     [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
@@ -1687,12 +1708,20 @@ async function ObtenerFacturaVenta(connection, idVenta:number){
     }
 }
 
-async function ObtenerNotasVenta(connection, nroProceso:number){
+// tipoOriginal: venta.proceso (descripción de procesos_venta, ej. "FACTURA"/
+// "COTIZACION") de la venta que se está consultando. nroRelacionado guarda solo
+// el nroProceso del comprobante original, y nroProceso NO es único global (solo
+// UNIQUE(idProceso, nroProceso) - ver migración 20260825120000): una Factura y
+// una Cotización pueden compartir el mismo número. Sin este filtro, las NC de
+// una chocaban con las de la otra cuando coincidía el número (bug real: venta
+// 218, sep-2026). tipoRelacionado se persiste con este mismo string al crear la
+// NC (ver armarObjetoVenta en notas-venta.component.ts, front).
+async function ObtenerNotasVenta(connection, nroProceso:number, tipoOriginal:string){
     try {
         const consulta = " SELECT id, nroProceso, total, idTComprobante FROM ventas " +
-                         " WHERE nroRelacionado = ? AND idProceso = 3 "
+                         " WHERE nroRelacionado = ? AND idProceso = 3 AND tipoRelacionado = ? "
 
-        const [rows] = await connection.query(consulta, [nroProceso]);
+        const [rows] = await connection.query(consulta, [nroProceso, tipoOriginal]);
         const notas:NotaCreditoVenta[] = [];
 
         if (Array.isArray(rows)) {
@@ -1720,16 +1749,16 @@ async function ObtenerNotasVenta(connection, nroProceso:number){
 // Cantidades ya acreditadas por NCs FISCALES (NC_A/B/C, no internas/X) ya emitidas
 // sobre esta venta - permite al front (PrepararPreciosVenta) calcular el remanente
 // disponible al emitir una nueva NC fiscal, para devoluciones parciales sucesivas
-// (sep-2026). Mismo criterio de nroRelacionado/idProceso=3 que ObtenerNotasVenta,
-// filtrando además por tipo fiscal (una NC interna/X no resta saldo del comprobante
-// fiscal original).
-async function ObtenerCantidadesAcreditadas(connection, nroProceso:number): Promise<CantidadesAcreditadas> {
+// (sep-2026). Mismo criterio de nroRelacionado/idProceso=3/tipoRelacionado que
+// ObtenerNotasVenta (ver su comentario), filtrando además por tipo fiscal (una NC
+// interna/X no resta saldo del comprobante fiscal original).
+async function ObtenerCantidadesAcreditadas(connection, nroProceso:number, tipoOriginal:string): Promise<CantidadesAcreditadas> {
     try {
         const resultado = new CantidadesAcreditadas();
 
         const [notasFiscales] = await connection.query(
-            "SELECT id, total FROM ventas WHERE nroRelacionado = ? AND idProceso = 3 AND idTComprobante IN (?, ?, ?)",
-            [nroProceso, TipoComprobante.NC_A, TipoComprobante.NC_B, TipoComprobante.NC_C]
+            "SELECT id, total FROM ventas WHERE nroRelacionado = ? AND idProceso = 3 AND tipoRelacionado = ? AND idTComprobante IN (?, ?, ?)",
+            [nroProceso, tipoOriginal, TipoComprobante.NC_A, TipoComprobante.NC_B, TipoComprobante.NC_C]
         );
 
         if (!Array.isArray(notasFiscales) || notasFiscales.length === 0) {
@@ -1861,10 +1890,22 @@ async function UpdateVenta(connection, venta):Promise<void>{
                          " impaga = ?, " +
                          " ajusteTransf = ?, " +
                          " observacion = ?, " +
-                         " fechaEntrega = ? " +
+                         " fechaEntrega = ?, " +
+                         " fechaVencimiento = ? " +
                          " WHERE id = ? ";
 
-        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, venta.id];
+        // fechaVencimiento se calcula UNA sola vez, la primera vez que la venta pasa a
+        // ser un cierre (Factura/Cotización) - típicamente al facturar un Presupuesto.
+        // Si ya tiene un valor guardado, se respeta tal cual quedó al emitir: Modificar
+        // se llama en cualquier edición posterior de la venta (ej. corregir una línea),
+        // y recalcular contra el diasVencimiento ACTUAL del cliente pisaría el dato
+        // histórico si el cliente cambió su plazo de pago después de emitir - contradice
+        // el motivo por el que se persiste (exportar el vencimiento tal como se emitió).
+        const [ventaActual] = await connection.query("SELECT fechaVencimiento FROM ventas WHERE id = ?", [venta.id]);
+        const fechaVencimiento = ventaActual?.[0]?.fechaVencimiento
+            ? moment(ventaActual[0].fechaVencimiento).format('YYYY-MM-DD')
+            : await ObtenerFechaVencimiento(connection, venta.idProceso, venta.cliente?.id, venta.fecha);
+        const parametros = [venta.idProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, fechaVencimiento, venta.id];
         await connection.query(consulta, parametros);
         
     } catch (error) {
