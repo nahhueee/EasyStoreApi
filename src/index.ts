@@ -68,6 +68,7 @@ import valoresRuta from './routes/valoresRoute';
 import proveedoresRuta from './routes/proveedoresRoute';
 import comprasRuta from './routes/comprasRoute';
 import comprasCuentasRuta from './routes/comprasCuentasRoute';
+import stockRuta from './routes/stockRoute';
 
 const base = config.servidor;
 app.use(`${base}/update`, actualizacionRuta)
@@ -93,6 +94,7 @@ app.use(`${base}/valores`, valoresRuta);
 app.use(`${base}/proveedores`, proveedoresRuta);
 app.use(`${base}/compras`, comprasRuta);
 app.use(`${base}/compras-cuentas`, comprasCuentasRuta);
+app.use(`${base}/stock`, stockRuta);
 
 // AdminServer Route
 import adminServerRuta from './routes/adminRoute';
