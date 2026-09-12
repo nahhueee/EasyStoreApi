@@ -121,7 +121,7 @@ app.use(`${base}/files`, filesRoute);
 
 // Index Route
 app.get(`${base}`, (req, res) => {
-    res.status(200).send('Servidor funcionando CHAZAGOLF en este puerto.');
+    res.status(200).send('Servidor CHAZAGOLF funcionando en este puerto.');
 });
 //404
 app.use((_req, res) => {
