@@ -179,10 +179,16 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
             descuentoPorcentaje: Number(r.descuentoPorcentaje) || 0,
             ajusteTransferencia: Number(r.ajusteTransferencia) || 0,
             redondeo: Number(r.redondeo) || 0,
-            netoGravado: Number(r.netoGravado) || 0,
-            exento: 0,
-            iva: Number(r.iva) || 0,
-            percepciones: 0,
+            // Vacío (no cero) cuando Fiscal = N (corrección tanda 2, sep-2026): derivar
+            // neto/exento/IVA/percepciones de un comprobante no fiscal a partir del
+            // total (p.ej. total/1.21) inventa una apertura fiscal que ARCA nunca vio -
+            // error de especificación del §8 original, no un bug de código. Total
+            // comprobante y el resto de las columnas de gestión sí se completan igual
+            // para todas las filas.
+            netoGravado: r.fiscal === 'S' ? (Number(r.netoGravado) || 0) : null,
+            exento: r.fiscal === 'S' ? 0 : null,
+            iva: r.fiscal === 'S' ? (Number(r.iva) || 0) : null,
+            percepciones: r.fiscal === 'S' ? 0 : null,
             totalComprobante: Number(r.totalComprobante) || 0,
 
             metodosPago: r.metodosPago ?? '',
@@ -228,12 +234,24 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
 
     const columnasSumar = ['cantPrendas', 'cantServicios', ...COLUMNAS_MONEDA];
 
-    const escribirFilaTotal = (etiqueta: string, filasDelTotal: any[], resaltar: boolean = false) => {
+    // Columnas que se derivan de la apertura fiscal (ventas_factura): en TOTAL NO
+    // FISCAL y TOTAL GENERAL van vacías, no en cero (corrección tanda 2, sep-2026 -
+    // mismo criterio que en netoGravado/exento/iva/percepciones más arriba: sumar
+    // "0" ahí sí sería un dato, no una ausencia de dato). TOTAL FISCAL las suma
+    // normalmente, es 100% comprobantes fiscales.
+    const COLUMNAS_FISCALES = ['netoGravado', 'exento', 'iva', 'percepciones'];
+
+    const escribirFilaTotal = (etiqueta: string, filasDelTotal: any[], opciones: { resaltar?: boolean; vaciarFiscales?: boolean } = {}) => {
+        const { resaltar = false, vaciarFiscales = false } = opciones;
         const fila = sheetVentas.rowCount + 1;
         sheetVentas.getCell(`A${fila}`).value = etiqueta;
         columnasSumar.forEach(key => {
-            const total = filasDelTotal.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
             const celda = sheetVentas.getCell(`${sheetVentas.getColumn(key).letter}${fila}`);
+            if (vaciarFiscales && COLUMNAS_FISCALES.includes(key)) {
+                celda.value = null;
+                return;
+            }
+            const total = filasDelTotal.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
             celda.value = total;
             if (COLUMNAS_MONEDA.includes(key)) celda.numFmt = '#,##0.00';
         });
@@ -247,9 +265,9 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
         }
     };
 
-    escribirFilaTotal('TOTAL FISCAL', filasFiscales, true);
-    escribirFilaTotal('TOTAL NO FISCAL', filasNoFiscales);
-    escribirFilaTotal('TOTAL GENERAL', filasParaTotal);
+    escribirFilaTotal('TOTAL FISCAL', filasFiscales, { resaltar: true });
+    escribirFilaTotal('TOTAL NO FISCAL', filasNoFiscales, { vaciarFiscales: true });
+    escribirFilaTotal('TOTAL GENERAL', filasParaTotal, { vaciarFiscales: true });
 
     // Ajuste de ancho fijo (ver columns arriba): NO usar autoFitColumns() del
     // servicio actual acá - con ~48 columnas y varios miles de filas es
