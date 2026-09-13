@@ -408,7 +408,10 @@ async function ObtenerQueryParaExcel(filtros:any):Promise<string>{
 
 // Duplica intencionalmente el switch de CompletarObjeto (no hay tabla listas_precio en BD).
 // Se mantiene local a este export para no tocar CompletarObjeto sin necesidad.
-function MapearListaPrecio(idListaPrecio:number):string{
+// Exportada (sep-2026) para que conciliacionRepository.ts / excelConciliacionService.ts
+// (columna "Lista de precios" de R1, ver HANDOFF-informes-administracion-R1.md §5)
+// puedan resolver `ventas.idLista` sin duplicar el switch una tercera vez.
+export function MapearListaPrecio(idListaPrecio:number):string{
     // Lista 3.5 (case 3) se eliminó ago-2026 - confirmado sin clientes asignados antes
     // de sacarla (ver Diagnostico impacto Lista 3.5 - ago-2026.sql).
     switch (idListaPrecio) {

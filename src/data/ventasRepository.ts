@@ -5,7 +5,7 @@ import { FacturaVenta } from '../models/FacturaVenta';
 import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
-import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre } from '../models/ventaEstados';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, SQL_METODO_PAGO_CASE } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 const moment = require('moment');
 
@@ -75,18 +75,7 @@ class VentasRepository{
             //Obtengo la query segun los filtros
             let query = `
             SELECT
-                CASE
-                    WHEN mp.tipo = 'CREDITO'
-                        THEN CONCAT(f.nombre, ' - Crédito')
-
-                    WHEN mp.tipo = 'DEBITO'
-                        THEN CONCAT(f.nombre, ' - Débito')
-
-                    WHEN mp.tipo = 'TRANSFERENCIA'
-                        THEN CONCAT(f.nombre, ' - Transferencia')
-
-                    ELSE mp.nombre
-                END AS metodo_pago,
+                ${SQL_METODO_PAGO_CASE} AS metodo_pago,
                 SUM(
                     CASE
                         -- NC resta (monto guardado positivo, se invierte aquí)
@@ -788,8 +777,8 @@ class VentasRepository{
             // seguridad real: no importa por qué se calculó mal el número, la base
             // lo rechaza (ER_DUP_ENTRY) y acá se recalcula contra el estado actual
             // en vez de dejar que el duplicado se guarde en silencio.
-            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega,fechaVencimiento) " +
-                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?) ";
+            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega,fechaVencimiento,usuarioAlta) " +
+                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?,?) ";
 
             const fechaVencimiento = await ObtenerFechaVencimiento(connection, venta.idProceso, venta.cliente?.id, venta.fecha);
 
@@ -797,7 +786,10 @@ class VentasRepository{
             let intentos = 0;
             while (true) {
                 venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
-                const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, fechaVencimiento];
+                // usuarioAlta: quién CREÓ la venta (§7.a del handoff) - toma el mismo
+                // `usuario` que ya llega por parámetro para los movimientos de fondos, NO
+                // se vuelve a setear en Modificar().
+                const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, fechaVencimiento, usuario ?? null];
 
                 try {
                     [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
@@ -1484,18 +1476,7 @@ async function ObtenerPagosVenta(connection, idVenta:number){
             SELECT
                 vp.*,
                 mp.tipo AS tipo_metodo,
-                CASE
-                    WHEN mp.tipo = 'CREDITO'
-                        THEN CONCAT(f.nombre, ' - Crédito')
-
-                    WHEN mp.tipo = 'DEBITO'
-                        THEN CONCAT(f.nombre, ' - Débito')
-
-                    WHEN mp.tipo = 'TRANSFERENCIA'
-                        THEN CONCAT(f.nombre, ' - Transferencia')
-
-                    ELSE mp.nombre
-                END AS metodo_pago
+                ${SQL_METODO_PAGO_CASE} AS metodo_pago
             FROM ventas_pagos vp
             LEFT JOIN metodos_pago mp ON mp.id = vp.idMetodo
             LEFT JOIN fondos f        ON f.id  = mp.idFondo

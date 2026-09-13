@@ -52,6 +52,12 @@ import { Color, TallesProducto } from "./Producto";
 
     nroRelacionado?:number;
     tipoRelacionado?:string;
+    // Usuario que dio de alta la venta (login de `usuarios`). Se persiste solo en
+    // Agregar(), nunca en Modificar(): es "quién la creó", no "quién la tocó
+    // último". Histórico anterior a esta columna queda NULL, sin backfill (no hay
+    // forma honesta de reconstruirlo) - ver migración
+    // <ts>_add_usuario_alta_ventas y HANDOFF-informes-administracion-R1.md §7.a.
+    usuarioAlta?:string;
     // Texto libre a nivel de venta (ej. motivo de una Nota de Crédito sin
     // productos: "Adelanto de producción"/"Saldo orden de compra"). Ver
     // migración 20260719120000_add_observacion_ventas.

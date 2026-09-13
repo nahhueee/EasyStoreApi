@@ -143,3 +143,28 @@ export function puedeDarseDeBaja(idProceso?: number, estado?: string): boolean {
     if (!estadosAbiertos) return false;
     return estadosAbiertos.includes(estado as EstadoVenta);
 }
+
+/**
+ * Fragmento SQL para el nombre visible de un método de pago. Requiere que la
+ * query tenga aliasados `mp` (metodos_pago) y `f` (fondos, vía
+ * `LEFT JOIN fondos f ON f.id = mp.idFondo`).
+ *
+ * Extraído como constante compartida (B4-217, sep-2026 - ver
+ * HANDOFF-informes-administracion-R1.md §3.6). Antes vivía duplicado e
+ * idéntico en VentasRepository.ObtenerReporteAcumulado y
+ * VentasRepository.ObtenerPagosVenta, mientras que
+ * VentasRepository.ObtenerReporteVentas (columna "Métodos de pago" del informe
+ * de ventas actual) mostraba en cambio `mp.nombre` crudo, sin este armado - el
+ * mismo pago salía con dos nombres distintos según qué informe se mirara. Toda
+ * query nueva que necesite mostrar el método de pago (ej.
+ * conciliacionRepository.ts) debe reusar esta constante para no reabrir la
+ * inconsistencia.
+ */
+export const SQL_METODO_PAGO_CASE = `
+    CASE
+        WHEN mp.tipo = 'CREDITO' THEN CONCAT(f.nombre, ' - Crédito')
+        WHEN mp.tipo = 'DEBITO' THEN CONCAT(f.nombre, ' - Débito')
+        WHEN mp.tipo = 'TRANSFERENCIA' THEN CONCAT(f.nombre, ' - Transferencia')
+        ELSE mp.nombre
+    END
+`;

@@ -5,6 +5,7 @@ const router : Router  = Router();
 
 import { crearExcelVentas } from '../services/excelVentasService';
 import { crearExcelLibroIvaVentas } from '../services/excelLibroIvaService';
+import { crearExcelConciliacion } from '../services/excelConciliacionService';
 import { crearExcelProductos } from '../services/excelProductosService';
 import { crearExcelClientes } from '../services/excelClientesService';
 import { crearExcelCuentas } from '../services/excelCuentasService';
@@ -14,6 +15,7 @@ import { crearExcelCompras } from '../services/excelComprasService';
 import { ProductosRepo } from '../data/productosRepository';
 import { VentasRepo } from '../data/ventasRepository';
 import { LibrosIvaRepo } from '../data/librosIvaRepository';
+import { ConciliacionRepo } from '../data/conciliacionRepository';
 import { ClientesRepo } from '../data/clientesRepository';
 import { CuentasRepo } from '../data/cuentasRepository';
 import { FondosRepo } from '../data/fondosRepository';
@@ -116,6 +118,38 @@ router.post('/libro-iva-ventas-excel', async (req, res) => {
         res.send(buffer);
     } catch(error:any){
         let msg = "Error al intentar generar el Libro IVA Ventas.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+router.post('/ventas-conciliacion-excel', async (req, res) => {
+    try {
+        // Mismo body que ya usan los reportes de ventas actuales (fechas, idProceso,
+        // cliente, nroProceso), más incluirAnuladas. filtroProcesoNombre/filtroClienteNombre/
+        // usuario: igual que fondos-excel (cajaNombre/fondoNombre) - ya resueltos en el
+        // frontend, solo para el encabezado del excel (evita otro round-trip al backend).
+        const { filtros, filtroProcesoNombre, filtroClienteNombre, usuario } = req.body;
+
+        const filas = await ConciliacionRepo.ObtenerVentasConciliacion(filtros);
+        const subtotalesPorMedioPago = await ConciliacionRepo.ObtenerSubtotalesPorMedioPago(filtros);
+
+        const buffer = await crearExcelConciliacion(filas, subtotalesPorMedioPago, {
+            fechaDesde: filtros?.fechas?.[0],
+            fechaHasta: filtros?.fechas?.[1],
+            filtroProceso: filtroProcesoNombre,
+            filtroCliente: filtroClienteNombre,
+            filtroNroProceso: filtros?.nroProceso,
+            incluirAnuladas: filtros?.incluirAnuladas,
+            usuario,
+        });
+
+        res.setHeader('Content-Disposition', 'attachment; filename="ventas-conciliacion.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch (error: any) {
+        let msg = "Error al intentar generar el informe de conciliación.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }
