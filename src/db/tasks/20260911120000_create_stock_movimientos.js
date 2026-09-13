@@ -9,7 +9,16 @@
 //
 // usuario/usuarioBaja son string (no FK a usuarios), mismo criterio que compras.usuario y
 // movimientos_fondos.usuario en esta base.
-exports.up = function (knex) {
+//
+// Idempotente (corrección sep-2026): la tabla ya existía en el server (quedó creada en un
+// intento previo que no llegó a registrarse en knex_migrations - no se investigó la causa acá
+// porque no hace a la migración en sí), lo que rompía el `up` con "Table already exists" en cada
+// corrida. Se resuelve chequeando hasTable antes de crear, mismo criterio a aplicar de acá en
+// más en toda migración de creación de tabla en este proyecto.
+exports.up = async function (knex) {
+  const existe = await knex.schema.hasTable('stock_movimientos');
+  if (existe) return;
+
   return knex.schema.createTable('stock_movimientos', function (table) {
     table.bigIncrements('id').unsigned().primary();
     table.integer('idProducto').unsigned().notNullable();
