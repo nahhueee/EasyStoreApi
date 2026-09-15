@@ -1,20 +1,49 @@
 import ExcelJS from 'exceljs';
 import { MapearListaPrecio } from '../data/clientesRepository';
 import { TIPOS_COMPROBANTE_ARCA } from '../models/tiposComprobanteArca';
+import { IdProceso } from '../models/ventaEstados';
 const moment = require('moment');
 
 /**
- * Excel del informe "Ventas para Conciliación" (R1 - cabecera). 3 hojas:
- * "Informe" (encabezado), "Ventas" (1 fila por comprobante) y "Totales" (4
- * bloques de subtotales). Ver HANDOFF-informes-administracion-R1.md §5 y §9
- * para el diseño completo y el porqué de cada decisión.
+ * Excel del informe "Ventas para Conciliación". 5 hojas: "Informe" (encabezado),
+ * "Ventas" (R1, 1 fila por comprobante), "Detalle valorizado" y "Control" (R2,
+ * 1 fila por línea / por comprobante) y "Totales" (4 bloques de subtotales).
+ * Ver HANDOFF-informes-administracion-R1.md (§5, §9), sus dos tandas de
+ * correcciones, y HANDOFF-informes-administracion-R2.md (§4 a §9) más su
+ * tanda de correcciones (sep-2026) para el diseño completo y el porqué de
+ * cada decisión.
  *
- * `filas` viene de ConciliacionRepo.ObtenerVentasConciliacion(), `subtotalesPorMedioPago`
- * de ConciliacionRepo.ObtenerSubtotalesPorMedioPago(). `meta` trae los datos del
+ * `filas` viene de ConciliacionRepo.ObtenerVentasConciliacion() y hace de
+ * cabecera para las 5 hojas (R2 la reusa en vez de volver a traerla - ver
+ * comentario en ObtenerDetalleLineas). `subtotalesPorMedioPago` de
+ * ConciliacionRepo.ObtenerSubtotalesPorMedioPago(). `meta` trae los datos del
  * encabezado que no salen de una query (período/filtros ya resueltos por el
- * caller, usuario que lo generó).
+ * caller, usuario que lo generó). `lineasDetalle` viene de
+ * ConciliacionRepo.ObtenerDetalleLineas() (R2, crudo - la valorización sucede
+ * acá). `formatoLargo` es el checkbox "Exportar talles en formato largo"
+ * (B4-212, §7 del handoff R2); default false.
  */
-export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPago: any[], meta: any) {
+export async function crearExcelConciliacion(
+    filas: any[],
+    subtotalesPorMedioPago: any[],
+    meta: any,
+    lineasDetalle: any[] = [],
+    formatoLargo: boolean = false,
+    // R3 (HANDOFF-informes-administracion-R3.md): 1 fila por cobro, filtrado
+    // por fecha de COBRO (no de comprobante - §2 del handoff, el punto más
+    // importante de R3). `filasPeriodo` es lo que se muestra; `filasUniverso`
+    // es el historial completo de cada comprobante que aparece en el período
+    // (sin filtro de fecha), necesario para el arrastre de Saldo pendiente
+    // (si una factura se cobró en dos meses, el saldo de este período tiene
+    // que descontar también lo cobrado antes - ver calcularCobranzas más
+    // abajo). Viene de ConciliacionRepo.ObtenerCobranzas() - ver
+    // ArmarBaseCobranzas en conciliacionRepository.ts para el porqué de la
+    // unión ventas_pagos + ventas_entrega_detalle.
+    cobranzas: { filasPeriodo: any[]; filasUniverso: any[] } = { filasPeriodo: [], filasUniverso: [] },
+    // R3, corrección 15/09/2026, fix 4.b: recibos dados de baja en el período -
+    // ver ObtenerRecibosDadosDeBaja en conciliacionRepository.ts.
+    recibosDadosDeBaja: any[] = [],
+) {
     const workbook = new ExcelJS.Workbook();
 
     // =========================
@@ -41,22 +70,43 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
         ['Emitido', new Date(), 'dd/mm/yyyy hh:mm'],
         ['Usuario', meta?.usuario || ''],
     ];
-    filasInforme.forEach(([label, valor, numFmt]) => {
+    filasInforme.forEach(([label, valor, numFmt], i) => {
         const fila = sheetInforme.addRow([label, valor]);
-        fila.getCell(1).font = { bold: true };
+        // Corrección tanda 2, punto 2: la fila de título de la hoja se estiliza
+        // igual que el header de columnas de las otras 4 hojas; el resto de las
+        // filas (label:valor) sigue con solo negrita en la etiqueta, como antes.
+        if (i === 0) {
+            aplicarEstiloEncabezado(fila);
+        } else {
+            fila.getCell(1).font = { bold: true };
+        }
         if (numFmt) fila.getCell(2).numFmt = numFmt;
     });
 
-    // Nota al pie (corrección §4, sep-2026): "Comprobante origen" (hoja "Ventas")
-    // usa dos gramáticas a propósito - ver armarComprobanteOrigen() más abajo.
+    // Notas al pie (corrección R1 §4 y corrección R2 tanda 1 punto 6, sep-2026):
+    // "Comprobante origen" usa dos gramáticas a propósito (ver armarComprobanteOrigen
+    // más abajo); "Fecha de vencimiento" puede ser estimada cuando el cliente todavía
+    // no tiene plazo cargado (ver hoja "Ventas" y "Origen del vencimiento").
     sheetInforme.addRow([]);
-    const filaNota = sheetInforme.addRow([
-        'Nota',
+    const notasInforme: string[] = [
         'Comprobante origen: los comprobantes fiscales se identifican por punto de venta y número; los internos (NC/ND "X"), por número de proceso.',
-    ]);
-    filaNota.getCell(1).font = { bold: true, italic: true };
-    filaNota.getCell(2).font = { italic: true };
-    filaNota.getCell(2).alignment = { wrapText: true };
+        'Fecha de vencimiento: se toma del plazo de pago configurado en el ABM del cliente. Para los clientes que todavía no lo tienen cargado, se estima en 15 días desde la emisión y se identifica como tal en la columna Origen del vencimiento.',
+        // R3: los dos avisos que el handoff pide dejar por escrito (§2 y §9.1).
+        'Hoja "Cobranzas" (R3): a diferencia de "Ventas" y "Detalle valorizado" (que filtran por fecha de emisión del comprobante), "Cobranzas" filtra por fecha de COBRO. El total del período puede no coincidir entre hojas: una venta de fines de mes puede cobrarse recién el mes siguiente, y una cuenta corriente vieja puede cancelarse este mes.',
+        // Corrección R3 (15/09/2026, fix 4.a): el texto anterior decía que los
+        // recibos se borran físicamente - falso, verificado contra el código
+        // (DarBajaRecibo hace UPDATE con fechaBaja + motivo obligatorio, no
+        // DELETE). Lo que sí se borra en cascada son sus movimientos de cobro.
+        // La hoja "Cobranzas" lista los recibos dados de baja del período al pie
+        // (fix 4.b) - esta nota explica por qué pueden aparecer ahí.
+        'Recibos anulados: al dar de baja un recibo queda registrado con su fecha de baja y su motivo, pero sus movimientos de cobro se eliminan. Por eso un informe re-emitido de un período puede no coincidir con uno emitido antes, si en el medio se anuló algún recibo de ese período. El listado de recibos dados de baja en el período está al pie de la hoja "Cobranzas".',
+    ];
+    notasInforme.forEach(texto => {
+        const filaNota = sheetInforme.addRow(['Nota', texto]);
+        filaNota.getCell(1).font = { bold: true, italic: true };
+        filaNota.getCell(2).font = { italic: true };
+        filaNota.getCell(2).alignment = { wrapText: true };
+    });
 
     // =========================
     // HOJA 2: VENTAS
@@ -95,6 +145,10 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
         { header: 'Cond. pago (ABM cliente)', key: 'condicionPago', width: 20 },
         { header: 'Condición de venta', key: 'condicionVenta', width: 16 },
         { header: 'Fecha de vencimiento', key: 'fechaVencimiento', width: 16 },
+        // Nueva (corrección R2 tanda 1, punto 6): distingue un vencimiento pactado
+        // (ABM del cliente) de uno estimado (+15 días) - administración usa esta
+        // columna para reclamar cobranzas y no puede confundir los dos casos.
+        { header: 'Origen del vencimiento', key: 'origenVencimiento', width: 20 },
         { header: 'Fecha de entrega', key: 'fechaEntrega', width: 16 },
         { header: 'Depósito', key: 'deposito', width: 14 },
         { header: 'Moneda', key: 'moneda', width: 10 },
@@ -122,6 +176,7 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
         { header: 'Motivo / Observación', key: 'motivo', width: 30 },
         { header: 'Remito', key: 'remito', width: 16 },
     ];
+    aplicarEstiloEncabezado(sheetVentas.getRow(1));
 
     const COLUMNAS_MONEDA = [
         'venta', 'servicio', 'descuentoMonto', 'ajusteTransferencia', 'redondeo',
@@ -129,6 +184,25 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
     ];
 
     filas.forEach(r => {
+        // Fecha de vencimiento con fallback de +15 días (corrección R2 tanda 1,
+        // punto 6): v.fechaVencimiento manda si tiene valor (es el plazo real,
+        // derivado del diasVencimiento del cliente al emitir); si está vacía y el
+        // comprobante es Factura o Cotización, se ESTIMA en emisión + 15 días -
+        // nunca se persiste, se calcula acá y se marca en "Origen del vencimiento".
+        // NC/ND quedan siempre vacías (no vencen) - ver §6 del handoff.
+        let fechaVencimientoFinal: Date | null = null;
+        let origenVencimiento = '';
+        if (r.fechaVencimiento) {
+            fechaVencimientoFinal = moment.utc(r.fechaVencimiento).startOf('day').toDate();
+            // diasVencimientoCliente es el plazo ACTUAL del cliente (c.diasVencimiento) -
+            // si cambió después de esta venta, el texto no refleja el que se usó en su
+            // momento. Aceptado: es solo informativo, la fecha en sí no se recalcula.
+            origenVencimiento = `Cliente (${r.diasVencimientoCliente ?? '?'} días)`;
+        } else if (Number(r.idProcesoRaw) === IdProceso.FACTURA || Number(r.idProcesoRaw) === IdProceso.COTIZACION) {
+            fechaVencimientoFinal = moment.utc(r.fecha).startOf('day').add(15, 'days').toDate();
+            origenVencimiento = 'Estimado (+15 días)';
+        }
+
         const fila = sheetVentas.addRow({
             idVenta: r.idVenta,
             nroProceso: r.nroProceso,
@@ -160,7 +234,8 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
             vendedor: r.vendedor,
             condicionPago: r.condicionPago,
             condicionVenta: r.condicionVenta,
-            fechaVencimiento: r.fechaVencimiento ? moment.utc(r.fechaVencimiento).startOf('day').toDate() : null,
+            fechaVencimiento: fechaVencimientoFinal,
+            origenVencimiento,
             fechaEntrega: r.fechaEntrega ? moment.utc(r.fechaEntrega).startOf('day').toDate() : null,
             deposito: 'Depósito 1',
             moneda: 'ARS',
@@ -202,7 +277,7 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
         });
 
         fila.getCell('fecha').numFmt = 'dd/mm/yyyy';
-        if (r.fechaVencimiento) fila.getCell('fechaVencimiento').numFmt = 'dd/mm/yyyy';
+        if (fechaVencimientoFinal) fila.getCell('fechaVencimiento').numFmt = 'dd/mm/yyyy';
         if (r.fechaEntrega) fila.getCell('fechaEntrega').numFmt = 'dd/mm/yyyy';
         if (r.caeVto) fila.getCell('caeVto').numFmt = 'dd/mm/yyyy';
         fila.getCell('cae').numFmt = '@'; // texto: evita notación científica en los 14 dígitos del CAE.
@@ -270,11 +345,498 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
     escribirFilaTotal('TOTAL GENERAL', filasParaTotal, { vaciarFiscales: true });
 
     // Ajuste de ancho fijo (ver columns arriba): NO usar autoFitColumns() del
-    // servicio actual acá - con ~48 columnas y varios miles de filas es
-    // O(filas × columnas) y se nota (advertencia §9 del handoff).
+    // servicio actual acá - con ~48 columnas y varios miles de filas y se nota
+    // (advertencia §9 del handoff).
 
     // =========================
-    // HOJA 3: TOTALES (B4-206)
+    // HOJA 3: DETALLE VALORIZADO (R2)
+    // =========================
+    // 1 fila por línea de cada comprobante (o por talle si formatoLargo=true,
+    // §7) más las pseudolíneas de §5. La valorización (convención BRUTO/NETO,
+    // IVA por prorrateo de vf.iva, pseudolíneas, residual) sucede acá en TS -
+    // ver valorizarComprobante() más abajo y el comentario de ObtenerDetalleLineas
+    // en conciliacionRepository.ts sobre por qué no va en SQL.
+    const sheetDetalle = workbook.addWorksheet('Detalle valorizado');
+    sheetDetalle.columns = [
+        { header: 'ID Venta', key: 'idVenta', width: 10 },
+        { header: 'N° proceso', key: 'nroProceso', width: 12 },
+        { header: 'Punto de venta', key: 'puntoVenta', width: 14 },
+        { header: 'Tipo comprobante', key: 'tipoComprobante', width: 18 },
+        { header: 'N° comprobante', key: 'nroComprobante', width: 14 },
+        { header: 'Fecha', key: 'fecha', width: 12 },
+        { header: 'Fiscal', key: 'fiscal', width: 8 },
+        { header: 'Cód. cliente', key: 'codCliente', width: 12 },
+        { header: 'Cliente', key: 'cliente', width: 30 },
+        { header: 'Canal de venta', key: 'canalVenta', width: 16 },
+
+        { header: 'N° línea', key: 'nroLinea', width: 10 },
+        { header: 'Tipo de ítem', key: 'tipoItem', width: 20 },
+        { header: 'SKU', key: 'sku', width: 18 },
+        { header: 'Cód. artículo', key: 'codArticulo', width: 12 },
+        { header: 'Descripción', key: 'descripcion', width: 30 },
+        { header: 'Producto', key: 'producto', width: 16 },
+        { header: 'Tipo', key: 'tipo', width: 14 },
+        { header: 'Género', key: 'genero', width: 12 },
+        { header: 'Material', key: 'material', width: 14 },
+        { header: 'Color', key: 'color', width: 14 },
+        // Nueva (corrección tanda 1, punto 5 / B4-213): existe en productos.idTemporada,
+        // sin migración. Solo catálogo; vacía en servicios, no catalogados y pseudolíneas.
+        { header: 'Temporada', key: 'temporada', width: 16 },
+        { header: 'Talle', key: 'talle', width: 16 },
+        { header: 'Cantidad', key: 'cantidad', width: 10 },
+
+        { header: 'Precio de lista unit.', key: 'precioListaUnit', width: 16 },
+        { header: '% desc.', key: 'pctDesc', width: 10 },
+        { header: 'Precio unit. neto', key: 'precioUnitNeto', width: 16 },
+        { header: 'Importe bruto', key: 'importeBruto', width: 14 },
+        { header: 'Importe descuento', key: 'importeDesc', width: 16 },
+        { header: 'Importe neto', key: 'importeNeto', width: 14 },
+        // "Alíc. IVA" ahora es la tasa EFECTIVA (IVA/neto), no 21% fijo - corrección
+        // tanda 1 punto 1: en Factura C da 0%, sale solo del prorrateo de vf.iva.
+        { header: 'Alíc. IVA', key: 'alicIva', width: 10 },
+        { header: 'IVA', key: 'iva', width: 14 },
+        { header: 'Importe total', key: 'importeTotal', width: 14 },
+    ];
+    aplicarEstiloEncabezado(sheetDetalle.getRow(1));
+
+    const COLUMNAS_MONEDA_DETALLE = [
+        'precioListaUnit', 'precioUnitNeto', 'importeBruto', 'importeDesc', 'importeNeto', 'iva', 'importeTotal',
+    ];
+
+    // idVenta -> convención detectada (§4.a), total del detalle, IVA cabecera/detalle
+    // (signados) - los usa la hoja "Control".
+    const convencionPorVenta = new Map<number, Convencion>();
+    const totalDetallePorVenta = new Map<number, number>();
+    const ivaCabeceraPorVenta = new Map<number, number>();
+    const ivaDetallePorVenta = new Map<number, number>();
+    const tienePseudolineaDifPorVenta = new Map<number, boolean>();
+
+    const lineasPorVenta = new Map<number, any[]>();
+    lineasDetalle.forEach(l => {
+        if (!lineasPorVenta.has(l.idVenta)) lineasPorVenta.set(l.idVenta, []);
+        lineasPorVenta.get(l.idVenta)!.push(l);
+    });
+
+    filas.forEach(cabecera => {
+        const lineasCrudas = lineasPorVenta.get(cabecera.idVenta) ?? [];
+        const resultado = valorizarComprobante(cabecera, lineasCrudas, formatoLargo);
+
+        convencionPorVenta.set(cabecera.idVenta, resultado.convencion);
+        totalDetallePorVenta.set(cabecera.idVenta, resultado.totalDetalle);
+        ivaCabeceraPorVenta.set(cabecera.idVenta, resultado.ivaCabecera);
+        ivaDetallePorVenta.set(cabecera.idVenta, resultado.ivaDetalle);
+        tienePseudolineaDifPorVenta.set(cabecera.idVenta, resultado.tuvoPseudolineaDiferencia);
+
+        resultado.filas.forEach(f => {
+            const fila = sheetDetalle.addRow({
+                idVenta: cabecera.idVenta,
+                nroProceso: cabecera.nroProceso,
+                puntoVenta: cabecera.puntoVenta,
+                tipoComprobante: cabecera.tipoComprobante,
+                nroComprobante: cabecera.nroComprobante,
+                fecha: moment.utc(cabecera.fecha).startOf('day').toDate(),
+                fiscal: cabecera.fiscal,
+                codCliente: cabecera.codCliente,
+                cliente: cabecera.razonSocial,
+                canalVenta: cabecera.canalVenta,
+                ...f,
+            });
+            fila.getCell('fecha').numFmt = 'dd/mm/yyyy';
+            if (f.pctDesc != null) fila.getCell('pctDesc').numFmt = '0.00%';
+            fila.getCell('alicIva').numFmt = '0.00%';
+            COLUMNAS_MONEDA_DETALLE.forEach(key => { fila.getCell(key).numFmt = '#,##0.00'; });
+        });
+    });
+
+    const ultimaColumnaDetalle = columnaExcel(sheetDetalle.columns!.length);
+    sheetDetalle.autoFilter = { from: 'A1', to: `${ultimaColumnaDetalle}1` };
+    sheetDetalle.views = [{ state: 'frozen', ySplit: 1 }];
+    // Ancho fijo (mismo motivo que la hoja "Ventas"): con ~700-1500 filas por mes
+    // (o varias veces más en formato largo) autoFitColumns() no es viable.
+
+    // Totales generales (se reusan acá y en la hoja "Control" - una sola cuenta).
+    const totalCabeceraGeneral = round2(filas.reduce((acc, c) => acc + (Number(c.totalComprobante) || 0), 0));
+    const totalDetalleGeneral = round2(Array.from(totalDetallePorVenta.values()).reduce((acc, v) => acc + v, 0));
+    const ivaCabeceraGeneral = round2(Array.from(ivaCabeceraPorVenta.values()).reduce((acc, v) => acc + v, 0));
+    const ivaDetalleGeneral = round2(Array.from(ivaDetallePorVenta.values()).reduce((acc, v) => acc + v, 0));
+
+    // Resumen de 3 líneas al pie del detalle (corrección tanda 1, punto 4.a): es
+    // el control "a simple vista" que el cliente dibujó en su ejemplo, para quien
+    // abre solo esta hoja. La hoja "Control" no se toca - sigue siendo la que
+    // sirve para encontrar CUÁL comprobante falla cuando esto no da cero.
+    //
+    // Corrección tanda 2, punto 3: el importe va bajo la columna "Importe total"
+    // (la última de la tabla), no en A/B/C - con ~30 columnas quedaba flotando
+    // lejos de la suya. La etiqueta ocupa el resto de la fila, de A hasta la
+    // columna anterior a "Importe total" (merge para que se lea de corrido).
+    const colImporteTotalDetalle = columnaExcel(sheetDetalle.columns!.length);
+    const colAntesImporteTotalDetalle = columnaExcel(sheetDetalle.columns!.length - 1);
+    const escribirFilaResumenDetalle = (etiqueta: string, valor: number) => {
+        const fila = sheetDetalle.rowCount + 1;
+        sheetDetalle.mergeCells(`A${fila}:${colAntesImporteTotalDetalle}${fila}`);
+        sheetDetalle.getCell(`A${fila}`).value = etiqueta;
+        const celdaValor = sheetDetalle.getCell(`${colImporteTotalDetalle}${fila}`);
+        celdaValor.value = valor;
+        celdaValor.numFmt = '#,##0.00';
+        sheetDetalle.getRow(fila).font = { bold: true };
+    };
+    sheetDetalle.addRow([]);
+    sheetDetalle.getCell(`A${sheetDetalle.rowCount}`).value = 'CONTROL';
+    sheetDetalle.getCell(`A${sheetDetalle.rowCount}`).font = { bold: true, italic: true };
+    escribirFilaResumenDetalle('Importe total del detalle', totalDetalleGeneral);
+    escribirFilaResumenDetalle('Total del comprobante en la cabecera', totalCabeceraGeneral);
+    escribirFilaResumenDetalle('Diferencia (debe ser cero)', round2(totalCabeceraGeneral - totalDetalleGeneral));
+
+    // =========================
+    // HOJA 4: COBRANZAS (R3)
+    // =========================
+    // 1 fila por cobro (no por comprobante), filtrada por fecha de COBRO - ver
+    // comentario del parámetro `cobranzas` y HANDOFF-informes-administracion-R3.md
+    // §2/§5/§6. `calcularCobranzas` arma el arrastre (Saldo pendiente, Días de
+    // atraso) sobre el UNIVERSO completo de cada comprobante antes de filtrar
+    // a las filas del período - así el saldo es correcto aunque la factura se
+    // haya empezado a cobrar antes del período pedido.
+    const sheetCobranzas = workbook.addWorksheet('Cobranzas');
+
+    sheetCobranzas.getCell('A1').value =
+        'Esta hoja filtra por FECHA DE COBRO, no por fecha de comprobante (a diferencia de "Ventas" y "Detalle valorizado", que filtran por fecha de emisión) - un mismo período puede no coincidir entre hojas. Los totales de esta hoja (ver "Totales") son los que concilian contra ingresos reales de caja/banco.';
+    sheetCobranzas.getCell('A1').font = { italic: true, bold: true };
+    sheetCobranzas.getCell('A1').alignment = { wrapText: true };
+
+    const columnasCobranzas: Partial<ExcelJS.Column>[] = [
+        { key: 'tipoCobro', width: 24 },
+        { key: 'fechaCobro', width: 12 },
+        { key: 'codCliente', width: 12 },
+        { key: 'cliente', width: 28 },
+        { key: 'puntoVenta', width: 14 },
+        { key: 'tipoComprobante', width: 18 },
+        { key: 'nroComprobante', width: 14 },
+        { key: 'fiscal', width: 8 },
+        { key: 'facturante', width: 22 },
+        { key: 'nroProceso', width: 12 },
+        { key: 'condicionVenta', width: 16 },
+        { key: 'fechaComprobante', width: 14 },
+        { key: 'totalComprobante', width: 16 },
+        { key: 'fechaVencimiento', width: 14 },
+        { key: 'origenVencimiento', width: 20 },
+        { key: 'importeCobrado', width: 16 },
+        { key: 'medioCobro', width: 20 },
+        { key: 'fondo', width: 16 },
+        { key: 'estadoIngreso', width: 22 },
+        { key: 'numeroOperacion', width: 16 },
+        { key: 'estadoValor', width: 16 },
+        { key: 'importeValor', width: 16 },
+        { key: 'saldoPendiente', width: 16 },
+        { key: 'diasAtraso', width: 14 },
+        { key: 'idVentaCab', width: 10 },
+        { key: 'idPago', width: 12 },
+    ];
+    sheetCobranzas.columns = columnasCobranzas;
+
+    const ultimaColumnaCobranzas = columnaExcel(columnasCobranzas.length);
+    sheetCobranzas.mergeCells(`A1:${ultimaColumnaCobranzas}1`);
+
+    const encabezadosCobranzas = [
+        // Tipo de cobro bien a la izquierda, junto a las columnas de comprobante
+        // (decisión explícita de Nahu, R3): se entiende de entrada por qué las
+        // filas de Saldo inicial / Saldo a favor vienen con esas columnas vacías.
+        'Tipo de cobro', 'Fecha de cobro', 'Cód. cliente', 'Cliente',
+        'Punto de venta', 'Tipo comprobante', 'N° comprobante', 'Fiscal', 'Facturante',
+        'N° proceso', 'Condición de venta', 'Fecha comprobante', 'Total comprobante',
+        'Fecha de vencimiento', 'Origen del vencimiento',
+        'Importe cobrado', 'Medio de cobro', 'Fondo',
+        'Estado del ingreso', 'N° de operación', 'Estado del valor', 'Importe del valor',
+        'Saldo pendiente', 'Días de atraso',
+        'ID venta', 'ID pago',
+    ];
+    const filaHeaderCobranzas = sheetCobranzas.addRow(encabezadosCobranzas);
+    aplicarEstiloEncabezado(filaHeaderCobranzas);
+
+    const filasCobranzasCalculadas = calcularCobranzas(cobranzas.filasPeriodo, cobranzas.filasUniverso);
+
+    const COLUMNAS_MONEDA_COBRANZAS = ['totalComprobante', 'importeCobrado', 'importeValor', 'saldoPendiente'];
+
+    filasCobranzasCalculadas.forEach(f => {
+        const fila = sheetCobranzas.addRow({
+            tipoCobro: f.tipoCobro,
+            fechaCobro: f.fechaCobro ? moment.utc(f.fechaCobro).startOf('day').toDate() : null,
+            codCliente: f.codCliente,
+            cliente: f.cliente,
+            puntoVenta: f.puntoVenta ?? '',
+            tipoComprobante: f.tipoComprobante ?? '',
+            nroComprobante: f.nroComprobante ?? '',
+            fiscal: f.fiscal ?? '',
+            facturante: f.facturante ?? '',
+            nroProceso: f.nroProceso ?? '',
+            condicionVenta: f.condicionVenta ?? '',
+            fechaComprobante: f.fechaComprobante ? moment.utc(f.fechaComprobante).startOf('day').toDate() : null,
+            totalComprobante: f.totalComprobante != null ? Number(f.totalComprobante) : null,
+            fechaVencimiento: f.fechaVencimientoFinal,
+            origenVencimiento: f.origenVencimiento,
+            importeCobrado: Number(f.importeCobrado) || 0,
+            medioCobro: f.medioCobro ?? '',
+            fondo: f.fondo ?? '',
+            estadoIngreso: f.estadoIngreso,
+            numeroOperacion: f.numeroOperacion ?? '',
+            estadoValor: f.estadoValor ?? '',
+            importeValor: f.importeValor != null ? Number(f.importeValor) : null,
+            saldoPendiente: f.saldoPendiente,
+            diasAtraso: f.diasAtraso,
+            idVentaCab: f.idVentaCab,
+            idPago: f.idPago,
+        });
+        fila.getCell('fechaCobro').numFmt = 'dd/mm/yyyy';
+        if (f.fechaComprobante) fila.getCell('fechaComprobante').numFmt = 'dd/mm/yyyy';
+        if (f.fechaVencimientoFinal) fila.getCell('fechaVencimiento').numFmt = 'dd/mm/yyyy';
+        COLUMNAS_MONEDA_COBRANZAS.forEach(key => { fila.getCell(key).numFmt = '#,##0.00'; });
+        // Rechazado bien visible (decisión de Nahu - "es una venta que figura
+        // cobrada y cuya plata nunca entró"): mismo resaltado rojo que usa la
+        // hoja "Control" para diferencias.
+        if (f.estadoIngreso === 'Rechazado') {
+            fila.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } }; });
+            fila.font = { bold: true };
+        }
+        // Días de atraso estimado (vencimiento sin plazo cargado en el cliente):
+        // en cursiva/gris, mismo criterio de distinción visual que "Origen del
+        // vencimiento" ya usa en la hoja "Ventas" (§6 del handoff R2).
+        if (f.diasAtraso != null && f.origenVencimiento === 'Estimado (+15 días)') {
+            fila.getCell('diasAtraso').font = { italic: true, color: { argb: 'FF808080' } };
+        }
+    });
+
+    sheetCobranzas.autoFilter = { from: 'A2', to: `${ultimaColumnaCobranzas}2` };
+    sheetCobranzas.views = [{ state: 'frozen', ySplit: 2 }];
+
+    // Resumen al pie (CORRECCIÓN R3, 15/09/2026, punto 3): antes una sola fila
+    // "Total cobrado" sumaba también la financiación de cuenta corriente y
+    // llamaba "cobranza" a algo que no lo era - con el fix del punto 2 (CC ya
+    // no tiene fila propia) el número se arregla solo, pero la etiqueta seguía
+    // mal. Ahora se desglosa por las 4 categorías de Estado del ingreso (cada
+    // importe bajo su propia columna, mismo criterio que ya usa "Detalle
+    // valorizado" y "Control"), más el total general con el nombre correcto.
+    // "Rechazado" se escribe SIEMPRE, aunque dé $0 - que se vea que se miró.
+    const colImporteCobradoCobranzas = sheetCobranzas.getColumn('importeCobrado').letter;
+    const escribirFilaResumenCobranzas = (etiqueta: string, valor: number, resaltar = false) => {
+        const fila = sheetCobranzas.rowCount + 1;
+        sheetCobranzas.getCell(`A${fila}`).value = etiqueta;
+        const celdaValor = sheetCobranzas.getCell(`${colImporteCobradoCobranzas}${fila}`);
+        celdaValor.value = valor;
+        celdaValor.numFmt = '#,##0.00';
+        sheetCobranzas.getRow(fila).font = { bold: true };
+        if (resaltar) {
+            sheetCobranzas.getRow(fila).eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } }; });
+        }
+    };
+    const sumarPorEstadoIngreso = (estado: string) => round2(
+        filasCobranzasCalculadas.filter(f => f.estadoIngreso === estado)
+            .reduce((acc, f) => acc + (Number(f.importeCobrado) || 0), 0)
+    );
+    const totalMovimientosHoja = round2(filasCobranzasCalculadas.reduce((acc, f) => acc + (Number(f.importeCobrado) || 0), 0));
+    sheetCobranzas.addRow([]);
+    escribirFilaResumenCobranzas('Ingresó (cruzar contra caja/banco)', sumarPorEstadoIngreso('Ingresó'));
+    escribirFilaResumenCobranzas('Pendiente de acreditación', sumarPorEstadoIngreso('Pendiente de acreditación'));
+    escribirFilaResumenCobranzas('Rechazado', sumarPorEstadoIngreso('Rechazado'), true);
+    escribirFilaResumenCobranzas('No es ingreso', sumarPorEstadoIngreso('No es ingreso'));
+    escribirFilaResumenCobranzas('Total de movimientos de la hoja', totalMovimientosHoja);
+
+    // --- R3, corrección 15/09/2026, fix 4.b: recibos dados de baja en el período ---
+    // DarBajaRecibo() NO borra el recibo (queda con fechaBaja + motivo), pero SÍ
+    // borra en cascada sus movimientos de cobro - por eso una corrida futura del
+    // mismo período puede no coincidir con esta. En vez de que la plata "no esté"
+    // sin explicación, se lista qué se anuló, cuándo y por qué (trazabilidad -
+    // ver nota de la hoja "Informe").
+    const filaTituloBajas = sheetCobranzas.rowCount + 2;
+    sheetCobranzas.getCell(`A${filaTituloBajas}`).value = 'Recibos dados de baja en el período';
+    sheetCobranzas.getRow(filaTituloBajas).font = { bold: true, italic: true };
+    const filaHeaderBajas = sheetCobranzas.addRow(['ID recibo', 'Fecha', 'Cód. cliente', 'Cliente', 'Total', 'Fecha de baja', 'Motivo']);
+    aplicarEstiloEncabezado(filaHeaderBajas);
+    if (recibosDadosDeBaja.length === 0) {
+        const filaSinBajas = sheetCobranzas.addRow(['', '', '', 'Sin recibos anulados en el período', '', '', '']);
+        filaSinBajas.font = { italic: true };
+    } else {
+        recibosDadosDeBaja.forEach(rb => {
+            // addRow([]) + celdas por posición a propósito: este bloque tiene su
+            // propio layout de 7 columnas, no las 26 (por key) de la tabla de arriba.
+            const fila = sheetCobranzas.addRow([]);
+            fila.getCell(1).value = rb.id;
+            fila.getCell(2).value = rb.fecha ? moment.utc(rb.fecha).startOf('day').toDate() : null;
+            fila.getCell(2).numFmt = 'dd/mm/yyyy';
+            fila.getCell(3).value = rb.idCliente;
+            fila.getCell(4).value = rb.cliente;
+            fila.getCell(5).value = Number(rb.total) || 0;
+            fila.getCell(5).numFmt = '#,##0.00';
+            fila.getCell(6).value = rb.fechaBaja ? moment.utc(rb.fechaBaja).toDate() : null;
+            fila.getCell(6).numFmt = 'dd/mm/yyyy hh:mm';
+            fila.getCell(7).value = rb.motivo ?? '';
+        });
+    }
+
+    // =========================
+    // HOJA 5: CONTROL (R2, B4-222)
+    // =========================
+    // El criterio de aceptación de R2 hecho hoja (§1 y §9 del handoff): 1 fila
+    // por comprobante (mismo universo que la hoja "Ventas", incluidas anuladas
+    // si se pidieron - ver nota de la fila 1: el control valida consistencia de
+    // TODOS los comprobantes, vigentes o no, a propósito), ordenada por
+    // |Diferencia| + |Diferencia IVA| descendente para que lo que no cierra
+    // quede arriba sin buscarlo.
+    const sheetControl = workbook.addWorksheet('Control');
+
+    // Nota de alcance (corrección tanda 1, punto 4.c): en fila 1, ANTES del
+    // encabezado de la tabla (fila 2) - por eso `columns` acá NO lleva `header`
+    // (eso escribiría en la fila 1 y pisaría la nota); el encabezado se escribe
+    // a mano en la fila 2.
+    const columnasControl: Partial<ExcelJS.Column>[] = [
+        { key: 'idVenta', width: 10 },
+        { key: 'nroProceso', width: 12 },
+        { key: 'tipoComprobante', width: 18 },
+        { key: 'nroComprobante', width: 14 },
+        { key: 'fiscal', width: 8 },
+        { key: 'totalCabecera', width: 16 },
+        { key: 'totalDetalle', width: 16 },
+        { key: 'diferencia', width: 14 },
+        { key: 'ivaCabecera', width: 16 },
+        { key: 'ivaDetalle', width: 16 },
+        { key: 'diferenciaIva', width: 14 },
+        { key: 'convencion', width: 16 },
+        { key: 'tienePseudolinea', width: 24 },
+    ];
+    sheetControl.columns = columnasControl;
+
+    const ultimaColumnaControl = columnaExcel(columnasControl.length);
+    sheetControl.getCell('A1').value =
+        'Incluye comprobantes anulados: el control valida la consistencia de todos los comprobantes, estén vigentes o no. Los totales de la hoja Ventas excluyen los anulados.';
+    sheetControl.getCell('A1').font = { italic: true, bold: true };
+    sheetControl.getCell('A1').alignment = { wrapText: true };
+    sheetControl.mergeCells(`A1:${ultimaColumnaControl}1`);
+
+    const encabezadosControl = [
+        'ID Venta', 'N° proceso', 'Tipo comprobante', 'N° comprobante', 'Fiscal',
+        'Total cabecera', 'Total detalle', 'Diferencia',
+        'IVA cabecera', 'IVA detalle', 'Diferencia IVA',
+        'Convención', 'Tiene pseudolínea de diferencia',
+    ];
+    const filaHeaderControl = sheetControl.addRow(encabezadosControl);
+    aplicarEstiloEncabezado(filaHeaderControl);
+
+    // "Diferencia"/"Diferencia IVA" acá van a dar ~0 en prácticamente todas las
+    // filas (esa es la función de la pseudolínea "Diferencia no explicada" y del
+    // prorrateo de IVA: absorberlas). No es redundante con "Tiene pseudolínea de
+    // diferencia": esa columna dice si ESE cero de Importe total es real o fue
+    // forzado por un hueco de datos que se tuvo que hacer visible (§4.c).
+    const filasControl = filas.map(cabecera => {
+        const totalCabecera = Number(cabecera.totalComprobante) || 0;
+        const totalDetalle = totalDetallePorVenta.get(cabecera.idVenta) ?? 0;
+        const ivaCabecera = ivaCabeceraPorVenta.get(cabecera.idVenta) ?? 0;
+        const ivaDetalle = ivaDetallePorVenta.get(cabecera.idVenta) ?? 0;
+        return {
+            idVenta: cabecera.idVenta,
+            nroProceso: cabecera.nroProceso,
+            tipoComprobante: cabecera.tipoComprobante,
+            nroComprobante: cabecera.nroComprobante,
+            fiscal: cabecera.fiscal,
+            totalCabecera,
+            totalDetalle,
+            diferencia: round2(totalCabecera - totalDetalle),
+            ivaCabecera,
+            ivaDetalle,
+            diferenciaIva: round2(ivaCabecera - ivaDetalle),
+            convencion: convencionPorVenta.get(cabecera.idVenta) ?? 'INDETERMINADA',
+            tienePseudolinea: tienePseudolineaDifPorVenta.get(cabecera.idVenta) ? 'Sí' : 'No',
+        };
+    }).sort((a, b) => (Math.abs(b.diferencia) + Math.abs(b.diferenciaIva)) - (Math.abs(a.diferencia) + Math.abs(a.diferenciaIva)));
+
+    filasControl.forEach(f => {
+        const fila = sheetControl.addRow(f);
+        ['totalCabecera', 'totalDetalle', 'diferencia', 'ivaCabecera', 'ivaDetalle', 'diferenciaIva']
+            .forEach(key => { fila.getCell(key).numFmt = '#,##0.00'; });
+        if (Math.abs(f.diferencia) >= TOL_RESIDUAL || Math.abs(f.diferenciaIva) >= TOL_RESIDUAL) {
+            fila.font = { bold: true };
+            fila.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } }; });
+        }
+    });
+
+    sheetControl.autoFilter = { from: 'A2', to: `${ultimaColumnaControl}2` };
+    sheetControl.views = [{ state: 'frozen', ySplit: 2 }];
+
+    // 4 filas al pie (§9 del handoff + corrección tanda 1 punto 1): total
+    // cabecera, total detalle, diferencia, y ahora también el IVA - calculadas
+    // en backend, no con fórmulas de Excel (B4-218).
+    const filaPie1 = sheetControl.rowCount + 2;
+    sheetControl.getCell(`A${filaPie1}`).value = 'Total cabecera';
+    sheetControl.getCell(`F${filaPie1}`).value = totalCabeceraGeneral;
+    sheetControl.getCell(`A${filaPie1 + 1}`).value = 'Total detalle';
+    sheetControl.getCell(`G${filaPie1 + 1}`).value = totalDetalleGeneral;
+    sheetControl.getCell(`A${filaPie1 + 2}`).value = 'Diferencia (debe ser cero)';
+    sheetControl.getCell(`H${filaPie1 + 2}`).value = round2(totalCabeceraGeneral - totalDetalleGeneral);
+    sheetControl.getCell(`A${filaPie1 + 3}`).value = 'Diferencia IVA (debe ser cero)';
+    sheetControl.getCell(`K${filaPie1 + 3}`).value = round2(ivaCabeceraGeneral - ivaDetalleGeneral);
+    [filaPie1, filaPie1 + 1, filaPie1 + 2, filaPie1 + 3].forEach(fila => {
+        sheetControl.getRow(fila).font = { bold: true };
+    });
+    sheetControl.getCell(`F${filaPie1}`).numFmt = '#,##0.00';
+    sheetControl.getCell(`G${filaPie1 + 1}`).numFmt = '#,##0.00';
+    sheetControl.getCell(`H${filaPie1 + 2}`).numFmt = '#,##0.00';
+    sheetControl.getCell(`K${filaPie1 + 3}`).numFmt = '#,##0.00';
+
+    // --- R3, §8 del handoff: 2 checks sobre "Cobranzas" ---
+    // Se listan solo las violaciones (no se ajustan - "si alguno de los dos
+    // falla, repórtalo, no lo ajustes"). Se calculan sobre filasCobranzasCalculadas
+    // (que ya tiene el arrastre hecho sobre el universo completo, no solo el
+    // período) filtrando a `tipoCobro === 'Aplicado a comprobante'` - las filas
+    // de saldo inicial/a favor no tienen comprobante para chequear contra.
+    const filaTituloChecks = sheetControl.rowCount + 3;
+    sheetControl.getCell(`A${filaTituloChecks}`).value = 'Cobranzas (R3) - comprobantes con inconsistencia de cobro';
+    sheetControl.getRow(filaTituloChecks).font = { bold: true, italic: true };
+
+    const aplicadasPorVenta = new Map<number, any[]>();
+    filasCobranzasCalculadas
+        .filter(f => f.tipoCobro === 'Aplicado a comprobante' && f.idVentaCab != null)
+        .forEach(f => {
+            if (!aplicadasPorVenta.has(f.idVentaCab)) aplicadasPorVenta.set(f.idVentaCab, []);
+            aplicadasPorVenta.get(f.idVentaCab)!.push(f);
+        });
+
+    const violacionesCobranzas: { idVenta: number; comprobante: string; problema: string; detalle: string }[] = [];
+    aplicadasPorVenta.forEach((filasVenta, idVenta) => {
+        const totalComprobante = Math.abs(Number(filasVenta[0].totalComprobante) || 0);
+        const totalCobrado = round2(filasVenta.reduce((acc, f) => acc + (Number(f.importeCobrado) || 0), 0));
+        const comprobante = `${filasVenta[0].tipoComprobante ?? ''} ${filasVenta[0].nroComprobante ?? ''}`.trim();
+        // Check 1: comprobante totalmente cobrado (última fila con saldo 0)
+        // cuya última fila NO tiene saldoPendiente 0.
+        const ultima = [...filasVenta].sort((a, b) => new Date(a.fechaCobro).getTime() - new Date(b.fechaCobro).getTime()).slice(-1)[0];
+        if (Math.abs(totalCobrado - totalComprobante) <= TOL_RESIDUAL && Math.abs(Number(ultima.saldoPendiente) || 0) > TOL_RESIDUAL) {
+            violacionesCobranzas.push({
+                idVenta, comprobante,
+                problema: 'Cobrado 100% pero última fila no da saldo 0',
+                detalle: `Saldo pendiente última fila: ${ultima.saldoPendiente}`,
+            });
+        }
+        // Check 2: total cobrado supera el total del comprobante.
+        if (totalCobrado - totalComprobante > TOL_RESIDUAL) {
+            violacionesCobranzas.push({
+                idVenta, comprobante,
+                problema: 'Total cobrado supera el total del comprobante',
+                detalle: `Cobrado: ${totalCobrado} / Comprobante: ${totalComprobante}`,
+            });
+        }
+    });
+
+    const filaHeaderChecks = sheetControl.addRow(['ID Venta', 'Comprobante', 'Problema', 'Detalle']);
+    aplicarEstiloEncabezado(filaHeaderChecks);
+    if (violacionesCobranzas.length === 0) {
+        const filaOk = sheetControl.addRow(['', '', 'Sin violaciones', '']);
+        filaOk.font = { italic: true };
+    } else {
+        violacionesCobranzas.forEach(v => {
+            const fila = sheetControl.addRow([v.idVenta, v.comprobante, v.problema, v.detalle]);
+            fila.font = { bold: true };
+            fila.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } }; });
+        });
+    }
+
+    // =========================
+    // HOJA 6: TOTALES (B4-206)
     // =========================
     const sheetTotales = workbook.addWorksheet('Totales');
     sheetTotales.getColumn(1).width = 30;
@@ -286,7 +848,7 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
     let filaActual = 1;
     const agregarBloque = (titulo: string, datos: Map<string, number>) => {
         sheetTotales.getCell(`A${filaActual}`).value = titulo;
-        sheetTotales.getCell(`A${filaActual}`).font = { bold: true };
+        aplicarEstiloEncabezado(sheetTotales.getRow(filaActual));
         filaActual++;
         for (const [clave, total] of datos) {
             sheetTotales.getCell(`A${filaActual}`).value = clave || '(sin dato)';
@@ -304,10 +866,10 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
     // fiscal - abrir los 4 hubiera duplicado la hoja sin agregar información
     // nueva; este bloque solo alcanza para entender la composición.
     sheetTotales.getCell(`A${filaActual}`).value = 'Resumen por condición fiscal';
-    sheetTotales.getCell(`A${filaActual}`).font = { bold: true };
+    aplicarEstiloEncabezado(sheetTotales.getRow(filaActual));
     filaActual++;
     sheetTotales.getRow(filaActual).values = ['', 'Neto gravado', 'IVA', 'Total comprobante'];
-    sheetTotales.getRow(filaActual).font = { bold: true };
+    aplicarEstiloEncabezado(sheetTotales.getRow(filaActual));
     filaActual++;
     const sumar = (filasDelGrupo: any[], campo: string) =>
         filasDelGrupo.reduce((acc, r) => acc + (Number(r[campo]) || 0), 0);
@@ -345,6 +907,39 @@ export async function crearExcelConciliacion(filas: any[], subtotalesPorMedioPag
     const subtotalesMedioPago = new Map<string, number>();
     subtotalesPorMedioPago.forEach(r => subtotalesMedioPago.set(r.metodoPago, Number(r.totalAcumulado) || 0));
     agregarBloque('Por medio de pago', subtotalesMedioPago);
+
+    // --- R3: 2 bloques nuevos, sobre "Cobranzas" filtrado a Ingresó únicamente ---
+    // Distintos de los bloques de arriba: estos filtran por fecha de COBRO, no
+    // de comprobante, y solo suman lo que realmente entró a caja/banco (el
+    // check del handoff §10: la suma acá tiene que dar los ingresos reales del
+    // período, no los $ aplicados a comprobantes).
+    const filasIngresaron = filasCobranzasCalculadas.filter(f => f.estadoIngreso === 'Ingresó');
+    const totalIngresadoGeneral = round2(filasIngresaron.reduce((acc, f) => acc + (Number(f.importeCobrado) || 0), 0));
+
+    sheetTotales.getCell(`A${filaActual}`).value =
+        'Cobranzas (R3) - filtrado por fecha de COBRO, solo Estado del ingreso = Ingresó (real caja/banco del período)';
+    sheetTotales.getRow(filaActual).font = { bold: true, italic: true };
+    filaActual++;
+
+    const porMedioCobro = new Map<string, number>();
+    filasIngresaron.forEach(f => {
+        const k = f.medioCobro || '(sin dato)';
+        porMedioCobro.set(k, (porMedioCobro.get(k) ?? 0) + (Number(f.importeCobrado) || 0));
+    });
+    agregarBloque('Cobranzas por medio de cobro (solo Ingresó)', porMedioCobro);
+
+    const porFondo = new Map<string, number>();
+    filasIngresaron.forEach(f => {
+        const k = f.fondo || '(sin dato)';
+        porFondo.set(k, (porFondo.get(k) ?? 0) + (Number(f.importeCobrado) || 0));
+    });
+    agregarBloque('Cobranzas por fondo (solo Ingresó)', porFondo);
+
+    sheetTotales.getCell(`A${filaActual}`).value = 'Total cobranzas Ingresó (cruzar contra caja/banco)';
+    sheetTotales.getRow(filaActual).font = { bold: true };
+    sheetTotales.getCell(`B${filaActual}`).value = totalIngresadoGeneral;
+    sheetTotales.getCell(`B${filaActual}`).numFmt = '#,##0.00';
+    filaActual += 2;
 
     const buffer = await workbook.xlsx.writeBuffer();
     return buffer;
@@ -393,6 +988,425 @@ function sumarPor(filas: any[], clave: (r: any) => string, campo: string): Map<s
         mapa.set(k, (mapa.get(k) ?? 0) + (Number(r[campo]) || 0));
     });
     return mapa;
+}
+
+// =========================================================================
+// R2: valorización del detalle (HANDOFF-informes-administracion-R2.md §4-§7
+// y su tanda de correcciones, sep-2026)
+// =========================================================================
+
+const TOL_CONVENCION = 1.00; // pesos - absorbe redondeo, no diferencias reales (§4.a).
+const TOL_RESIDUAL = 0.01;   // pesos - a partir de acá el residual se emite como fila (§4.c).
+const ALICUOTA_IVA = 0.21;   // fija hoy (facturacionService.ts manda siempre Iva:[{Id:5}]=21%) -
+                              // se usa SOLO para reconstruir Importe total en la convención NETO
+                              // (§4.b). La columna "Alíc. IVA" que ve el usuario ya NO usa esta
+                              // constante: es la tasa efectiva IVA/neto de cada línea, corrección
+                              // tanda 1 punto 1.
+
+// "SIN DETALLE": comprobante sin ninguna línea real (§5, pseudolínea "Sin
+// detalle") - no es indeterminación, es un caso resuelto y esperado.
+// "INDETERMINADA": el comprobante SÍ tiene líneas y no cierra con ninguna
+// convención - antes cursaba en silencio como BRUTO; ahora queda visible,
+// corrección tanda 1 punto 3 (la fórmula/umbrales de §4.a no cambiaron, solo
+// la etiqueta de este caso límite).
+type Convencion = 'BRUTO' | 'NETO' | 'SIN DETALLE' | 'INDETERMINADA';
+
+function round2(n: number): number {
+    return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+// Estilo de encabezado compartido por las 5 hojas (corrección tanda 2, punto 2):
+// antes solo lo tenía "Control" (negrita + fondo celeste + bordes fino) y el
+// resto quedaba sin estilo, así que no se leían como la misma familia de
+// informe. En "Informe"/"Totales", que no son tablas con header de columnas,
+// se usa sobre la fila de título del bloque en vez de un header de columnas.
+const ESTILO_FILL_ENCABEZADO: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDDEBF7' } };
+const ESTILO_BORDE_ENCABEZADO: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' },
+};
+function aplicarEstiloEncabezado(fila: ExcelJS.Row): void {
+    fila.font = { bold: true };
+    fila.alignment = { horizontal: 'center', vertical: 'middle' };
+    fila.eachCell(cell => {
+        cell.fill = ESTILO_FILL_ENCABEZADO;
+        cell.border = ESTILO_BORDE_ENCABEZADO;
+    });
+}
+
+// Resultado de analizar el talle de una línea (corrección tanda 2, punto 5):
+// - 'desglosado': vp.talles trae VARIAS etiquetas y t1..t10 sí dice cuánto se
+//   vendió de cada una - caso normal, se puede explotar en formato largo.
+// - 'unico': vp.talles trae UNA sola etiqueta - toda la cantidad de la línea
+//   es ese talle, no hace falta t1..t10 para saberlo (5.a, antes mostraba la
+//   etiqueta pelada porque t1..t10 suele venir vacío en este caso).
+// - 'sin_desglose': vp.talles trae VARIAS etiquetas pero t1..t10 no dice cuánto
+//   de cada una (dato que no existe) - no se inventa un reparto (5.b): se
+//   muestra el talle compuesto tal cual, marcado, y en formato largo va en
+//   UNA sola fila (no se parte cantidad ni importe).
+// - 'vacio': sin talles.
+type TalleInfo =
+    | { tipo: 'desglosado'; grupos: { talle: string; cantidad: number }[] }
+    | { tipo: 'unico'; talle: string; cantidad: number }
+    | { tipo: 'sin_desglose'; talle: string }
+    | { tipo: 'vacio' };
+
+function analizarTalle(talles: string | null | undefined, cantidades: any[], cantidadLinea: number): TalleInfo {
+    const etiquetas = talles ? String(talles).split(',').map(t => t.trim()).filter(t => t.length > 0) : [];
+    if (etiquetas.length === 0) return { tipo: 'vacio' };
+    if (etiquetas.length === 1) return { tipo: 'unico', talle: etiquetas[0], cantidad: cantidadLinea };
+
+    const grupos = etiquetas
+        .map((talle, i) => ({ talle, cantidad: Number(cantidades[i]) || 0 }))
+        .filter(g => g.cantidad > 0);
+    if (grupos.length === 0) return { tipo: 'sin_desglose', talle: etiquetas.join(', ') };
+    return { tipo: 'desglosado', grupos };
+}
+
+// Corrección R2 tanda 3, fix 2: en formato largo la fila YA representa un solo
+// talle (la cantidad está en su propia columna) - ":cantidad" ahí es ruido y
+// queda inconsistente con las líneas expandidas desde t1..t10, que muestran la
+// etiqueta a secas. En formato normal se mantiene "etiqueta:cantidad" (sí
+// aporta, una fila puede resumir varios talles). Las compuestas sin desglose
+// muestran el mismo texto en los dos formatos - no hay cantidad que mostrar.
+function textoTalle(info: TalleInfo, formatoLargo: boolean): string {
+    switch (info.tipo) {
+        case 'unico': return formatoLargo ? info.talle : `${info.talle}:${info.cantidad}`;
+        case 'desglosado': return info.grupos.map(g => `${g.talle}:${g.cantidad}`).join(', ');
+        case 'sin_desglose': return `${info.talle} (sin desglose)`;
+        default: return '';
+    }
+}
+
+/**
+ * Valoriza el detalle de UN comprobante: detecta la convención BRUTO/NETO
+ * (§4.a) para reconstruir el Importe total de cada línea, arma las
+ * pseudolíneas (§5), cierra con el residual (§4.c) y por último reparte el
+ * IVA REAL de ARCA (`vf.iva`) entre todas las filas por peso de Importe total
+ * (corrección tanda 1, punto 1 - reemplaza la derivación al 21% fijo, que
+ * rompía en Factura C). Todos los cálculos internos son SIN signo - el signo
+ * de NC se aplica una única vez, al final, sobre cantidad/importes (no sobre
+ * precios unitarios ni tasas: un precio de lista o una alícuota no son
+ * "negativos" en una NC, lo que se niega es la cantidad y la plata que mueve
+ * - criterio §6).
+ *
+ * `cabecera` es la fila correspondiente de ObtenerVentasConciliacion (`filas`
+ * en crearExcelConciliacion) - trae totalComprobante/ajusteTransferencia ya
+ * calculados con signo (se destranza acá), redondeo/idProcesoRaw crudos, y
+ * vfIvaRaw (IVA real informado a ARCA, NULL si no es fiscal). `lineasCrudas`
+ * son las filas de ObtenerDetalleLineas para ese idVenta.
+ */
+function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: boolean): {
+    filas: any[]; convencion: Convencion; totalDetalle: number;
+    ivaCabecera: number; ivaDetalle: number; tuvoPseudolineaDiferencia: boolean;
+} {
+    const signo = Number(cabecera.idProcesoRaw) === IdProceso.NOTA_CREDITO ? -1 : 1;
+    const totalRaw = signo * (Number(cabecera.totalComprobante) || 0);
+    const ajusteRaw = signo * (Number(cabecera.ajusteTransferencia) || 0);
+    const redondeoRaw = Number(cabecera.redondeo) || 0;
+    // IVA real de ARCA, SIN signo (se destranza como el resto) - 0 si no es
+    // fiscal (vfIvaRaw NULL), consistente con el criterio ya usado en R1 tanda 2
+    // para netoGravado/iva de la hoja "Ventas".
+    const ivaComprobanteRaw = Number(cabecera.vfIvaRaw) || 0;
+
+    // --- §4.a: detección de convención (fórmula/umbrales sin cambios) ---
+    const sumaProductos = lineasCrudas
+        .filter(l => l.tipoItem !== 'Servicio')
+        .reduce((acc, l) => acc + (Number(l.total) || 0), 0);
+    const sumaServicios = lineasCrudas
+        .filter(l => l.tipoItem === 'Servicio')
+        .reduce((acc, l) => acc + (Number(l.total) || 0), 0);
+    const sumaDesc = lineasCrudas.reduce((acc, l) => acc + (Number(l.importeDescuento) || 0), 0);
+    const base = (sumaProductos + sumaServicios) - sumaDesc + ajusteRaw + redondeoRaw;
+
+    let convencion: Convencion;
+    if (lineasCrudas.length === 0) {
+        convencion = 'SIN DETALLE';
+    } else if (Math.abs(base - totalRaw) <= TOL_CONVENCION) {
+        convencion = 'BRUTO';
+    } else if (Math.abs(base * 1.21 - totalRaw) <= TOL_CONVENCION) {
+        convencion = 'NETO';
+    } else {
+        // Antes caía en silencio a BRUTO; ahora queda visible (corrección tanda 1
+        // punto 3). El cálculo de Importe total igual necesita una rama - usa
+        // BRUTO, y la diferencia real queda expuesta en la pseudolínea de §4.c.
+        convencion = 'INDETERMINADA';
+    }
+    const convencionEfectiva: 'BRUTO' | 'NETO' = convencion === 'NETO' ? 'NETO' : 'BRUTO';
+
+    // Reconstruye el Importe total de una línea real a partir de su importe
+    // post-descuento (§4.b) - SIN calcular IVA acá, eso ahora sale del
+    // prorrateo de vf.iva más abajo (corrección tanda 1, punto 1).
+    const calcularImporteTotal = (importePostDesc: number): number => {
+        if (convencionEfectiva === 'NETO') {
+            const importeNeto = round2(importePostDesc);
+            const iva = round2(importeNeto * ALICUOTA_IVA);
+            return round2(importeNeto + iva);
+        }
+        return round2(importePostDesc);
+    };
+
+    const filas: any[] = [];
+
+    // --- §4.b + §6: líneas reales (catálogo, no catalogado, servicio) ---
+    lineasCrudas.forEach(l => {
+        const cantidad = Number(l.cantidad) || 0;
+        const total = Number(l.total) || 0;
+        const importeDescuento = Number(l.importeDescuento) || 0;
+        const precioLista = l.precioLista != null ? Number(l.precioLista) : null;
+
+        const importeBruto = precioLista != null ? round2(cantidad * precioLista) : total;
+        const importePostDesc = total - importeDescuento;
+        const importeDesc = round2(importeBruto - importePostDesc);
+        const pctDesc = importeBruto !== 0 ? importeDesc / importeBruto : 0;
+        const precioUnitNeto = cantidad !== 0 ? importePostDesc / cantidad : 0;
+        const importeTotal = calcularImporteTotal(importePostDesc);
+
+        const filaBase = {
+            idLinea: l.idLinea,
+            tipoItem: l.tipoItem,
+            codArticulo: l.codigoArticulo ?? '',
+            descripcion: l.descripcion ?? '',
+            producto: l.producto ?? '',
+            tipo: l.tipo ?? '',
+            genero: l.genero ?? '',
+            material: l.material ?? '',
+            color: l.color ?? '',
+            temporada: l.temporada ?? '',
+            precioListaUnit: precioLista,
+            pctDesc,
+            precioUnitNeto,
+            importeBruto,
+            importeDesc,
+            importeTotal,
+            // importeNeto/iva/alicIva se completan más abajo, después de tener
+            // TODAS las filas del comprobante (líneas + pseudolíneas), por el
+            // prorrateo de vf.iva - corrección tanda 1, punto 1.
+        };
+
+        // §7: grano de la hoja - default 1 fila por línea de ventas_productos.
+        // Solo explota en formato largo, solo "Producto" (catálogo) y solo si
+        // el talle está realmente desglosado (corrección tanda 2, punto 5): una
+        // sola etiqueta o varias sin desglose real NO se pueden partir en filas
+        // por talle - se quedan en una sola fila más abajo, con vp.cantidad o
+        // marcadas "(sin desglose)" según el caso.
+        const infoTalle = analizarTalle(l.talles, [l.t1, l.t2, l.t3, l.t4, l.t5, l.t6, l.t7, l.t8, l.t9, l.t10], cantidad);
+        const explota = formatoLargo && l.tipoItem === 'Producto' && infoTalle.tipo === 'desglosado';
+
+        if (!explota) {
+            // Corrección R2 tanda 3, fix 1: en formato largo cada fila es UN talle,
+            // así que el SKU tiene que incluirlo también cuando el talle es único
+            // (t1..t10 vacío, se resolvió con vp.cantidad - antes solo lo llevaban
+            // las filas expandidas desde t1..t10). Las 30 compuestas sin desglose
+            // quedan con SKU de 2 partes a propósito: no hay un talle único que
+            // agregar sin inventarlo.
+            const skuTalle = formatoLargo && infoTalle.tipo === 'unico' ? `-${infoTalle.talle}` : '';
+            filas.push({
+                ...filaBase,
+                sku: l.tipoItem === 'Producto' ? `${l.codigoArticulo ?? ''}-${l.color ?? ''}${skuTalle}` : '',
+                talle: textoTalle(infoTalle, formatoLargo),
+                cantidad,
+            });
+            return;
+        }
+
+        const gruposTalle = (infoTalle as { tipo: 'desglosado'; grupos: { talle: string; cantidad: number }[] }).grupos;
+
+        // El residual del prorrateo (redondeo de centavos) se asigna a la fila
+        // de mayor cantidad del grupo, así la suma del grupo da EXACTAMENTE
+        // importeTotal - documentado acá y en §7 del handoff. Importe bruto y
+        // descuento se prorratean por cantidad sin este cuidado: no son la
+        // invariante que tiene que cerrar (esa es importeTotal, vía §1).
+        const cantidadTotalGrupo = gruposTalle.reduce((acc, g) => acc + g.cantidad, 0);
+        let indiceMayor = 0;
+        gruposTalle.forEach((g, i) => { if (g.cantidad > gruposTalle[indiceMayor].cantidad) indiceMayor = i; });
+
+        const totalesPorTalle = gruposTalle.map((g, i) => (
+            i === indiceMayor ? 0 : round2(importeTotal * (g.cantidad / cantidadTotalGrupo))
+        ));
+        const sumaOtros = totalesPorTalle.reduce((acc, t, i) => (i === indiceMayor ? acc : acc + t), 0);
+        totalesPorTalle[indiceMayor] = round2(importeTotal - sumaOtros);
+
+        gruposTalle.forEach((g, i) => {
+            const proporcion = g.cantidad / cantidadTotalGrupo;
+            filas.push({
+                ...filaBase,
+                sku: `${l.codigoArticulo ?? ''}-${l.color ?? ''}-${g.talle}`,
+                talle: g.talle,
+                cantidad: g.cantidad,
+                importeBruto: round2(importeBruto * proporcion),
+                importeDesc: round2(importeDesc * proporcion),
+                importeTotal: totalesPorTalle[i],
+            });
+        });
+    });
+
+    // --- §5: pseudolíneas (sin neto/iva todavía - ver prorrateo más abajo) ---
+    const filaPseudo = (tipoItem: string, descripcion: string, importeTotal: number) => ({
+        idLinea: null, tipoItem, sku: '', codArticulo: '', descripcion,
+        producto: '', tipo: '', genero: '', material: '', color: '', temporada: '', talle: '', cantidad: null,
+        precioListaUnit: null, pctDesc: null, precioUnitNeto: null, importeBruto: null, importeDesc: null,
+        importeTotal,
+    });
+    if (ajusteRaw !== 0) filas.push(filaPseudo('Ajuste', 'Recargo por transferencia (10%)', ajusteRaw));
+    if (redondeoRaw !== 0) filas.push(filaPseudo('Redondeo', 'Redondeo', redondeoRaw));
+    if (lineasCrudas.length === 0) {
+        filas.push(filaPseudo('Sin detalle', (cabecera.motivo && String(cabecera.motivo).trim()) || 'Sin detalle', totalRaw));
+    }
+
+    // --- §4.c: cierre exacto ---
+    const totalFilasHastaAhora = filas.reduce((acc, f) => acc + (Number(f.importeTotal) || 0), 0);
+    const residual = round2(totalRaw - totalFilasHastaAhora);
+    let tuvoPseudolineaDiferencia = false;
+    if (Math.abs(residual) >= TOL_RESIDUAL) {
+        filas.push(filaPseudo('Diferencia no explicada', 'Diferencia no explicada', residual));
+        tuvoPseudolineaDiferencia = true;
+    }
+
+    // --- Corrección tanda 1, punto 1: IVA real por prorrateo, no derivado ---
+    // Se reparte vf.iva (el que se informó a ARCA) entre TODAS las filas del
+    // comprobante (líneas + pseudolíneas) por peso de Importe total, y el
+    // residual del prorrateo se asigna a la fila de MAYOR |Importe total| - así
+    // Σ IVA de las filas = vf.iva exacto, sea cual sea la convención (incluida
+    // NETO: ahí el Importe total ya se construyó como neto×1,21, y el prorrateo
+    // igual reparte los 60.060 reales de vf.iva, no un IVA recalculado).
+    const sumaImporteTotalTodas = filas.reduce((acc, f) => acc + (Number(f.importeTotal) || 0), 0);
+    if (sumaImporteTotalTodas !== 0) {
+        let indiceMayorIva = 0;
+        filas.forEach((f, i) => {
+            if (Math.abs(f.importeTotal) > Math.abs(filas[indiceMayorIva].importeTotal)) indiceMayorIva = i;
+        });
+        let ivaAsignado = 0;
+        filas.forEach((f, i) => {
+            if (i === indiceMayorIva) return;
+            const peso = f.importeTotal / sumaImporteTotalTodas;
+            f.iva = round2(ivaComprobanteRaw * peso);
+            ivaAsignado += f.iva;
+        });
+        filas[indiceMayorIva].iva = round2(ivaComprobanteRaw - ivaAsignado);
+    } else {
+        filas.forEach(f => { f.iva = 0; });
+    }
+    filas.forEach(f => {
+        f.importeNeto = round2(f.importeTotal - f.iva);
+        // Tasa EFECTIVA (no 21% fijo) - en Factura C da 0% sola, sin caso
+        // especial (corrección tanda 1, punto 1 y §8 "qué no hacer").
+        f.alicIva = f.importeNeto !== 0 ? round2(f.iva / f.importeNeto) : 0;
+    });
+
+    // Numeración final y signo de NC (§6) - cantidad e importes, no precios
+    // unitarios, alícuotas ni porcentajes (ver comentario de la función).
+    const filasFinal = filas.map((f, i) => ({
+        ...f,
+        nroLinea: i + 1,
+        cantidad: f.cantidad != null ? f.cantidad * signo : null,
+        importeBruto: f.importeBruto != null ? round2(f.importeBruto * signo) : null,
+        importeDesc: f.importeDesc != null ? round2(f.importeDesc * signo) : null,
+        importeNeto: round2(f.importeNeto * signo),
+        iva: round2(f.iva * signo),
+        importeTotal: round2(f.importeTotal * signo),
+    }));
+
+    const totalDetalle = round2(filasFinal.reduce((acc, f) => acc + (Number(f.importeTotal) || 0), 0));
+    const ivaDetalle = round2(filasFinal.reduce((acc, f) => acc + (Number(f.iva) || 0), 0));
+
+    return {
+        filas: filasFinal,
+        convencion,
+        totalDetalle,
+        ivaCabecera: round2(signo * ivaComprobanteRaw),
+        ivaDetalle,
+        tuvoPseudolineaDiferencia,
+    };
+}
+
+// =========================================================================
+// R3: arrastre de la hoja "Cobranzas" (HANDOFF-informes-administracion-R3.md
+// §5-§6, más las 3 correcciones acordadas con Nahu - ver comentario de
+// ArmarBaseCobranzas en conciliacionRepository.ts para el porqué de la unión
+// ventas_pagos + ventas_entrega_detalle).
+// =========================================================================
+
+/**
+ * Calcula, para cada fila de `filasPeriodo`, el Saldo pendiente y los Días de
+ * atraso, y la fecha de vencimiento final (con el mismo fallback +15 días que
+ * usa la hoja "Ventas" - v.fechaVencimiento no trae ese cálculo, es crudo).
+ *
+ * El arrastre (Saldo pendiente) se calcula sobre `filasUniverso` - TODO el
+ * historial de cobros de cada comprobante, sin filtro de fecha - para que el
+ * saldo de una fila del período descuente también lo cobrado en meses
+ * anteriores (§6 del handoff). Solo las filas con tipoCobro = "Aplicado a
+ * comprobante" entran en el arrastre; las de saldo inicial/saldo a favor no
+ * tienen comprobante contra el cual calcular un saldo (van vacías, no cero -
+ * cambio de alcance acordado con Nahu, no son "$0 de saldo", son "no aplica").
+ */
+function calcularCobranzas(filasPeriodo: any[], filasUniverso: any[]): any[] {
+    const porVenta = new Map<number, any[]>();
+    filasUniverso
+        .filter(f => f.tipoCobro === 'Aplicado a comprobante' && f.idVentaCab != null)
+        .forEach(f => {
+            if (!porVenta.has(f.idVentaCab)) porVenta.set(f.idVentaCab, []);
+            porVenta.get(f.idVentaCab)!.push(f);
+        });
+
+    const saldoPorPago = new Map<string, number>();
+    const diasAtrasoPorPago = new Map<string, number | null>();
+
+    porVenta.forEach(filasVenta => {
+        const ordenadas = [...filasVenta].sort((a, b) => {
+            const fa = new Date(a.fechaCobro).getTime();
+            const fb = new Date(b.fechaCobro).getTime();
+            if (fa !== fb) return fa - fb;
+            return String(a.idPago).localeCompare(String(b.idPago));
+        });
+        const totalComprobante = Math.abs(Number(ordenadas[0].totalComprobante) || 0);
+        const { fechaVencimientoFinal } = resolverVencimiento(ordenadas[0]);
+
+        let acumulado = 0;
+        ordenadas.forEach(f => {
+            acumulado += Number(f.importeCobrado) || 0;
+            saldoPorPago.set(f.idPago, round2(totalComprobante - acumulado));
+            if (fechaVencimientoFinal) {
+                const dias = Math.max(0, moment.utc(f.fechaCobro).startOf('day').diff(moment.utc(fechaVencimientoFinal).startOf('day'), 'days'));
+                diasAtrasoPorPago.set(f.idPago, dias);
+            } else {
+                diasAtrasoPorPago.set(f.idPago, null);
+            }
+        });
+    });
+
+    return filasPeriodo.map(f => {
+        const { fechaVencimientoFinal, origenVencimiento } = resolverVencimiento(f);
+        const esAplicado = f.tipoCobro === 'Aplicado a comprobante';
+        return {
+            ...f,
+            fechaVencimientoFinal,
+            origenVencimiento,
+            saldoPendiente: esAplicado ? (saldoPorPago.get(f.idPago) ?? null) : null,
+            diasAtraso: esAplicado ? (diasAtrasoPorPago.get(f.idPago) ?? null) : null,
+        };
+    });
+}
+
+// Mismo criterio +15 días que ya usa la hoja "Ventas" (corrección R2 tanda 1,
+// punto 6) - v.fechaVencimiento crudo, sin ese fallback, viene igual en las
+// filas de "Cobranzas" (misma columna de ObtenerVentasConciliacion/
+// ArmarBaseCobranzas). Se reusa acá en vez de duplicar el cálculo con otro
+// criterio - las dos hojas tienen que coincidir en qué vencimiento le
+// atribuyen a la misma venta.
+function resolverVencimiento(f: any): { fechaVencimientoFinal: Date | null; origenVencimiento: string } {
+    if (f.fechaVencimiento) {
+        return {
+            fechaVencimientoFinal: moment.utc(f.fechaVencimiento).startOf('day').toDate(),
+            origenVencimiento: `Cliente (${f.diasVencimientoCliente ?? '?'} días)`,
+        };
+    }
+    if (Number(f.idProcesoRaw) === IdProceso.FACTURA || Number(f.idProcesoRaw) === IdProceso.COTIZACION) {
+        return {
+            fechaVencimientoFinal: moment.utc(f.fechaComprobante).startOf('day').add(15, 'days').toDate(),
+            origenVencimiento: 'Estimado (+15 días)',
+        };
+    }
+    return { fechaVencimientoFinal: null, origenVencimiento: '' };
 }
 
 // Letra de columna Excel a partir del índice (1-based) - evita hardcodear el

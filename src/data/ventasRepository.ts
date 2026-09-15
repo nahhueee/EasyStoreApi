@@ -710,6 +710,7 @@ class VentasRepository{
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
         venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!, venta.proceso!);
         venta.cantidadesAcreditadas = await ObtenerCantidadesAcreditadas(connection, venta.nroProceso!, venta.proceso!);
+        venta.cantidadesAcreditadasInterna = await ObtenerCantidadesAcreditadasInterna(connection, venta.nroProceso!, venta.proceso!);
         return venta;
     }
 
@@ -1727,27 +1728,30 @@ async function ObtenerNotasVenta(connection, nroProceso:number, tipoOriginal:str
 }
 
 
-// Cantidades ya acreditadas por NCs FISCALES (NC_A/B/C, no internas/X) ya emitidas
-// sobre esta venta - permite al front (PrepararPreciosVenta) calcular el remanente
-// disponible al emitir una nueva NC fiscal, para devoluciones parciales sucesivas
-// (sep-2026). Mismo criterio de nroRelacionado/idProceso=3/tipoRelacionado que
-// ObtenerNotasVenta (ver su comentario), filtrando además por tipo fiscal (una NC
-// interna/X no resta saldo del comprobante fiscal original).
-async function ObtenerCantidadesAcreditadas(connection, nroProceso:number, tipoOriginal:string): Promise<CantidadesAcreditadas> {
+// Cantidades ya acreditadas por NC de un tipo de comprobante dado (fiscal NC_A/B/C
+// o interna NC_X) ya emitidas sobre esta venta - permite al front (PrepararPreciosVenta)
+// calcular el remanente disponible al emitir una nueva NC del mismo tipo, para
+// devoluciones parciales sucesivas (sep-2026). Mismo criterio de
+// nroRelacionado/idProceso=3/tipoRelacionado que ObtenerNotasVenta (ver su comentario).
+// idsComprobante filtra por tipo: fiscal y interna son buckets independientes (una NC
+// interna/X no resta saldo del comprobante fiscal original, y viceversa - ver
+// ObtenerCantidadesAcreditadas/ObtenerCantidadesAcreditadasInterna más abajo).
+async function ObtenerCantidadesAcreditadasPorTipo(connection, nroProceso:number, tipoOriginal:string, idsComprobante:number[]): Promise<CantidadesAcreditadas> {
     try {
         const resultado = new CantidadesAcreditadas();
+        const placeholdersComprobante = idsComprobante.map(() => '?').join(',');
 
-        const [notasFiscales] = await connection.query(
-            "SELECT id, total FROM ventas WHERE nroRelacionado = ? AND idProceso = 3 AND tipoRelacionado = ? AND idTComprobante IN (?, ?, ?)",
-            [nroProceso, tipoOriginal, TipoComprobante.NC_A, TipoComprobante.NC_B, TipoComprobante.NC_C]
+        const [notas] = await connection.query(
+            `SELECT id, total FROM ventas WHERE nroRelacionado = ? AND idProceso = 3 AND tipoRelacionado = ? AND idTComprobante IN (${placeholdersComprobante})`,
+            [nroProceso, tipoOriginal, ...idsComprobante]
         );
 
-        if (!Array.isArray(notasFiscales) || notasFiscales.length === 0) {
+        if (!Array.isArray(notas) || notas.length === 0) {
             return resultado;
         }
 
-        const idsNotas = notasFiscales.map(n => n['id']);
-        resultado.totalAcreditado = notasFiscales.reduce(
+        const idsNotas = notas.map(n => n['id']);
+        resultado.totalAcreditado = notas.reduce(
             (acc, n) => acc + (parseFloat(n['total']) || 0), 0
         );
 
@@ -1813,6 +1817,18 @@ async function ObtenerCantidadesAcreditadas(connection, nroProceso:number, tipoO
     } catch (error) {
         throw error;
     }
+}
+
+// Bucket FISCAL (NC_A/B/C) de ObtenerCantidadesAcreditadasPorTipo - ver su comentario.
+async function ObtenerCantidadesAcreditadas(connection, nroProceso:number, tipoOriginal:string): Promise<CantidadesAcreditadas> {
+    return ObtenerCantidadesAcreditadasPorTipo(connection, nroProceso, tipoOriginal, [TipoComprobante.NC_A, TipoComprobante.NC_B, TipoComprobante.NC_C]);
+}
+
+// Bucket INTERNO (NC_X) de ObtenerCantidadesAcreditadasPorTipo (sep-2026) - habilita
+// devoluciones parciales sucesivas también para ventas que solo pueden emitir NC
+// interna (Cotización, Ticket X, etc. - ver puedeElegirFiscal en notas-venta.component.ts).
+async function ObtenerCantidadesAcreditadasInterna(connection, nroProceso:number, tipoOriginal:string): Promise<CantidadesAcreditadas> {
+    return ObtenerCantidadesAcreditadasPorTipo(connection, nroProceso, tipoOriginal, [TipoComprobante.NC_X]);
 }
 
 //#region INSERT

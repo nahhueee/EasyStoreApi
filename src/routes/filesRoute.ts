@@ -129,10 +129,20 @@ router.post('/ventas-conciliacion-excel', async (req, res) => {
         // cliente, nroProceso), más incluirAnuladas. filtroProcesoNombre/filtroClienteNombre/
         // usuario: igual que fondos-excel (cajaNombre/fondoNombre) - ya resueltos en el
         // frontend, solo para el encabezado del excel (evita otro round-trip al backend).
-        const { filtros, filtroProcesoNombre, filtroClienteNombre, usuario } = req.body;
+        // formatoLargo: checkbox "Exportar talles en formato largo" (R2, B4-212).
+        const { filtros, filtroProcesoNombre, filtroClienteNombre, usuario, formatoLargo } = req.body;
 
         const filas = await ConciliacionRepo.ObtenerVentasConciliacion(filtros);
         const subtotalesPorMedioPago = await ConciliacionRepo.ObtenerSubtotalesPorMedioPago(filtros);
+        // R2: detalle crudo (líneas de producto/servicio) para la hoja "Detalle
+        // valorizado" - la valorización sucede en crearExcelConciliacion.
+        const lineasDetalle = await ConciliacionRepo.ObtenerDetalleLineas(filtros);
+        // R3: 1 fila por cobro (hoja "Cobranzas") - filtrado por fecha de COBRO,
+        // no de comprobante (mismo `filtros`, resuelto en ArmarBaseCobranzas).
+        const cobranzas = await ConciliacionRepo.ObtenerCobranzas(filtros);
+        // R3, corrección 15/09/2026, fix 4.b: recibos dados de baja en el período
+        // (mismo rango de fechas de `filtros`, filtrado por fechaBaja).
+        const recibosDadosDeBaja = await ConciliacionRepo.ObtenerRecibosDadosDeBaja(filtros);
 
         const buffer = await crearExcelConciliacion(filas, subtotalesPorMedioPago, {
             fechaDesde: filtros?.fechas?.[0],
@@ -142,7 +152,7 @@ router.post('/ventas-conciliacion-excel', async (req, res) => {
             filtroNroProceso: filtros?.nroProceso,
             incluirAnuladas: filtros?.incluirAnuladas,
             usuario,
-        });
+        }, lineasDetalle, !!formatoLargo, cobranzas, recibosDadosDeBaja);
 
         res.setHeader('Content-Disposition', 'attachment; filename="ventas-conciliacion.xlsx"');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

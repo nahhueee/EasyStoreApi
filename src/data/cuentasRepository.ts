@@ -1107,7 +1107,7 @@ class CuentasRepository{
             // anterior solo para recibos anteriores a la migración (columna en NULL).
             const [[entregaEmpresaRow]]: any = idEntrega != null
                 ? await connection.query(`SELECT idEmpresa FROM ventas_entrega WHERE id = ?`, [idEntrega])
-                : [null];
+                : [[null]];
             const idEmpresaEntrega: number | null =
                 entregaEmpresaRow?.idEmpresa
                 ?? pagos.find((p: any) => p.idEmpresa != null)?.idEmpresa

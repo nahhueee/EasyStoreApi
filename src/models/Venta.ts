@@ -49,6 +49,11 @@ import { Color, TallesProducto } from "./Producto";
     // Cantidades ya acreditadas por NC FISCALES previas sobre esta venta (sep-2026,
     // devoluciones parciales sucesivas) - ver ObtenerCantidadesAcreditadas.
     cantidadesAcreditadas?: CantidadesAcreditadas;
+    // Análogo a cantidadesAcreditadas pero para NC INTERNAS (X) - bucket
+    // independiente, no resta contra el anterior (sep-2026, misma mecánica de
+    // devoluciones parciales sucesivas aplicada a ventas que solo pueden emitir NC
+    // interna, ej. Cotización). Ver ObtenerCantidadesAcreditadasInterna.
+    cantidadesAcreditadasInterna?: CantidadesAcreditadas;
 
     nroRelacionado?:number;
     tipoRelacionado?:string;
