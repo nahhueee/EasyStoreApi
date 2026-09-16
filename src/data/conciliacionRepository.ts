@@ -518,28 +518,43 @@ class ConciliacionRepository {
      * 'SALDO_A_FAVOR' = sin comprobante (columnas de comprobante NULL en esas
      * filas - §5.3 del handoff).
      *
-     * `estadoIngreso` (corrección de alcance sobre el handoff, confirmada con
-     * datos reales de Nahu - agosto: tarjeta 72,6% ACREDITADO / 19,6% PENDIENTE
-     * / 7,8% RECHAZADO, cheques 9/9 acreditados): CHEQUE y CREDITO pasan los
-     * dos por `valores_acreditar` (RegistrarMovimientosVenta en
-     * ventasRepository.ts: `TIPOS_VALOR = ['CHEQUE', 'CREDITO']`), con estado
-     * PENDIENTE / ACREDITADO / RECHAZADO (valoresRepository.ts). Cuatro
-     * valores, no dos: 'Ingresó', 'Pendiente de acreditación' (CHEQUE/CREDITO
-     * todavía PENDIENTE), 'Rechazado' (CHEQUE/CREDITO con estado RECHAZADO -
-     * la plata nunca entró), 'No es ingreso' (CUENTA_CORRIENTE, SALDO_FAVOR -
-     * nunca es plata nueva - o cualquier medio sin fondo real detrás).
+     * `estadoIngreso`: cinco valores posibles - 'Ingresó', 'Pendiente de
+     * acreditación' (CHEQUE/CREDITO todavía PENDIENTE), 'Rechazado' (CHEQUE/
+     * CREDITO con estado RECHAZADO - la plata nunca entró), 'No es ingreso'
+     * (financiación/crédito ya existente, nunca plata nueva) y 'Revisar
+     * (fondo sin clasificar)' (ver abajo). CHEQUE y CREDITO pasan los dos por
+     * `valores_acreditar` (RegistrarMovimientosVenta en ventasRepository.ts:
+     * `TIPOS_VALOR = ['CHEQUE', 'CREDITO']`), con estado PENDIENTE/ACREDITADO/
+     * RECHAZADO (valoresRepository.ts) - datos reales de agosto: tarjeta
+     * 72,6% ACREDITADO / 19,6% PENDIENTE / 7,8% RECHAZADO, cheques 9/9
+     * acreditados.
      *
-     * CORRECCIÓN R3 (15/09/2026, auditoría agosto): NO se resuelve por lista
-     * blanca de mp.tipo (EFECTIVO/TRANSFERENCIA/DEBITO -> 'Ingresó', default
-     * 'No es ingreso') - eso dejó afuera en silencio 38 filas de MERCADOPAGO
-     * ($4.446.440,76) que sí son plata real. El criterio correcto es por
-     * DESTINO del dinero: cualquier medio no contemplado explícitamente
-     * (CC/SALDO_FAVOR, CHEQUE/CREDITO) se resuelve por si `mp.idFondo` apunta
-     * a un fondo REAL (`f.tipo IS NULL` - fondos.tipo solo se carga para
-     * marcar un fondo VIRTUAL: RETENCIONES_SUFRIDAS, CC_PROVEEDORES,
-     * SALDO_FAVOR_PROVEEDORES - mismo criterio por tipo, no por nombre, que
-     * ya usan GetIdFondoRetenciones()/GetFondoVirtual()). Un medio de pago
-     * nuevo con fondo real queda bien clasificado solo, sin tocar esta lista.
+     * Historial de esta columna (2 fixes previos, ambos por confiar en una
+     * regla que no cubría todos los casos y fallaba EN SILENCIO):
+     *   1. Lista blanca de mp.tipo (EFECTIVO/TRANSFERENCIA/DEBITO -> 'Ingresó',
+     *      default 'No es ingreso') - dejó afuera 38 filas de MERCADOPAGO
+     *      ($4.446.440,76) que sí eran plata real.
+     *   2. `f.tipo IS NULL` = "fondo real" - premisa equivocada (asumida a
+     *      partir de que solo 3 fondos VIRTUALES puntuales tienen `tipo`
+     *      seteado, sin verificar el resto). fondos.tipo está poblado para
+     *      TODOS los fondos - la condición no daba TRUE nunca, todo caía a
+     *      'No es ingreso'.
+     * Fix final (15/09/2026, verificado por Nahu contra la base real): DOS
+     * listas EXPLÍCITAS sobre `f.tipo` (fondos.tipo, no fondos.nombre), sin
+     * default silencioso en ninguna dirección:
+     *   - Ingresa: EFECTIVO, BANCARIO, DIGITAL -> 'Ingresó'.
+     *   - No ingresa: CUENTA_CLIENTE, VALOR_PENDIENTE, RETENCIONES_SUFRIDAS,
+     *     CC_PROVEEDORES, SALDO_FAVOR_PROVEEDORES -> 'No es ingreso'.
+     *   - Cualquier fondos.tipo que no esté en ninguna de las dos -> 'Revisar
+     *     (fondo sin clasificar)', visible en vez de perdido en silencio.
+     * CHEQUE/CREDITO se resuelven ANTES que las listas de fondo (su
+     * `mp.idFondo` es un fondo tipo VALOR_PENDIENTE hasta que se acredita -
+     * si el check de fondo fuera primero, un cheque ya ACREDITADO caería mal
+     * igual). `f.tipo AS fondoTipo` / `mp.tipo AS metodoTipo` quedan como
+     * columnas de salida (pedido de Nahu, defensivo/trazabilidad) aunque el
+     * bug real nunca fue una colisión de alias - mp.tipo/f.tipo solo se usan
+     * acá calificados, dentro del CASE/WHERE, nunca como columna de salida
+     * sin alias.
      *
      * Vínculo a cheque/tarjeta (N° de operación, Estado del valor, Importe del
      * valor): un cheque/crédito que cancela varias ventas en una misma Entrega
@@ -584,31 +599,47 @@ class ConciliacionRepository {
         // CORRECCIÓN R3 (15/09/2026, auditoría de agosto): `estadoIngreso` NO
         // se resuelve más por lista blanca de mp.tipo - dejaba afuera en
         // silencio cualquier medio no contemplado (38 filas de MERCADOPAGO,
-        // $4.446.440,76, cayeron a "No es ingreso" antes de este fix). El
-        // criterio correcto es por DESTINO del dinero, no por el nombre del
-        // medio: CUENTA_CORRIENTE/SALDO_FAVOR nunca ingresan (son
-        // financiación/crédito ya existente, no plata nueva); CHEQUE/CREDITO
-        // dependen del estado de valores_acreditar (ya resuelto, sin cambios);
-        // cualquier otro medio (EFECTIVO, TRANSFERENCIA, DEBITO, MERCADOPAGO,
-        // y cualquiera que se agregue después) se resuelve por si mp.idFondo
-        // apunta a un fondo REAL - `f.tipo IS NULL` (fondos.tipo solo se carga
-        // para marcar un fondo VIRTUAL: RETENCIONES_SUFRIDAS, CC_PROVEEDORES,
-        // SALDO_FAVOR_PROVEEDORES - mismo criterio que ya usan
-        // GetIdFondoRetenciones()/GetFondoVirtual() en ventasRepository.ts/
-        // comprasCuentasRepository.ts, resuelto por tipo, no por nombre). Un
-        // medio de pago nuevo con fondo real queda bien clasificado solo, sin
-        // tocar esta lista.
+        // $4.446.440,76, cayeron a "No es ingreso" antes de este fix).
+        //
+        // CORRECCIÓN 2 (15/09/2026, misma auditoría, segunda vuelta): el
+        // primer fix (`f.tipo IS NULL` = fondo real) también estaba mal -
+        // premisa equivocada. `GetIdFondoRetenciones()`/`GetFondoVirtual()`
+        // solo prueban que 3 fondos VIRTUALES puntuales tienen `tipo` seteado;
+        // de ahí asumí (sin verificar) que el resto quedaba en NULL. Verificado
+        // contra la base real por Nahu: fondos.tipo está poblado para TODOS
+        // los fondos, no solo los virtuales - EFECTIVO/BANCARIO/DIGITAL para
+        // los que sí ingresan, CUENTA_CLIENTE/VALOR_PENDIENTE/
+        // RETENCIONES_SUFRIDAS/CC_PROVEEDORES/SALDO_FAVOR_PROVEEDORES para los
+        // que no - así que `f.tipo IS NULL` no daba TRUE nunca, y todo lo que
+        // no fuera CHEQUE/CREDITO caía al ELSE. Fix: dos listas EXPLÍCITAS
+        // (ninguna con default silencioso - ya fallamos en las dos direcciones:
+        // lista blanca perdió MercadoPago, "sin tipo = real" perdió todo lo
+        // demás) más un 5° valor `Revisar (fondo sin clasificar)` para
+        // cualquier fondos.tipo que no esté en ninguna de las dos - así un
+        // fondo nuevo sin clasificar queda VISIBLE, no perdido en silencio en
+        // ninguna dirección. CHEQUE/CREDITO se resuelven ANTES que las listas
+        // de fondo (su fondo es VALOR_PENDIENTE hasta que se acredita - si el
+        // check de fondo fuera primero, un cheque ACREDITADO caería mal).
+        //
+        // `f.tipo AS fondoTipo` / `mp.tipo AS metodoTipo` como columnas de
+        // salida (pedido de Nahu, defensivo): no hacía falta para este bug en
+        // particular (mp.tipo/f.tipo solo se usan acá calificados, dentro del
+        // CASE/WHERE - no hay columna de salida sin alias que colisione), pero
+        // deja trazabilidad directa en el Excel/logs de qué tipo trajo cada
+        // fila sin tener que volver a esta query.
         const columnasValor = `
             valor.estadoValor,
             valor.montoValor                                  AS importeValor,
             IF(valor.tipoValor = 'CHEQUE', chVal.numero, NULL) AS numeroOperacion,
+            f.tipo                                             AS fondoTipo,
+            mp.tipo                                            AS metodoTipo,
             CASE
-                WHEN mp.tipo IN ('CUENTA_CORRIENTE', 'SALDO_FAVOR') THEN 'No es ingreso'
                 WHEN mp.tipo IN ('CHEQUE', 'CREDITO') AND valor.estadoValor = 'ACREDITADO' THEN 'Ingresó'
                 WHEN mp.tipo IN ('CHEQUE', 'CREDITO') AND valor.estadoValor = 'RECHAZADO' THEN 'Rechazado'
                 WHEN mp.tipo IN ('CHEQUE', 'CREDITO') THEN 'Pendiente de acreditación'
-                WHEN f.id IS NOT NULL AND f.tipo IS NULL THEN 'Ingresó'
-                ELSE 'No es ingreso'
+                WHEN f.tipo IN ('EFECTIVO', 'BANCARIO', 'DIGITAL') THEN 'Ingresó'
+                WHEN f.tipo IN ('CUENTA_CLIENTE', 'VALOR_PENDIENTE', 'RETENCIONES_SUFRIDAS', 'CC_PROVEEDORES', 'SALDO_FAVOR_PROVEEDORES') THEN 'No es ingreso'
+                ELSE 'Revisar (fondo sin clasificar)'
             END                                                AS estadoIngreso
         `;
 

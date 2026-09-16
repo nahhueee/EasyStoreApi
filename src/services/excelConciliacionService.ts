@@ -91,21 +91,44 @@ export async function crearExcelConciliacion(
     const notasInforme: string[] = [
         'Comprobante origen: los comprobantes fiscales se identifican por punto de venta y número; los internos (NC/ND "X"), por número de proceso.',
         'Fecha de vencimiento: se toma del plazo de pago configurado en el ABM del cliente. Para los clientes que todavía no lo tienen cargado, se estima en 15 días desde la emisión y se identifica como tal en la columna Origen del vencimiento.',
-        // R3: los dos avisos que el handoff pide dejar por escrito (§2 y §9.1).
-        'Hoja "Cobranzas" (R3): a diferencia de "Ventas" y "Detalle valorizado" (que filtran por fecha de emisión del comprobante), "Cobranzas" filtra por fecha de COBRO. El total del período puede no coincidir entre hojas: una venta de fines de mes puede cobrarse recién el mes siguiente, y una cuenta corriente vieja puede cancelarse este mes.',
-        // Corrección R3 (15/09/2026, fix 4.a): el texto anterior decía que los
-        // recibos se borran físicamente - falso, verificado contra el código
-        // (DarBajaRecibo hace UPDATE con fechaBaja + motivo obligatorio, no
-        // DELETE). Lo que sí se borra en cascada son sus movimientos de cobro.
-        // La hoja "Cobranzas" lista los recibos dados de baja del período al pie
-        // (fix 4.b) - esta nota explica por qué pueden aparecer ahí.
-        'Recibos anulados: al dar de baja un recibo queda registrado con su fecha de baja y su motivo, pero sus movimientos de cobro se eliminan. Por eso un informe re-emitido de un período puede no coincidir con uno emitido antes, si en el medio se anuló algún recibo de ese período. El listado de recibos dados de baja en el período está al pie de la hoja "Cobranzas".',
+        // Nombre interno "R3" fuera del texto visible (corrección presentación
+        // 15/09/2026, punto 2) - el cliente nunca vio esa nomenclatura.
+        'Hoja "Cobranzas": a diferencia de "Ventas" y "Detalle valorizado" (que filtran por fecha de emisión del comprobante), "Cobranzas" filtra por fecha de COBRO. El total del período puede no coincidir entre hojas: una venta de fines de mes puede cobrarse recién el mes siguiente, y una cuenta corriente vieja puede cancelarse este mes.',
+        // Corrección presentación 15/09/2026, punto 3: texto simplificado a
+        // pedido de Nahu (ya no explica el mecanismo de baja en detalle, solo
+        // el efecto que le importa a quien lee el informe).
+        'Recibos anulados: los cobros de un recibo dado de baja no se incluyen en el informe. Por eso un informe re-emitido de un período puede no coincidir con uno emitido antes, si en el medio se anuló algún recibo de ese período. El listado de recibos dados de baja está al pie de la hoja Cobranzas.',
+        // Corrección presentación 15/09/2026, punto 1: explica la columna
+        // resumida de "Ventas" y dónde está el detalle real por cobro.
+        'Medios de pago (resumen): muestra los medios agrupados de cada comprobante. El detalle de cada cobro, con su fecha e importe, está en la hoja Cobranzas.',
+        // Corrección presentación 15/09/2026, punto 5 (cierra B4-218).
+        'Criterio de signos: las notas de crédito y las aplicaciones de saldo a favor se muestran en negativo, porque restan del total del período.',
+        // Cierre R3 (16/09/2026, punto 1) - la nota más importante del cierre:
+        // sin esto el contador hace Σ "Ingresó" vs. ingresos del módulo de
+        // Fondos, no coinciden ($8,9 M de diferencia en agosto) y lo reporta
+        // como bug cuando son 4 diferencias de criterio esperadas. \n dentro
+        // del string + wrapText (ya seteado en el forEach de abajo) - Excel
+        // respeta el salto de línea en una celda wrapeada.
+        'Cómo cruzar esta hoja contra caja y banco: el total de "Ingresó" no coincide directamente con los ingresos por ventas del módulo de Fondos, porque hay diferencias de criterio, todas esperadas.\n' +
+        '• Los cobros que quedaron como saldo a favor del cliente entran al banco igual, pero en Fondos se registran aparte porque no cancelan cuenta corriente.\n' +
+        '• Las retenciones sufridas están incluidas en el importe cobrado, y en Fondos van a su propio fondo.\n' +
+        '• Los recibos anulados no figuran en esta hoja, pero su ingreso original sigue registrado en Fondos junto con su reversión.\n' +
+        '• Los cobros con tarjeta o cheque se cuentan acá en la fecha del cobro; en Fondos entran al banco recién el día que se acreditan.',
     ];
     notasInforme.forEach(texto => {
         const filaNota = sheetInforme.addRow(['Nota', texto]);
         filaNota.getCell(1).font = { bold: true, italic: true };
         filaNota.getCell(2).font = { italic: true };
         filaNota.getCell(2).alignment = { wrapText: true };
+        // CORRECCIÓN (16/09/2026): había un alto de fila fijo acá
+        // (lineas * 15) para la nota con viñetas - mal calculado, asumía 1
+        // línea visual por cada '\n' sin contar que cada oración larga ya
+        // envuelve en 3-4 líneas dentro del ancho de columna B (50). Quedaba
+        // muy por debajo de lo necesario (~75pt reservados, ~220pt reales) y
+        // Excel mostraba el texto solapado/repetido entre filas al no poder
+        // ajustar una altura marcada como fija. Sacado: sin alto explícito,
+        // el visor autoajusta - mismo criterio que ya usan sin problema el
+        // resto de las notas de esta hoja.
     });
 
     // =========================
@@ -167,8 +190,8 @@ export async function crearExcelConciliacion(
         { header: 'Percepciones', key: 'percepciones', width: 14 },
         { header: 'Total comprobante', key: 'totalComprobante', width: 16 },
 
-        { header: 'Métodos de pago', key: 'metodosPago', width: 24 },
-        { header: 'Montos de pago', key: 'montosPago', width: 24 },
+        { header: 'Medios de pago (resumen)', key: 'metodosPago', width: 26 },
+        { header: 'Montos de pago (resumen)', key: 'montosPago', width: 26 },
 
         { header: 'CAE', key: 'cae', width: 18 },
         { header: 'Vto CAE', key: 'caeVto', width: 14 },
@@ -266,8 +289,16 @@ export async function crearExcelConciliacion(
             percepciones: r.fiscal === 'S' ? 0 : null,
             totalComprobante: Number(r.totalComprobante) || 0,
 
-            metodosPago: r.metodosPago ?? '',
-            montosPago: r.montosPago ?? '',
+            // Agrupado por método, sumando importes (corrección presentación
+            // 15/09/2026, B4-216/B4-217): antes "Efectivo;Efectivo" con 100 y
+            // 200 salía tal cual, dos entradas del mismo método sin sumar - la
+            // queja original del cliente. Solo agrupa/suma - no cambia qué
+            // pagos existen ni sus montos, no toca ningún total. No se saca
+            // la columna: el detalle por cobro con fecha está en "Cobranzas",
+            // pero una venta de fin de mes cobrada el mes siguiente no
+            // aparece en el "Cobranzas" de ESE período - el resumen acá sigue
+            // sirviendo para saber cómo se pagó esa venta.
+            ...agruparMediosDePago(r.metodosPago, r.montosPago),
 
             cae: r.cae != null ? String(r.cae) : '',
             caeVto: r.caeVto ? moment.utc(r.caeVto).startOf('day').toDate() : null,
@@ -547,7 +578,7 @@ export async function crearExcelConciliacion(
         'Importe cobrado', 'Medio de cobro', 'Fondo',
         'Estado del ingreso', 'N° de operación', 'Estado del valor', 'Importe del valor',
         'Saldo pendiente', 'Días de atraso',
-        'ID venta', 'ID pago',
+        'ID venta', 'Ref. interna',
     ];
     const filaHeaderCobranzas = sheetCobranzas.addRow(encabezadosCobranzas);
     aplicarEstiloEncabezado(filaHeaderCobranzas);
@@ -596,12 +627,19 @@ export async function crearExcelConciliacion(
             fila.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } }; });
             fila.font = { bold: true };
         }
-        // Días de atraso estimado (vencimiento sin plazo cargado en el cliente):
-        // en cursiva/gris, mismo criterio de distinción visual que "Origen del
-        // vencimiento" ya usa en la hoja "Ventas" (§6 del handoff R2).
-        if (f.diasAtraso != null && f.origenVencimiento === 'Estimado (+15 días)') {
-            fila.getCell('diasAtraso').font = { italic: true, color: { argb: 'FF808080' } };
+        // "Revisar (fondo sin clasificar)": fondos.tipo con un valor que no
+        // está en ninguna de las dos listas de ArmarBaseCobranzas - visible en
+        // amarillo, no perdido en silencio (mismo criterio que llevó a agregar
+        // este 5° valor: no confiar en un default silencioso en ninguna
+        // dirección).
+        if (f.estadoIngreso === 'Revisar (fondo sin clasificar)') {
+            fila.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEB9C' } }; });
+            fila.font = { bold: true };
         }
+        // Corrección presentación 15/09/2026: sin distinción visual - "Días de
+        // atraso" queda con el mismo color que el resto de las celdas, aunque
+        // el vencimiento sea estimado (+15 días). "Origen del vencimiento" ya
+        // es la columna que dice cuál es el caso, no hace falta remarcarlo acá.
     });
 
     sheetCobranzas.autoFilter = { from: 'A2', to: `${ultimaColumnaCobranzas}2` };
@@ -636,6 +674,10 @@ export async function crearExcelConciliacion(
     escribirFilaResumenCobranzas('Ingresó (cruzar contra caja/banco)', sumarPorEstadoIngreso('Ingresó'));
     escribirFilaResumenCobranzas('Pendiente de acreditación', sumarPorEstadoIngreso('Pendiente de acreditación'));
     escribirFilaResumenCobranzas('Rechazado', sumarPorEstadoIngreso('Rechazado'), true);
+    // 5° valor (ver ArmarBaseCobranzas): con los datos de hoy este bucket
+    // queda en $0, pero la fila se escribe SIEMPRE - un fondo nuevo sin
+    // clasificar tiene que aparecer acá, no perderse dentro de otra categoría.
+    escribirFilaResumenCobranzas('Revisar (fondo sin clasificar)', sumarPorEstadoIngreso('Revisar (fondo sin clasificar)'), sumarPorEstadoIngreso('Revisar (fondo sin clasificar)') !== 0);
     escribirFilaResumenCobranzas('No es ingreso', sumarPorEstadoIngreso('No es ingreso'));
     escribirFilaResumenCobranzas('Total de movimientos de la hoja', totalMovimientosHoja);
 
@@ -786,7 +828,7 @@ export async function crearExcelConciliacion(
     // período) filtrando a `tipoCobro === 'Aplicado a comprobante'` - las filas
     // de saldo inicial/a favor no tienen comprobante para chequear contra.
     const filaTituloChecks = sheetControl.rowCount + 3;
-    sheetControl.getCell(`A${filaTituloChecks}`).value = 'Cobranzas (R3) - comprobantes con inconsistencia de cobro';
+    sheetControl.getCell(`A${filaTituloChecks}`).value = 'Cobranzas - comprobantes con inconsistencia de cobro';
     sheetControl.getRow(filaTituloChecks).font = { bold: true, italic: true };
 
     const aplicadasPorVenta = new Map<number, any[]>();
@@ -908,35 +950,64 @@ export async function crearExcelConciliacion(
     subtotalesPorMedioPago.forEach(r => subtotalesMedioPago.set(r.metodoPago, Number(r.totalAcumulado) || 0));
     agregarBloque('Por medio de pago', subtotalesMedioPago);
 
-    // --- R3: 2 bloques nuevos, sobre "Cobranzas" filtrado a Ingresó únicamente ---
+    // --- Bloques de cobranzas, sobre "Cobranzas" filtrado a Ingresó únicamente ---
     // Distintos de los bloques de arriba: estos filtran por fecha de COBRO, no
-    // de comprobante, y solo suman lo que realmente entró a caja/banco (el
-    // check del handoff §10: la suma acá tiene que dar los ingresos reales del
+    // de comprobante, y solo suman lo que realmente entró a caja/banco (§10 del
+    // criterio de aceptación: la suma acá tiene que dar los ingresos reales del
     // período, no los $ aplicados a comprobantes).
+    //
+    // Corrección presentación 15/09/2026, punto 6: título largo (nombraba una
+    // columna interna, "Estado del ingreso = Ingresó", y se cortaba) partido en
+    // 2 líneas de encabezado de bloque (segunda en texto normal, la aclaración
+    // de qué es "Ingresó" va acá UNA sola vez); los 2 sub-títulos, más cortos
+    // (sin el "(solo Ingresó)" repetido), en negrita y alineados a la
+    // izquierda - centrados quedaban flotando sobre una columna de nombres.
     const filasIngresaron = filasCobranzasCalculadas.filter(f => f.estadoIngreso === 'Ingresó');
     const totalIngresadoGeneral = round2(filasIngresaron.reduce((acc, f) => acc + (Number(f.importeCobrado) || 0), 0));
 
-    sheetTotales.getCell(`A${filaActual}`).value =
-        'Cobranzas (R3) - filtrado por fecha de COBRO, solo Estado del ingreso = Ingresó (real caja/banco del período)';
-    sheetTotales.getRow(filaActual).font = { bold: true, italic: true };
+    sheetTotales.getCell(`A${filaActual}`).value = 'COBRANZAS DEL PERÍODO — por fecha de cobro';
+    sheetTotales.getRow(filaActual).font = { bold: true };
+    sheetTotales.getRow(filaActual).alignment = { horizontal: 'left' };
     filaActual++;
+    sheetTotales.getCell(`A${filaActual}`).value = 'Incluye solo el dinero que efectivamente ingresó a caja o banco.';
+    sheetTotales.getRow(filaActual).alignment = { horizontal: 'left' };
+    filaActual += 2;
+
+    const agregarSubBloqueCobranzas = (titulo: string, datos: Map<string, number>) => {
+        sheetTotales.getCell(`A${filaActual}`).value = titulo;
+        sheetTotales.getRow(filaActual).font = { bold: true };
+        sheetTotales.getRow(filaActual).alignment = { horizontal: 'left' };
+        filaActual++;
+        for (const [clave, total] of datos) {
+            sheetTotales.getCell(`A${filaActual}`).value = clave || '(sin dato)';
+            const celda = sheetTotales.getCell(`B${filaActual}`);
+            celda.value = total;
+            celda.numFmt = '#,##0.00';
+            filaActual++;
+        }
+        filaActual++; // fila en blanco entre bloques
+    };
 
     const porMedioCobro = new Map<string, number>();
     filasIngresaron.forEach(f => {
         const k = f.medioCobro || '(sin dato)';
         porMedioCobro.set(k, (porMedioCobro.get(k) ?? 0) + (Number(f.importeCobrado) || 0));
     });
-    agregarBloque('Cobranzas por medio de cobro (solo Ingresó)', porMedioCobro);
+    agregarSubBloqueCobranzas('Cobranzas por medio de cobro', porMedioCobro);
 
     const porFondo = new Map<string, number>();
     filasIngresaron.forEach(f => {
         const k = f.fondo || '(sin dato)';
         porFondo.set(k, (porFondo.get(k) ?? 0) + (Number(f.importeCobrado) || 0));
     });
-    agregarBloque('Cobranzas por fondo (solo Ingresó)', porFondo);
+    agregarSubBloqueCobranzas('Cobranzas por fondo', porFondo);
 
-    sheetTotales.getCell(`A${filaActual}`).value = 'Total cobranzas Ingresó (cruzar contra caja/banco)';
+    // Cierre R3 (16/09/2026, punto 2): nombre anterior citaba la columna
+    // ("Ingresó") y era la única de las tres filas del bloque sin alineación
+    // seteada explícitamente - queda alineada a la izquierda como el resto.
+    sheetTotales.getCell(`A${filaActual}`).value = 'Total cobrado que ingresó a caja o banco';
     sheetTotales.getRow(filaActual).font = { bold: true };
+    sheetTotales.getRow(filaActual).alignment = { horizontal: 'left' };
     sheetTotales.getCell(`B${filaActual}`).value = totalIngresadoGeneral;
     sheetTotales.getCell(`B${filaActual}`).numFmt = '#,##0.00';
     filaActual += 2;
@@ -988,6 +1059,32 @@ function sumarPor(filas: any[], clave: (r: any) => string, campo: string): Map<s
         mapa.set(k, (mapa.get(k) ?? 0) + (Number(r[campo]) || 0));
     });
     return mapa;
+}
+
+// Agrupa "Métodos de pago" / "Montos de pago" (corrección presentación
+// 15/09/2026, B4-216/B4-217): pagos.metodos/pagos.montos vienen de
+// conciliacionRepository.ts como dos strings separados por ';', alineados por
+// posición (GROUP_CONCAT ... ORDER BY mp.nombre en las dos). Acá se agrupa por
+// método y se suman los importes - "Efectivo;Efectivo" con 100 y 200 pasa a
+// "Efectivo" con 300. Preserva el orden de primera aparición (ya viene
+// alfabético por el ORDER BY mp.nombre de la query). Solo presentación: no
+// cambia qué pagos existen ni sus montos, no toca ningún total de la hoja.
+function agruparMediosDePago(metodosPago: string | null | undefined, montosPago: string | null | undefined): { metodosPago: string; montosPago: string } {
+    const metodos = metodosPago ? String(metodosPago).split(';') : [];
+    const montos = montosPago ? String(montosPago).split(';') : [];
+    if (metodos.length === 0) return { metodosPago: '', montosPago: '' };
+
+    const totalesPorMetodo = new Map<string, number>();
+    metodos.forEach((m, i) => {
+        const monto = Number(montos[i]) || 0;
+        totalesPorMetodo.set(m, round2((totalesPorMetodo.get(m) ?? 0) + monto));
+    });
+
+    const metodosAgrupados = Array.from(totalesPorMetodo.keys());
+    return {
+        metodosPago: metodosAgrupados.join(';'),
+        montosPago: metodosAgrupados.map(m => totalesPorMetodo.get(m)).join(';'),
+    };
 }
 
 // =========================================================================
