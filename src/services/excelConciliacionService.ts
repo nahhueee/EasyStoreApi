@@ -43,6 +43,13 @@ export async function crearExcelConciliacion(
     // R3, corrección 15/09/2026, fix 4.b: recibos dados de baja en el período -
     // ver ObtenerRecibosDadosDeBaja en conciliacionRepository.ts.
     recibosDadosDeBaja: any[] = [],
+    // B4-209 Fase 3, §4.b del handoff: rol del usuario que pidió el informe. Las 4
+    // columnas de costo/margen de "Detalle valorizado" NO se agregan al workbook
+    // cuando es false - no alcanza con dejarlas vacías (una columna vacía con un
+    // total al pie sigue filtrando el orden de magnitud). valorizarComprobante()
+    // SIGUE calculando margen/costo siempre, sin mirar este flag: la gate es
+    // pura capa de presentación acá, para no mezclar auth con la matemática.
+    puedeVerCosto: boolean = false,
 ) {
     const workbook = new ExcelJS.Workbook();
 
@@ -103,6 +110,16 @@ export async function crearExcelConciliacion(
         'Medios de pago (resumen): muestra los medios agrupados de cada comprobante. El detalle de cada cobro, con su fecha e importe, está en la hoja Cobranzas.',
         // Corrección presentación 15/09/2026, punto 5 (cierra B4-218).
         'Criterio de signos: las notas de crédito y las aplicaciones de saldo a favor se muestran en negativo, porque restan del total del período.',
+        // HANDOFF-apertura-iva-R1.md §7: nota obligatoria - sin esto, quien cruce la
+        // apertura de un comprobante de facturante monotributista contra su Total va
+        // a pensar que falta plata (la suma de la apertura no da el Total ahí, a propósito).
+        'Apertura de IVA (hoja "Ventas", últimas columnas): se toma del comprobante emitido. El sistema emite hoy una sola alícuota por comprobante, por lo que las columnas de 10,5% figuran en cero. En los comprobantes de facturantes monotributistas las columnas de apertura van vacías, porque no corresponde discriminar IVA: en esas filas la suma de la apertura no coincide con el Total. Los subtotales de IVA son por facturante (hoja Totales), ya que cada uno declara bajo su propio CUIT - nunca se muestra un total general de estas columnas.',
+        // B4-209 Fase 3: nota pedida explícitamente en el handoff (§Fase 3, último punto).
+        // Solo aparece cuando el usuario tiene permiso de ver costo (las columnas ni
+        // siquiera existen en el archivo si no lo tiene - ver puedeVerCosto).
+        ...(puedeVerCosto ? [
+            'Costo y margen (hoja "Detalle valorizado"): el margen se calcula solo sobre líneas de Producto con costo cargado al momento de facturar. Servicios, ítems no catalogados y las filas de Ajuste/Redondeo/Sin detalle/Diferencia no explicada quedan sin costo ni margen (celda vacía, no cero) - al armar una tabla dinámica de margen por artículo/canal/cliente, esas filas quedan afuera del promedio o suma automáticamente. Una venta anterior a esta funcionalidad, o un talle sin costo cargado en el momento de facturar, también queda vacía: el costo nunca se reconstruye con el valor actual del maestro.',
+        ] : []),
         // Cierre R3 (16/09/2026, punto 1) - la nota más importante del cierre:
         // sin esto el contador hace Σ "Ingresó" vs. ingresos del módulo de
         // Fondos, no coinciden ($8,9 M de diferencia en agosto) y lo reporta
@@ -198,6 +215,24 @@ export async function crearExcelConciliacion(
         { header: 'Comprobante origen', key: 'comprobanteOrigen', width: 20 },
         { header: 'Motivo / Observación', key: 'motivo', width: 30 },
         { header: 'Remito', key: 'remito', width: 16 },
+
+        // Apertura de IVA por alícuota (HANDOFF-apertura-iva-R1.md, B4-203). Bloque
+        // fiscal aparte, al final de la hoja: mismo neto/IVA que ya traen las
+        // columnas "Neto gravado"/"IVA" de más arriba, pero acá SOLO para
+        // facturantes Responsable Inscripto (condición del FACTURANTE, no del
+        // comprobante) y separado por alícuota. Monotributista va con las 5
+        // columnas vacías (NULL, no 0): un monotributista no discrimina IVA, y un 0
+        // ahí afirmaría "facturó y no tributó IVA" - falso (§3 del handoff). Hoy el
+        // 100% de lo facturado por un RI es al 21% (verificado contra toda la base,
+        // §4 del handoff); las columnas de 10,5% quedan en 0 por completitud del
+        // cuadro fiscal - ver nota al pie en la hoja Informe. Sin columna de
+        // percepciones (§5 del handoff: no existe el dato en el circuito de ventas,
+        // y estructuralmente solo podría aplicar a 1 de los 6 facturantes).
+        { header: 'Neto gravado 21%', key: 'netoGravado21', width: 16 },
+        { header: 'IVA 21%', key: 'iva21', width: 14 },
+        { header: 'Neto gravado 10,5%', key: 'netoGravado105', width: 16 },
+        { header: 'IVA 10,5%', key: 'iva105', width: 14 },
+        { header: 'No gravado / exento', key: 'noGravadoExento', width: 16 },
     ];
     aplicarEstiloEncabezado(sheetVentas.getRow(1));
 
@@ -225,6 +260,24 @@ export async function crearExcelConciliacion(
             fechaVencimientoFinal = moment.utc(r.fecha).startOf('day').add(15, 'days').toDate();
             origenVencimiento = 'Estimado (+15 días)';
         }
+
+        // Apertura de IVA por alícuota (HANDOFF-apertura-iva-R1.md §3): aplica solo
+        // si el facturante es Responsable Inscripto Y el comprobante es fiscal (si
+        // no hay ventas_factura, p.ej. una Cotización de un RI, tampoco hay neto/IVA
+        // confirmado por ARCA - mismo criterio "vacío, no derivado" que ya usan
+        // netoGravado/iva más abajo). Se guarda en r (no solo en la fila de Excel)
+        // porque el bloque "Apertura de IVA por facturante" de la hoja Totales, más
+        // abajo, reusa estas mismas filas.
+        const esRIFacturante = r.condicionFacturante === 'Responsable Inscripto';
+        const aperturaIvaAplica = esRIFacturante && r.fiscal === 'S';
+        r.netoGravado21 = aperturaIvaAplica ? (Number(r.netoGravado) || 0) : null;
+        r.iva21 = aperturaIvaAplica ? (Number(r.iva) || 0) : null;
+        // 10,5% y "No gravado/exento": en 0, no vacío, cuando aplica - el sistema
+        // hoy emite todo a una sola alícuota (§4 del handoff), no es que falte el
+        // dato. Ver nota al pie de la hoja Informe.
+        r.netoGravado105 = aperturaIvaAplica ? 0 : null;
+        r.iva105 = aperturaIvaAplica ? 0 : null;
+        r.noGravadoExento = aperturaIvaAplica ? 0 : null;
 
         const fila = sheetVentas.addRow({
             idVenta: r.idVenta,
@@ -305,6 +358,12 @@ export async function crearExcelConciliacion(
             comprobanteOrigen: armarComprobanteOrigen(r),
             motivo: r.motivo ?? '',
             remito: r.remito,
+
+            netoGravado21: r.netoGravado21,
+            iva21: r.iva21,
+            netoGravado105: r.netoGravado105,
+            iva105: r.iva105,
+            noGravadoExento: r.noGravadoExento,
         });
 
         fila.getCell('fecha').numFmt = 'dd/mm/yyyy';
@@ -314,6 +373,14 @@ export async function crearExcelConciliacion(
         fila.getCell('cae').numFmt = '@'; // texto: evita notación científica en los 14 dígitos del CAE.
         fila.getCell('descuentoPorcentaje').numFmt = '0.00%';
         COLUMNAS_MONEDA.forEach(key => { fila.getCell(key).numFmt = '#,##0.00'; }); // sin "$", pedido B4-204.
+        // Fuera de COLUMNAS_MONEDA a propósito (§2 del handoff de apertura de IVA):
+        // esa lista alimenta columnasSumar/escribirFilaTotal más abajo, y estas 5
+        // columnas nunca deben sumarse en un total general que mezcle un Responsable
+        // Inscripto con Monotributistas - el subtotal correcto es por facturante, en
+        // la hoja Totales (bloque "Apertura de IVA por facturante").
+        ['netoGravado21', 'iva21', 'netoGravado105', 'iva105', 'noGravadoExento'].forEach(key => {
+            if (fila.getCell(key).value !== null) fila.getCell(key).numFmt = '#,##0.00';
+        });
 
         // Comprobantes anulados: aparecen como fila (B4-226) pero no suman en TOTAL -
         // se resuelve dejándolos afuera de la suma más abajo, no ocultando la fila.
@@ -427,11 +494,22 @@ export async function crearExcelConciliacion(
         { header: 'Alíc. IVA', key: 'alicIva', width: 10 },
         { header: 'IVA', key: 'iva', width: 14 },
         { header: 'Importe total', key: 'importeTotal', width: 14 },
+        // B4-209 Fase 3: costo y margen por línea (§4.b del handoff - gateado por rol,
+        // ver puedeVerCosto más arriba). Van DESPUÉS de "Importe total", orden del
+        // ejemplo del cliente. Vacías en Servicio/No catalogado/pseudolíneas - nunca 0,
+        // ver comentario en valorizarComprobante().
+        ...(puedeVerCosto ? [
+            { header: 'Costo unitario', key: 'costoUnitario', width: 14 },
+            { header: 'Costo total', key: 'costoTotal', width: 14 },
+            { header: 'Margen $', key: 'margen', width: 14 },
+            { header: 'Margen %', key: 'margenPct', width: 12 },
+        ] : []),
     ];
     aplicarEstiloEncabezado(sheetDetalle.getRow(1));
 
     const COLUMNAS_MONEDA_DETALLE = [
         'precioListaUnit', 'precioUnitNeto', 'importeBruto', 'importeDesc', 'importeNeto', 'iva', 'importeTotal',
+        ...(puedeVerCosto ? ['costoUnitario', 'costoTotal', 'margen'] : []),
     ];
 
     // idVenta -> convención detectada (§4.a), total del detalle, IVA cabecera/detalle
@@ -475,6 +553,7 @@ export async function crearExcelConciliacion(
             fila.getCell('fecha').numFmt = 'dd/mm/yyyy';
             if (f.pctDesc != null) fila.getCell('pctDesc').numFmt = '0.00%';
             fila.getCell('alicIva').numFmt = '0.00%';
+            if (puedeVerCosto && f.margenPct != null) fila.getCell('margenPct').numFmt = '0.00%';
             COLUMNAS_MONEDA_DETALLE.forEach(key => { fila.getCell(key).numFmt = '#,##0.00'; });
         });
     });
@@ -496,12 +575,18 @@ export async function crearExcelConciliacion(
     // abre solo esta hoja. La hoja "Control" no se toca - sigue siendo la que
     // sirve para encontrar CUÁL comprobante falla cuando esto no da cero.
     //
-    // Corrección tanda 2, punto 3: el importe va bajo la columna "Importe total"
-    // (la última de la tabla), no en A/B/C - con ~30 columnas quedaba flotando
-    // lejos de la suya. La etiqueta ocupa el resto de la fila, de A hasta la
-    // columna anterior a "Importe total" (merge para que se lea de corrido).
-    const colImporteTotalDetalle = columnaExcel(sheetDetalle.columns!.length);
-    const colAntesImporteTotalDetalle = columnaExcel(sheetDetalle.columns!.length - 1);
+    // Corrección tanda 2, punto 3: el importe va bajo la columna "Importe total",
+    // no en A/B/C - con ~30 columnas quedaba flotando lejos de la suya. La etiqueta
+    // ocupa el resto de la fila, de A hasta la columna anterior a "Importe total"
+    // (merge para que se lea de corrido).
+    //
+    // B4-209 Fase 3: "Importe total" YA NO es necesariamente la última columna (las
+    // 4 de costo/margen se agregan después, cuando puedeVerCosto) - se busca su
+    // índice en vez de asumir sheetDetalle.columns!.length, que ahora apuntaría a
+    // "Margen %" y desubicaría todo este bloque de control.
+    const indiceImporteTotalDetalle = sheetDetalle.columns!.findIndex(c => c.key === 'importeTotal') + 1;
+    const colImporteTotalDetalle = columnaExcel(indiceImporteTotalDetalle);
+    const colAntesImporteTotalDetalle = columnaExcel(indiceImporteTotalDetalle - 1);
     const escribirFilaResumenDetalle = (etiqueta: string, valor: number) => {
         const fila = sheetDetalle.rowCount + 1;
         sheetDetalle.mergeCells(`A${fila}:${colAntesImporteTotalDetalle}${fila}`);
@@ -944,6 +1029,39 @@ export async function crearExcelConciliacion(
     agregarBloque('Por punto de venta', sumarPor(filasParaTotal, r => r.puntoVenta, 'totalComprobante'));
     agregarBloque('Por facturante', sumarPor(filasParaTotal, r => r.facturante, 'totalComprobante'));
 
+    // Apertura de IVA por facturante (HANDOFF-apertura-iva-R1.md §2 y §7): mismo
+    // criterio que "Resumen por condición fiscal" más arriba - nunca un total
+    // general que mezcle un Responsable Inscripto con Monotributistas, así que el
+    // desglose va SIEMPRE por facturante, nunca en una fila de total único. Un
+    // Monotributista muestra las 5 columnas fiscales vacías (no 0): no declara
+    // neto/IVA discriminado bajo su propio CUIT.
+    sheetTotales.getCell(`A${filaActual}`).value = 'Apertura de IVA por facturante';
+    aplicarEstiloEncabezado(sheetTotales.getRow(filaActual));
+    filaActual++;
+    sheetTotales.getRow(filaActual).values = [
+        'Facturante', 'Neto gravado 21%', 'IVA 21%', 'Neto gravado 10,5%', 'IVA 10,5%', 'No gravado / exento', 'Total',
+    ];
+    aplicarEstiloEncabezado(sheetTotales.getRow(filaActual));
+    filaActual++;
+    const columnasApertura = ['netoGravado21', 'iva21', 'netoGravado105', 'iva105', 'noGravadoExento'];
+    const facturantesDelPeriodo = Array.from(new Set(filasParaTotal.map(r => r.facturante ?? '(sin dato)')));
+    facturantesDelPeriodo.forEach(nombreFacturante => {
+        const filasFacturante = filasParaTotal.filter(r => (r.facturante ?? '(sin dato)') === nombreFacturante);
+        const esRI = filasFacturante[0]?.condicionFacturante === 'Responsable Inscripto';
+        sheetTotales.getCell(`A${filaActual}`).value = nombreFacturante;
+        columnasApertura.forEach((campo, i) => {
+            const celda = sheetTotales.getCell(`${String.fromCharCode(66 + i)}${filaActual}`);
+            if (!esRI) { celda.value = null; return; }
+            celda.value = sumar(filasFacturante, campo);
+            celda.numFmt = '#,##0.00';
+        });
+        const celdaTotal = sheetTotales.getCell(`${String.fromCharCode(66 + columnasApertura.length)}${filaActual}`);
+        celdaTotal.value = sumar(filasFacturante, 'totalComprobante');
+        celdaTotal.numFmt = '#,##0.00';
+        filaActual++;
+    });
+    filaActual++; // fila en blanco entre bloques
+
     // 4° bloque: viene de ObtenerSubtotalesPorMedioPago (necesita datos a nivel de
     // pago, no de la fila de venta - reusa el criterio de ObtenerReporteAcumulado).
     const subtotalesMedioPago = new Map<string, number>();
@@ -1141,13 +1259,17 @@ function aplicarEstiloEncabezado(fila: ExcelJS.Row): void {
 //   muestra el talle compuesto tal cual, marcado, y en formato largo va en
 //   UNA sola fila (no se parte cantidad ni importe).
 // - 'vacio': sin talles.
-type TalleInfo =
+// Exportados para reuso en ventasRepository.ts (ResolverCostoUnitarioLinea, B4-209 Fase 2):
+// el cálculo del costo ponderado por línea necesita la MISMA clasificación de talles
+// que ya usa este informe (desglosado/único/sin_desglose/vacío), para no duplicar el
+// criterio de negocio de qué es "sin desglose" en dos lugares que se puedan desincronizar.
+export type TalleInfo =
     | { tipo: 'desglosado'; grupos: { talle: string; cantidad: number }[] }
     | { tipo: 'unico'; talle: string; cantidad: number }
     | { tipo: 'sin_desglose'; talle: string }
     | { tipo: 'vacio' };
 
-function analizarTalle(talles: string | null | undefined, cantidades: any[], cantidadLinea: number): TalleInfo {
+export function analizarTalle(talles: string | null | undefined, cantidades: any[], cantidadLinea: number): TalleInfo {
     const etiquetas = talles ? String(talles).split(',').map(t => t.trim()).filter(t => t.length > 0) : [];
     if (etiquetas.length === 0) return { tipo: 'vacio' };
     if (etiquetas.length === 1) return { tipo: 'unico', talle: etiquetas[0], cantidad: cantidadLinea };
@@ -1258,6 +1380,16 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         const precioUnitNeto = cantidad !== 0 ? importePostDesc / cantidad : 0;
         const importeTotal = calcularImporteTotal(importePostDesc);
 
+        // B4-209 Fase 3: costo/margen SIN signo todavía (mismo criterio que el resto de
+        // esta función - el signo de NC se aplica una sola vez, al final, sobre totales).
+        // costoUnitario sale del snapshot de Fase 2 (vp.costoUnitario), YA es un promedio
+        // ponderado si la línea cubre varios talles - acá no se vuelve a promediar, solo
+        // se multiplica por la cantidad de la línea para tener el total a repartir si
+        // hace falta explotar por talle. null (no 0) si no hay costo cargado - nunca se
+        // inventa ni se cae a el costo actual del maestro.
+        const costoUnitario = l.costoUnitario != null ? Number(l.costoUnitario) : null;
+        const costoTotalLinea = costoUnitario != null ? round2(costoUnitario * cantidad) : null;
+
         const filaBase = {
             idLinea: l.idLinea,
             tipoItem: l.tipoItem,
@@ -1278,6 +1410,9 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
             // importeNeto/iva/alicIva se completan más abajo, después de tener
             // TODAS las filas del comprobante (líneas + pseudolíneas), por el
             // prorrateo de vf.iva - corrección tanda 1, punto 1.
+            // margen/margenPct se completan más abajo también, junto con el signo de NC.
+            costoUnitario,
+            costoTotal: costoTotalLinea,
         };
 
         // §7: grano de la hoja - default 1 fila por línea de ventas_productos.
@@ -1323,8 +1458,26 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         const sumaOtros = totalesPorTalle.reduce((acc, t, i) => (i === indiceMayor ? acc : acc + t), 0);
         totalesPorTalle[indiceMayor] = round2(importeTotal - sumaOtros);
 
+        // B4-209 Fase 3: mismo prorrateo por cantidad, mismo residual al grupo de mayor
+        // cantidad, para que el costo también cierre EXACTO contra costoTotalLinea al
+        // explotar por talle (igual que importeTotal arriba). costoUnitario por fila sale
+        // de volver a dividir (costoTotal de la fila / cantidad de la fila), así la
+        // fórmula del cliente "Costo total = Cantidad × Costo unitario" sigue cerrando
+        // fila por fila, no solo a nivel línea - mismo criterio que precioUnitNeto, que
+        // tampoco se re-redondea antes de esta división.
+        const costosPorTalle = costoTotalLinea != null
+            ? gruposTalle.map((g, i) => (
+                i === indiceMayor ? 0 : round2(costoTotalLinea * (g.cantidad / cantidadTotalGrupo))
+            ))
+            : null;
+        if (costosPorTalle) {
+            const sumaCostoOtros = costosPorTalle.reduce((acc, t, i) => (i === indiceMayor ? acc : acc + t), 0);
+            costosPorTalle[indiceMayor] = round2(costoTotalLinea! - sumaCostoOtros);
+        }
+
         gruposTalle.forEach((g, i) => {
             const proporcion = g.cantidad / cantidadTotalGrupo;
+            const costoTotalFila = costosPorTalle ? costosPorTalle[i] : null;
             filas.push({
                 ...filaBase,
                 sku: `${l.codigoArticulo ?? ''}-${l.color ?? ''}-${g.talle}`,
@@ -1333,6 +1486,8 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
                 importeBruto: round2(importeBruto * proporcion),
                 importeDesc: round2(importeDesc * proporcion),
                 importeTotal: totalesPorTalle[i],
+                costoTotal: costoTotalFila,
+                costoUnitario: (costoTotalFila != null && g.cantidad !== 0) ? costoTotalFila / g.cantidad : null,
             });
         });
     });
@@ -1343,6 +1498,9 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         producto: '', tipo: '', genero: '', material: '', color: '', temporada: '', talle: '', cantidad: null,
         precioListaUnit: null, pctDesc: null, precioUnitNeto: null, importeBruto: null, importeDesc: null,
         importeTotal,
+        // Ajuste/Redondeo/Sin detalle/Diferencia no explicada: nunca tienen costo (§Fase3
+        // del handoff, tabla de tipos de ítem) - quedan vacías, no en 0.
+        costoUnitario: null, costoTotal: null,
     });
     if (ajusteRaw !== 0) filas.push(filaPseudo('Ajuste', 'Recargo por transferencia (10%)', ajusteRaw));
     if (redondeoRaw !== 0) filas.push(filaPseudo('Redondeo', 'Redondeo', redondeoRaw));
@@ -1391,17 +1549,37 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
     });
 
     // Numeración final y signo de NC (§6) - cantidad e importes, no precios
-    // unitarios, alícuotas ni porcentajes (ver comentario de la función).
-    const filasFinal = filas.map((f, i) => ({
-        ...f,
-        nroLinea: i + 1,
-        cantidad: f.cantidad != null ? f.cantidad * signo : null,
-        importeBruto: f.importeBruto != null ? round2(f.importeBruto * signo) : null,
-        importeDesc: f.importeDesc != null ? round2(f.importeDesc * signo) : null,
-        importeNeto: round2(f.importeNeto * signo),
-        iva: round2(f.iva * signo),
-        importeTotal: round2(f.importeTotal * signo),
-    }));
+    // unitarios, alícuotas ni porcentajes (ver comentario de la función). costoTotal es
+    // un importe (como importeTotal) -> lleva signo. costoUnitario es un valor por
+    // unidad (como precioUnitNeto) -> no lleva, pasa tal cual por el spread de arriba.
+    //
+    // B4-209 Fase 3: margen/margenPct se calculan ACÁ, con importeNeto y costoTotal ya
+    // firmados - así una NC da margen$ negativo (revierte el margen de la venta
+    // original, §5 del handoff - no se "arregla" con ABS()) y margenPct sale positivo
+    // igual (negativo/negativo), que es lo correcto. Fórmula tal cual la trae el cliente
+    // en su Excel (Margen % = IFERROR(Margen$/Importe neto, 0)) - ese IFERROR es solo
+    // para importeNeto = 0 con costo cargado; si no hay costo cargado, margen/margenPct
+    // quedan en null (vacío), no en 0 - un 0 ahí se leería como "margen cero real".
+    const filasFinal = filas.map((f, i) => {
+        const costoTotal = f.costoTotal != null ? round2(f.costoTotal * signo) : null;
+        const importeNeto = round2(f.importeNeto * signo);
+        const margen = costoTotal != null ? round2(importeNeto - costoTotal) : null;
+        const margenPct = margen != null ? (importeNeto !== 0 ? margen / importeNeto : 0) : null;
+
+        return {
+            ...f,
+            nroLinea: i + 1,
+            cantidad: f.cantidad != null ? f.cantidad * signo : null,
+            importeBruto: f.importeBruto != null ? round2(f.importeBruto * signo) : null,
+            importeDesc: f.importeDesc != null ? round2(f.importeDesc * signo) : null,
+            importeNeto,
+            iva: round2(f.iva * signo),
+            importeTotal: round2(f.importeTotal * signo),
+            costoTotal,
+            margen,
+            margenPct,
+        };
+    });
 
     const totalDetalle = round2(filasFinal.reduce((acc, f) => acc + (Number(f.importeTotal) || 0), 0));
     const ivaDetalle = round2(filasFinal.reduce((acc, f) => acc + (Number(f.iva) || 0), 0));

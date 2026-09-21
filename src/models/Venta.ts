@@ -115,6 +115,11 @@ import { Color, TallesProducto } from "./Producto";
     // tengan que reconstruirlo después sin esa información. Ver migración
     // 20260707120000_add_importe_descuento_ventas_items.
     importeDescuento?: number;
+    // Snapshot ponderado del costo al momento de facturar (B4-209, Fase 2). undefined/null
+    // = sin costo (histórica, item no catalogado, o talle sin costo cargado en ese momento).
+    // Nunca se recalcula contra el costo actual del maestro - ver ResolverCostoUnitarioLinea
+    // en ventasRepository.ts.
+    costoUnitario?: number;
     tallesSeleccionados:string = "";
     talles:TallesProducto[] = [];
 
@@ -145,6 +150,7 @@ import { Color, TallesProducto } from "./Producto";
         this.nomProducto = data.nomProducto;
         this.total = data.total;
         this.importeDescuento = data.importeDescuento;
+        this.costoUnitario = data.costoUnitario;
         this.tallesSeleccionados = data.tallesSeleccionados;
         this.talles = data.talles;
       }

@@ -1177,6 +1177,18 @@ class CuentasRepository{
                     const totalRetencion = retencionesRecibo.reduce((acc: number, r: any) => acc + Number(r.importe), 0);
                     const montoFondoReal = Number(totalEntregaRow.monto) - totalRetencion;
                     if (montoFondoReal > 0) {
+                        // Bloqueo duro 3: sin empresa determinada no se puede tagear el
+                        // contra-asiento del fondo real - rompería el saldo por empresa
+                        // en silencio, como pasó con las entregas de excedente cliente
+                        // 12060 pre-migración (ver Correccion idEmpresa NULL baja recibos
+                        // 213 y 399 - sep-2026.sql). Se frena la baja y se loguea para
+                        // resolución manual en vez de dejar el dato corrupto.
+                        if (idEmpresaEntrega == null) {
+                            throw {
+                                status: 400,
+                                message: `No se puede dar de baja el recibo #${idRecibo}: no se pudo determinar la empresa de la entrega #${idEntrega} para revertir $${montoFondoReal} del fondo real (idMetodoAplicado ${entregaRow.idMetodoAplicado}). Requiere corrección manual.`
+                            };
+                        }
                         // idMetodo también se toma de ventas_entrega_detalle (idMetodoAplicado),
                         // no de pagos[0], por la misma razón: `pagos` puede venir vacío.
                         const { idFondo } = await GetMetodoPago(connection, entregaRow.idMetodoAplicado);

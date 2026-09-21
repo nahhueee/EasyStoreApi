@@ -1,7 +1,28 @@
 import { ProductosRepo } from '../data/productosRepository';
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
+import { authMiddleware } from '../middlewares/authMiddleware';
 const router : Router  = Router();
+
+// Roles que pueden ver costo/margen (B4-209). Espeja el mismo criterio de
+// PuedeAjustarStock() del front (usuarios.service.ts) - NO reemplaza esa gate
+// de UI, la vuelve exigible: la ruta abajo saca `costo` de la respuesta para
+// cualquier otro rol, para que no viaje en el JSON aunque el campo esté oculto.
+const ROLES_COSTO = ['ADMINISTRADOR', 'ENCARGADO'];
+
+function puedeVerCosto(req: Request): boolean {
+    const cargo = req.usuario?.cargo?.toUpperCase();
+    return !!cargo && ROLES_COSTO.includes(cargo);
+}
+
+function ocultarCostoTalles(producto: any): any {
+    if (!producto?.talles) return producto;
+    producto.talles = producto.talles.map((t: any) => {
+        const { costo, ...resto } = t;
+        return resto;
+    });
+    return producto;
+}
 
 //#region OBTENER
 router.post('/obtener', async (req:Request, res:Response) => {
@@ -26,9 +47,10 @@ router.get('/validar/:codigo', async (req:Request, res:Response) => {
     }
 });
 
-router.get('/obtener-uno/:id', async (req:Request, res:Response) => {
+router.get('/obtener-uno/:id', authMiddleware, async (req:Request, res:Response) => {
     try{ 
-        res.json(await ProductosRepo.ObtenerUno({id: req.params.id}));
+        const producto = await ProductosRepo.ObtenerUno({id: req.params.id});
+        res.json(puedeVerCosto(req) ? producto : ocultarCostoTalles(producto));
 
     } catch(error:any){
         let msg = "Error intentando obtener el pedido con id: " + req.params.id;

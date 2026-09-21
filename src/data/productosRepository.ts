@@ -425,7 +425,9 @@ class ProductosRepository{
                     const row = rows[i];
                     tallesProducto.push(new TallesProducto({
                         cantidad: row['cantidad'],
-                        costo:  parseInt(row['costo']),
+                        // NULL en la BD = talle sin costo cargado todavia. No usar parseInt
+                        // (redondea centavos) ni caer a 0 (0 es "cuesta cero", no "sin cargar").
+                        costo: row['costo'] != null ? parseFloat(row['costo']) : undefined,
                         precio: parseFloat(row['precio']),
                         talle: row['talle'],
                         ubicacion: row['ubicacion'],
@@ -576,11 +578,16 @@ class ProductosRepository{
 
                 if (tallesExistentes.has(element.talle ?? '')) {
                     //Talle ya existe: actualizamos solo datos estructurales, NUNCA `cantidad`
+                    // costo: COALESCE contra el valor actual, no un UPDATE ciego. element.costo
+                    // llega undefined cuando el rol del usuario no ve costo (el front ni siquiera
+                    // manda el campo) o cuando el campo se dejó en blanco a proposito - en ambos
+                    // casos el costo cargado antes tiene que sobrevivir al guardado. Solo se
+                    // pisa cuando el payload trae un valor explícito (incluido 0).
                     await connection.query(
                         `UPDATE talles_producto
-                         SET idLineaTalle = ?, ubicacion = ?, precio = ?, codigo_barra = ?
+                         SET idLineaTalle = ?, ubicacion = ?, precio = ?, codigo_barra = ?, costo = COALESCE(?, costo)
                          WHERE idProducto = ? AND talle = ?`,
-                        [element.idLineaTalle, element.ubicacion, element.precio, element.codigoBarra, producto.id, element.talle]
+                        [element.idLineaTalle, element.ubicacion, element.precio, element.codigoBarra, element.costo ?? null, producto.id, element.talle]
                     );
                 } else {
                     //Talle nuevo (ej. se amplió la línea de talles): arranca en 0
@@ -1170,13 +1177,15 @@ async function ObtenerUltimoProducto(connection):Promise<number>{
 
 async function InsertTalleProducto(connection, elemento):Promise<void>{
     try {
-        const consulta = " INSERT INTO talles_producto(idProducto, idLineaTalle, talle, ubicacion, precio, cantidad, codigo_barra) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?) ";
+        const consulta = " INSERT INTO talles_producto(idProducto, idLineaTalle, talle, ubicacion, precio, costo, cantidad, codigo_barra) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?) ";
 
         
         if(!elemento.cantidad || elemento.cantidad == "") elemento.cantidad = 0;
 
-        const parametros = [elemento.idProducto, elemento.idLineaTalle, elemento.talle, elemento.ubicacion, elemento.precio, elemento.cantidad, elemento.codigoBarra];
+        // costo nace NULL si no viene en el payload (talle nuevo cargado por un rol sin
+        // permiso de costo) - nunca 0 por default, para no confundir "sin cargar" con "cuesta cero".
+        const parametros = [elemento.idProducto, elemento.idLineaTalle, elemento.talle, elemento.ubicacion, elemento.precio, elemento.costo ?? null, elemento.cantidad, elemento.codigoBarra];
         await connection.query(consulta, parametros);
         
     } catch (error) {

@@ -1,7 +1,19 @@
 import {Router, Request, Response} from 'express';
 import { upload, fullPath } from '../conf/upload_config'; // Importar configuración de Multer y las variables
 import logger from '../log/loggerGeneral';
+import { authMiddleware } from '../middlewares/authMiddleware';
 const router : Router  = Router();
+
+// B4-209 Fase 3 (§4.b del handoff): mismo criterio que productosRoute.ts
+// (puedeVerCosto) y usuarios.service.ts (PuedeVerCostoYMargen) del front - los
+// tres tienen que decir lo mismo. Se repite acá en vez de extraer un módulo
+// compartido porque el resto del proyecto ya resuelve este chequeo puntual así,
+// duplicado en dos lugares (no hay un middlewares/roles.ts hoy) - no es el
+// momento de introducir esa abstracción por un tercer uso de dos líneas.
+function puedeVerCostoInforme(req: Request): boolean {
+    const cargo = req.usuario?.cargo?.toUpperCase();
+    return cargo === 'ADMINISTRADOR' || cargo === 'ENCARGADO';
+}
 
 import { crearExcelVentas } from '../services/excelVentasService';
 import { crearExcelLibroIvaVentas } from '../services/excelLibroIvaService';
@@ -123,7 +135,7 @@ router.post('/libro-iva-ventas-excel', async (req, res) => {
     }
 });
 
-router.post('/ventas-conciliacion-excel', async (req, res) => {
+router.post('/ventas-conciliacion-excel', authMiddleware, async (req, res) => {
     try {
         // Mismo body que ya usan los reportes de ventas actuales (fechas, idProceso,
         // cliente, nroProceso), más incluirAnuladas. filtroProcesoNombre/filtroClienteNombre/
@@ -152,7 +164,7 @@ router.post('/ventas-conciliacion-excel', async (req, res) => {
             filtroNroProceso: filtros?.nroProceso,
             incluirAnuladas: filtros?.incluirAnuladas,
             usuario,
-        }, lineasDetalle, !!formatoLargo, cobranzas, recibosDadosDeBaja);
+        }, lineasDetalle, !!formatoLargo, cobranzas, recibosDadosDeBaja, puedeVerCostoInforme(req));
 
         res.setHeader('Content-Disposition', 'attachment; filename="ventas-conciliacion.xlsx"');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

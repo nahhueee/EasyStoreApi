@@ -7,6 +7,7 @@ import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { Cliente } from '../models/Cliente';
 import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, SQL_METODO_PAGO_CASE } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
+import { analizarTalle } from '../services/excelConciliacionService';
 const moment = require('moment');
 
 // Actualiza el estado del proceso relacionado (Presupuesto/Pedido/Nota de Empaque)
@@ -849,7 +850,7 @@ class VentasRepository{
             if(venta.productos){
                 for (const element of venta.productos) {
                     element.idVenta = venta.id;
-                    await InsertProductoVenta(connection, element);
+                    await InsertProductoVenta(connection, element, true); // Agregar: venta nueva, resuelve costo
                     const finalizandoCotizacion = venta.idProceso == IdProceso.COTIZACION && venta.estado == EstadoVenta.FINALIZADA;
 
                     // Signo del movimiento de stock atado a idProceso, no a un flag aparte:
@@ -1219,7 +1220,7 @@ class VentasRepository{
             if(venta.productos){
                 for (const element of venta.productos) {
                     element.idVenta = venta.id;
-                    await InsertProductoVenta(connection, element);
+                    await InsertProductoVenta(connection, element, false); // Modificar: no recalcula costo, ver nota arriba
 
                     // Mismo gate que en Agregar: un ítem no catalogado no mueve stock.
                     if(element.tipoItem === TipoItemVenta.PRESUPUESTO) continue;
@@ -1631,6 +1632,9 @@ async function ObtenerProductosVenta(connection, idVenta:number, idProceso:numbe
                 producto.total = parseFloat(row['total']);
                 producto.topeDescuento = row['topeDescuento'] != null ? parseFloat(row['topeDescuento']) : undefined;
                 producto.importeDescuento = row['importeDescuento'] != null ? parseFloat(row['importeDescuento']) : undefined;
+                // NULL real (sin costo/histórica) se mantiene como undefined, nunca 0 - ver
+                // costoUnitario en models/Venta.ts.
+                producto.costoUnitario = row['costoUnitario'] != null ? parseFloat(row['costoUnitario']) : undefined;
                 producto.tallesSeleccionados = row['talles'];
                 producto.color = row['color'];
                 producto.hexa = row['hexa'];
@@ -2111,10 +2115,88 @@ async function ValidarFacturacionDePresupuesto(connection, venta:Venta): Promise
     return null;
 }
 
-async function InsertProductoVenta(connection, producto): Promise<void> {
+// Resuelve el costo unitario (promedio ponderado) de una línea de venta a partir del
+// costo cargado por talle en talles_producto (B4-209, Fase 2 - ver handoff). Reusa
+// analizarTalle() del informe de conciliación (excelConciliacionService.ts) para no
+// duplicar el criterio de qué es una línea "desglosada" vs "sin desglose": si mañana
+// cambia esa definición en el informe, este cálculo la sigue automáticamente.
+//
+// No inventa nada: si ningún talle involucrado tiene costo cargado, devuelve null (no 0).
+// Si la línea mezcla talles con y sin costo cargado (carga parcial del catálogo, algo
+// transitorio mientras se completa el maestro), promedia solo sobre los que sí tienen -
+// no trata al resto como costo cero.
+async function ResolverCostoUnitarioLinea(producto): Promise<number | null> {
+    const tallesProducto = await ProductosRepo.ObtenerTallesProducto(producto.idProducto);
+    if (!Array.isArray(tallesProducto) || !tallesProducto.length) return null;
+
+    const costoPorTalle = new Map<string, number | undefined>(
+        tallesProducto.map((tp: any) => [tp.talle, tp.costo])
+    );
+
+    const cantidadesPorPosicion = [
+        producto.t1, producto.t2, producto.t3, producto.t4, producto.t5,
+        producto.t6, producto.t7, producto.t8, producto.t9, producto.t10
+    ];
+    const info = analizarTalle(producto.tallesSeleccionados, cantidadesPorPosicion, producto.cantidad);
+
+    const promediar = (pares: { talle: string; cantidad: number }[]): number | null => {
+        // Ponderado por cantidad. Funciona igual de bien con cantidades negativas (línea
+        // de Nota de Crédito): todas comparten signo, así que el promedio da el mismo
+        // costo por unidad, positivo, tal como espera §5 del handoff (el signo lo aporta
+        // después la cantidad al multiplicar en el informe, acá no se lo pisa).
+        let sumaCosto = 0, sumaCantidadConCosto = 0;
+        for (const { talle, cantidad } of pares) {
+            const costo = costoPorTalle.get(talle);
+            if (costo != null) {
+                sumaCosto += costo * cantidad;
+                sumaCantidadConCosto += cantidad;
+            }
+        }
+        if (sumaCantidadConCosto === 0) return null;
+        return Math.round((sumaCosto / sumaCantidadConCosto) * 100) / 100;
+    };
+
+    switch (info.tipo) {
+        case 'desglosado':
+            return promediar(info.grupos);
+
+        case 'unico': {
+            const costo = costoPorTalle.get(info.talle);
+            return costo != null ? Math.round(costo * 100) / 100 : null;
+        }
+
+        case 'sin_desglose': {
+            // No se sabe cuántas unidades son de cada talle (t1..t10 vacío) - promedio
+            // simple entre los talles involucrados, sin ponderar por cantidad, tal como
+            // pide §5 del handoff. Si todos comparten costo da lo mismo que un promedio
+            // ponderado; si difieren, es la mejor aproximación sin inventar un reparto.
+            const etiquetas = info.talle.split(',').map(t => t.trim()).filter(t => t.length > 0);
+            const costos = etiquetas
+                .map(t => costoPorTalle.get(t))
+                .filter((c): c is number => c != null);
+            if (!costos.length) return null;
+            return Math.round((costos.reduce((a, b) => a + b, 0) / costos.length) * 100) / 100;
+        }
+
+        case 'vacio':
+        default:
+            return null;
+    }
+}
+
+// resolverCosto: true solo cuando la línea nace en esta transacción (Agregar - venta
+// nueva). En Modificar() se pasa false a propósito: esa función borra y reinserta TODAS
+// las líneas de la venta en cada guardado, incluso sobre una venta ya facturada (no hay
+// ningún guard que lo impida). Recalcular ahí pisaría el costo del momento de facturar
+// con el costo ACTUAL del maestro en cualquier edición posterior (ej. registrar un pago
+// más tarde), violando la decisión de que el margen de una venta ya facturada no se
+// mueve. Día que se implemente el round-trip de costoUnitario a través del front (cargar
+// el valor ya persistido y reenviarlo sin tocar), Modificar puede empezar a preservarlo
+// en vez de dejarlo en null - ver nota en la migración 20260920120000.
+async function InsertProductoVenta(connection, producto, resolverCosto: boolean): Promise<void> {
     try {
-        const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, tipoItem, descripcion, idLineaTalle, cantidad, precio, precioLista, total, importeDescuento, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        const consulta = " INSERT INTO ventas_productos(idVenta, idProducto, tipoItem, descripcion, idLineaTalle, cantidad, precio, precioLista, total, importeDescuento, talles, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, costoUnitario) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         // precioLista = producto.precio (precio de lista calculado por calcularPrecioCliente en el
         // front, previo a cualquier edición manual). producto.unitario es el precio final cobrado,
         // que puede diferir si el vendedor lo editó (ver permiteEditarPrecio en addmod-ventas).
@@ -2132,7 +2214,12 @@ async function InsertProductoVenta(connection, producto): Promise<void> {
         const tipoItem = esItemPresupuesto ? TipoItemVenta.PRESUPUESTO : TipoItemVenta.CATALOGO;
         const descripcion = esItemPresupuesto ? (producto.descripcion ?? producto.nomProducto ?? null) : null;
 
-        const parametros = [producto.idVenta, producto.idProducto, tipoItem, descripcion, producto.idLineaTalle, producto.cantidad, producto.unitario, producto.precio, producto.total, producto.importeDescuento ?? 0, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10];
+        // Un ítem no catalogado (PRESUPUESTO) no tiene talles_producto detrás - nunca tiene costo.
+        const costoUnitario = (resolverCosto && tipoItem === TipoItemVenta.CATALOGO)
+            ? await ResolverCostoUnitarioLinea(producto)
+            : null;
+
+        const parametros = [producto.idVenta, producto.idProducto, tipoItem, descripcion, producto.idLineaTalle, producto.cantidad, producto.unitario, producto.precio, producto.total, producto.importeDescuento ?? 0, producto.tallesSeleccionados, producto.t1, producto.t2, producto.t3, producto.t4, producto.t5, producto.t6, producto.t7, producto.t8, producto.t9, producto.t10, costoUnitario];
         await connection.query(consulta, parametros);
     } catch (error) {
         throw error;

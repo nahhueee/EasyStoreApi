@@ -225,6 +225,11 @@ export class TallesProducto {
     idLineaTalle?:number;
     cantidad?:number;
     precio?:number;
+    // Costo neto (sin IVA de compra), cargado manualmente a nivel talle.
+    // undefined = no viene en el payload (no tocar en un UPDATE, ver
+    // productosRepository.ts). null/0 no son lo mismo que "no cargado":
+    // eso lo maneja el front, acá solo se mapea tal cual llega.
+    costo?:number;
     codigoBarra?:string;
 
     constructor(data?: any) {
@@ -235,6 +240,7 @@ export class TallesProducto {
           this.talle = data.talle;
           this.cantidad = data.cantidad;
           this.precio = data.precio;
+          this.costo = data.costo;
           this.idLineaTalle = data.idLineaTalle;
           this.idTalle = data.idTalle;
           this.codigoBarra = data.codigoBarra;

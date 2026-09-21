@@ -115,6 +115,7 @@ class ConciliacionRepository {
 
                     e.razonSocial                                   AS facturante,
                     e.cuil                                          AS cuitFacturante,
+                    e.condicion                                     AS condicionFacturante,
 
                     c.id                                            AS codCliente,
                     IFNULL(NULLIF(c.razonSocial, ''), c.nombre)     AS razonSocial,
@@ -406,6 +407,11 @@ class ConciliacionRepository {
                     IFNULL(vp.importeDescuento, 0)           AS importeDescuento,
                     vp.talles,
                     vp.t1, vp.t2, vp.t3, vp.t4, vp.t5, vp.t6, vp.t7, vp.t8, vp.t9, vp.t10,
+                    -- B4-209 Fase 3: snapshot de costo cargado al facturar (ver
+                    -- ResolverCostoUnitarioLinea en ventasRepository.ts). NULL si la venta
+                    -- es anterior a esta funcionalidad o si el talle no tenía costo cargado
+                    -- en ese momento - nunca se reconstruye con el costo actual del maestro.
+                    vp.costoUnitario                         AS costoUnitario,
                     prod.codigo                              AS codigoArticulo,
                     prod.nombre                              AS descripcion,
                     tp.descripcion                           AS producto,
@@ -441,6 +447,8 @@ class ConciliacionRepository {
                     IFNULL(vp.importeDescuento, 0)           AS importeDescuento,
                     vp.talles,
                     vp.t1, vp.t2, vp.t3, vp.t4, vp.t5, vp.t6, vp.t7, vp.t8, vp.t9, vp.t10,
+                    -- Un ítem no catalogado no tiene talles_producto detrás - nunca costo.
+                    NULL                                      AS costoUnitario,
                     NULL                                      AS codigoArticulo,
                     -- Snapshot del ítem no catalogado (§6.2 del handoff) - no hay JOIN a
                     -- productos_presupuesto acá a propósito, el nombre queda fijado al
@@ -465,6 +473,8 @@ class ConciliacionRepository {
                     NULL AS talles,
                     NULL AS t1, NULL AS t2, NULL AS t3, NULL AS t4, NULL AS t5,
                     NULL AS t6, NULL AS t7, NULL AS t8, NULL AS t9, NULL AS t10,
+                    -- Servicio: no tiene costo cargable hoy (§Fase3 del handoff B4-209).
+                    NULL                                       AS costoUnitario,
                     s.codigo                                  AS codigoArticulo,
                     -- Mismo fallback que ObtenerReporteServicios: un idServicio huérfano
                     -- (borrado del catálogo) sigue apareciendo, no desaparece del detalle.
