@@ -201,10 +201,25 @@ export async function crearExcelConciliacion(
         { header: 'Descuento %', key: 'descuentoPorcentaje', width: 12 },
         { header: 'Ajuste transferencia $', key: 'ajusteTransferencia', width: 16 },
         { header: 'Redondeo $', key: 'redondeo', width: 12 },
-        { header: 'Neto gravado', key: 'netoGravado', width: 14 },
-        { header: 'Exento / No gravado', key: 'exento', width: 14 },
-        { header: 'IVA', key: 'iva', width: 14 },
-        { header: 'Percepciones', key: 'percepciones', width: 14 },
+
+        // Apertura de IVA por alícuota (HANDOFF-apertura-iva-R1.md, B4-203; reubicado
+        // acá en la corrección del 21/09/2026 §3 - único bloque de IVA de la hoja,
+        // reemplaza a "Neto gravado"/"Exento / No gravado"/"IVA"/"Percepciones" que
+        // vivían acá antes). Solo para facturantes Responsable Inscripto (condición
+        // del FACTURANTE, no del comprobante), separado por alícuota. Monotributista
+        // va con las 5 columnas vacías (NULL, no 0): no discrimina IVA, y un 0 ahí
+        // afirmaría "facturó y no tributó IVA" - falso (§3 del handoff original). Hoy
+        // el 100% de lo facturado por un RI es al 21% (verificado contra toda la
+        // base, §4 del handoff); las columnas de 10,5% quedan en 0 por completitud
+        // del cuadro fiscal - ver nota al pie en la hoja Informe. Sin columna de
+        // percepciones (§5 del handoff original: no existe el dato, y
+        // estructuralmente solo podría aplicar a 1 de los 6 facturantes) - no vuelve.
+        { header: 'Neto gravado 21%', key: 'netoGravado21', width: 16 },
+        { header: 'IVA 21%', key: 'iva21', width: 14 },
+        { header: 'Neto gravado 10,5%', key: 'netoGravado105', width: 16 },
+        { header: 'IVA 10,5%', key: 'iva105', width: 14 },
+        { header: 'No gravado / exento', key: 'noGravadoExento', width: 16 },
+
         { header: 'Total comprobante', key: 'totalComprobante', width: 16 },
 
         { header: 'Medios de pago (resumen)', key: 'metodosPago', width: 26 },
@@ -215,30 +230,11 @@ export async function crearExcelConciliacion(
         { header: 'Comprobante origen', key: 'comprobanteOrigen', width: 20 },
         { header: 'Motivo / Observación', key: 'motivo', width: 30 },
         { header: 'Remito', key: 'remito', width: 16 },
-
-        // Apertura de IVA por alícuota (HANDOFF-apertura-iva-R1.md, B4-203). Bloque
-        // fiscal aparte, al final de la hoja: mismo neto/IVA que ya traen las
-        // columnas "Neto gravado"/"IVA" de más arriba, pero acá SOLO para
-        // facturantes Responsable Inscripto (condición del FACTURANTE, no del
-        // comprobante) y separado por alícuota. Monotributista va con las 5
-        // columnas vacías (NULL, no 0): un monotributista no discrimina IVA, y un 0
-        // ahí afirmaría "facturó y no tributó IVA" - falso (§3 del handoff). Hoy el
-        // 100% de lo facturado por un RI es al 21% (verificado contra toda la base,
-        // §4 del handoff); las columnas de 10,5% quedan en 0 por completitud del
-        // cuadro fiscal - ver nota al pie en la hoja Informe. Sin columna de
-        // percepciones (§5 del handoff: no existe el dato en el circuito de ventas,
-        // y estructuralmente solo podría aplicar a 1 de los 6 facturantes).
-        { header: 'Neto gravado 21%', key: 'netoGravado21', width: 16 },
-        { header: 'IVA 21%', key: 'iva21', width: 14 },
-        { header: 'Neto gravado 10,5%', key: 'netoGravado105', width: 16 },
-        { header: 'IVA 10,5%', key: 'iva105', width: 14 },
-        { header: 'No gravado / exento', key: 'noGravadoExento', width: 16 },
     ];
     aplicarEstiloEncabezado(sheetVentas.getRow(1));
 
     const COLUMNAS_MONEDA = [
-        'venta', 'servicio', 'descuentoMonto', 'ajusteTransferencia', 'redondeo',
-        'netoGravado', 'exento', 'iva', 'percepciones', 'totalComprobante',
+        'venta', 'servicio', 'descuentoMonto', 'ajusteTransferencia', 'redondeo', 'totalComprobante',
     ];
 
     filas.forEach(r => {
@@ -272,6 +268,15 @@ export async function crearExcelConciliacion(
         const aperturaIvaAplica = esRIFacturante && r.fiscal === 'S';
         r.netoGravado21 = aperturaIvaAplica ? (Number(r.netoGravado) || 0) : null;
         r.iva21 = aperturaIvaAplica ? (Number(r.iva) || 0) : null;
+        // Corrección 21/09/2026 §1: única resolución de neto/IVA fiscal, reusada por
+        // el bloque "Resumen por condición fiscal" de la hoja Totales más abajo - ANTES
+        // ese bloque volvía a sumar r.netoGravado/r.iva crudos (que para un comprobante
+        // NO fiscal siguen trayendo el derivado v.total/1.21 de la query, aunque la
+        // hoja Ventas ya no lo muestre), y reaparecía el IVA al 21% inventado sobre
+        // Cotizaciones/NC X. Vacío (NULL), no cero, cuando no es fiscal - mismo
+        // criterio que toda columna fiscal de este archivo.
+        r.netoGravadoResuelto = r.fiscal === 'S' ? (Number(r.netoGravado) || 0) : null;
+        r.ivaResuelto = r.fiscal === 'S' ? (Number(r.iva) || 0) : null;
         // 10,5% y "No gravado/exento": en 0, no vacío, cuando aplica - el sistema
         // hoy emite todo a una sola alícuota (§4 del handoff), no es que falte el
         // dato. Ver nota al pie de la hoja Informe.
@@ -330,16 +335,6 @@ export async function crearExcelConciliacion(
             descuentoPorcentaje: Number(r.descuentoPorcentaje) || 0,
             ajusteTransferencia: Number(r.ajusteTransferencia) || 0,
             redondeo: Number(r.redondeo) || 0,
-            // Vacío (no cero) cuando Fiscal = N (corrección tanda 2, sep-2026): derivar
-            // neto/exento/IVA/percepciones de un comprobante no fiscal a partir del
-            // total (p.ej. total/1.21) inventa una apertura fiscal que ARCA nunca vio -
-            // error de especificación del §8 original, no un bug de código. Total
-            // comprobante y el resto de las columnas de gestión sí se completan igual
-            // para todas las filas.
-            netoGravado: r.fiscal === 'S' ? (Number(r.netoGravado) || 0) : null,
-            exento: r.fiscal === 'S' ? 0 : null,
-            iva: r.fiscal === 'S' ? (Number(r.iva) || 0) : null,
-            percepciones: r.fiscal === 'S' ? 0 : null,
             totalComprobante: Number(r.totalComprobante) || 0,
 
             // Agrupado por método, sumando importes (corrección presentación
@@ -405,25 +400,21 @@ export async function crearExcelConciliacion(
     const filasFiscales = filasParaTotal.filter(r => r.fiscal === 'S');
     const filasNoFiscales = filasParaTotal.filter(r => r.fiscal === 'N');
 
+    // Corrección 21/09/2026 §1: las filas TOTAL de esta hoja solo totalizan columnas
+    // de gestión (cantidades, Venta $/Servicio $/Descuento $/Ajuste transferencia $/
+    // Redondeo $/Total comprobante) - las 5 columnas de apertura de IVA NUNCA se
+    // totalizan acá (ni siquiera en TOTAL FISCAL): mezclarían Responsable Inscripto
+    // con Monotributistas por alícuota. Ese subtotal, el único que significa algo,
+    // vive por facturante en la hoja Totales ("Apertura de IVA por facturante") - por
+    // eso quedan fuera de columnasSumar (siguen sin estar en COLUMNAS_MONEDA).
     const columnasSumar = ['cantPrendas', 'cantServicios', ...COLUMNAS_MONEDA];
 
-    // Columnas que se derivan de la apertura fiscal (ventas_factura): en TOTAL NO
-    // FISCAL y TOTAL GENERAL van vacías, no en cero (corrección tanda 2, sep-2026 -
-    // mismo criterio que en netoGravado/exento/iva/percepciones más arriba: sumar
-    // "0" ahí sí sería un dato, no una ausencia de dato). TOTAL FISCAL las suma
-    // normalmente, es 100% comprobantes fiscales.
-    const COLUMNAS_FISCALES = ['netoGravado', 'exento', 'iva', 'percepciones'];
-
-    const escribirFilaTotal = (etiqueta: string, filasDelTotal: any[], opciones: { resaltar?: boolean; vaciarFiscales?: boolean } = {}) => {
-        const { resaltar = false, vaciarFiscales = false } = opciones;
+    const escribirFilaTotal = (etiqueta: string, filasDelTotal: any[], opciones: { resaltar?: boolean } = {}) => {
+        const { resaltar = false } = opciones;
         const fila = sheetVentas.rowCount + 1;
         sheetVentas.getCell(`A${fila}`).value = etiqueta;
         columnasSumar.forEach(key => {
             const celda = sheetVentas.getCell(`${sheetVentas.getColumn(key).letter}${fila}`);
-            if (vaciarFiscales && COLUMNAS_FISCALES.includes(key)) {
-                celda.value = null;
-                return;
-            }
             const total = filasDelTotal.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
             celda.value = total;
             if (COLUMNAS_MONEDA.includes(key)) celda.numFmt = '#,##0.00';
@@ -439,8 +430,8 @@ export async function crearExcelConciliacion(
     };
 
     escribirFilaTotal('TOTAL FISCAL', filasFiscales, { resaltar: true });
-    escribirFilaTotal('TOTAL NO FISCAL', filasNoFiscales, { vaciarFiscales: true });
-    escribirFilaTotal('TOTAL GENERAL', filasParaTotal, { vaciarFiscales: true });
+    escribirFilaTotal('TOTAL NO FISCAL', filasNoFiscales);
+    escribirFilaTotal('TOTAL GENERAL', filasParaTotal);
 
     // Ajuste de ancho fijo (ver columns arriba): NO usar autoFitColumns() del
     // servicio actual acá - con ~48 columnas y varios miles de filas y se nota
@@ -1006,27 +997,50 @@ export async function crearExcelConciliacion(
     ];
     gruposFiscales.forEach(([etiqueta, grupo]) => {
         sheetTotales.getCell(`A${filaActual}`).value = etiqueta;
-        ['netoGravado', 'iva', 'totalComprobante'].forEach((campo, i) => {
-            const celda = sheetTotales.getCell(`${String.fromCharCode(66 + i)}${filaActual}`);
-            celda.value = sumar(grupo, campo);
-            celda.numFmt = '#,##0.00';
-        });
+        // Corrección 21/09/2026 §1: "No fiscal" va con Neto gravado / IVA VACÍOS, no
+        // derivados - agrega sobre netoGravadoResuelto/ivaResuelto (NULL para todo lo
+        // no fiscal), no sobre r.netoGravado/r.iva crudos, que seguían trayendo el
+        // derivado v.total/1.21 de la query aunque la hoja Ventas ya no lo mostrara.
+        // Sumar un array de puros NULL daría 0 igual (Number(null)||0), así que para
+        // "No fiscal" se deja la celda en null directamente en vez de sumar.
+        if (etiqueta === 'No fiscal') {
+            sheetTotales.getCell(`B${filaActual}`).value = null;
+            sheetTotales.getCell(`C${filaActual}`).value = null;
+        } else {
+            sheetTotales.getCell(`B${filaActual}`).value = sumar(grupo, 'netoGravadoResuelto');
+            sheetTotales.getCell(`B${filaActual}`).numFmt = '#,##0.00';
+            sheetTotales.getCell(`C${filaActual}`).value = sumar(grupo, 'ivaResuelto');
+            sheetTotales.getCell(`C${filaActual}`).numFmt = '#,##0.00';
+        }
+        sheetTotales.getCell(`D${filaActual}`).value = sumar(grupo, 'totalComprobante');
+        sheetTotales.getCell(`D${filaActual}`).numFmt = '#,##0.00';
         filaActual++;
     });
+    // Corrección 21/09/2026 §1: la fila "Total" de ESTE bloque ya no suma Neto/IVA -
+    // sumaría base imponible de un Responsable Inscripto con facturación de
+    // monotributo y con cotizaciones no fiscales, un número que no cruza contra nada
+    // y que antes parecía válido. Solo totaliza Total comprobante.
     sheetTotales.getCell(`A${filaActual}`).value = 'Total';
     sheetTotales.getRow(filaActual).font = { bold: true };
-    ['netoGravado', 'iva', 'totalComprobante'].forEach((campo, i) => {
-        const celda = sheetTotales.getCell(`${String.fromCharCode(66 + i)}${filaActual}`);
-        celda.value = sumar(filasParaTotal, campo);
-        celda.numFmt = '#,##0.00';
-    });
+    sheetTotales.getCell(`D${filaActual}`).value = sumar(filasParaTotal, 'totalComprobante');
+    sheetTotales.getCell(`D${filaActual}`).numFmt = '#,##0.00';
     filaActual += 2; // fila en blanco antes del siguiente bloque
 
     // Los 3 bloques siguientes se agrupan en TS sobre las filas ya traídas (no
     // hace falta query nueva - §9 del handoff), todos excluyendo anulados y SIN
     // abrir por condición fiscal (ver comentario arriba).
     agregarBloque('Por canal de venta', sumarPor(filasParaTotal, r => r.canalVenta, 'totalComprobante'));
-    agregarBloque('Por punto de venta', sumarPor(filasParaTotal, r => r.puntoVenta, 'totalComprobante'));
+    // Corrección 21/09/2026 §4: agrupa por (facturante, punto de venta), no por PV
+    // suelto - el PV es único POR CUIT, no a nivel global (Brian/Alan/Chazarreta
+    // pueden compartir el 0004 y es correcto), así que un PV solo no identifica al
+    // facturante. Antes esto sumaba tres contribuyentes distintos bajo la etiqueta
+    // "0004". No renumerar los PV repetidos - ver §4 del handoff, es fiscalmente
+    // correcto que se repitan.
+    agregarBloque('Por punto de venta', sumarPor(
+        filasParaTotal,
+        r => `${r.facturante} — ${r.puntoVenta}${r.puntoVenta === '9999' ? ' (no fiscal)' : ''}`,
+        'totalComprobante',
+    ));
     agregarBloque('Por facturante', sumarPor(filasParaTotal, r => r.facturante, 'totalComprobante'));
 
     // Apertura de IVA por facturante (HANDOFF-apertura-iva-R1.md §2 y §7): mismo
@@ -1039,7 +1053,7 @@ export async function crearExcelConciliacion(
     aplicarEstiloEncabezado(sheetTotales.getRow(filaActual));
     filaActual++;
     sheetTotales.getRow(filaActual).values = [
-        'Facturante', 'Neto gravado 21%', 'IVA 21%', 'Neto gravado 10,5%', 'IVA 10,5%', 'No gravado / exento', 'Total',
+        'Facturante', 'Neto gravado 21%', 'IVA 21%', 'Neto gravado 10,5%', 'IVA 10,5%', 'No gravado / exento', 'No fiscal', 'Total',
     ];
     aplicarEstiloEncabezado(sheetTotales.getRow(filaActual));
     filaActual++;
@@ -1055,7 +1069,16 @@ export async function crearExcelConciliacion(
             celda.value = sumar(filasFacturante, campo);
             celda.numFmt = '#,##0.00';
         });
-        const celdaTotal = sheetTotales.getCell(`${String.fromCharCode(66 + columnasApertura.length)}${filaActual}`);
+        // Corrección 21/09/2026 §5: columna "No fiscal" - sin esto la fila de un RI
+        // con Cotizaciones/NC X no cerraba contra su propio Total (le faltaba
+        // exactamente esa plata, que no tiene apertura por no ser fiscal). Se calcula
+        // para TODOS los facturantes, no solo RI: hoy da 0 en los monotributistas
+        // (no tienen comprobantes no fiscales en este circuito), pero no hay
+        // supuesto de por medio si algún día lo tienen.
+        const celdaNoFiscal = sheetTotales.getCell(`${String.fromCharCode(66 + columnasApertura.length)}${filaActual}`);
+        celdaNoFiscal.value = sumar(filasFacturante.filter(r => r.fiscal === 'N'), 'totalComprobante');
+        celdaNoFiscal.numFmt = '#,##0.00';
+        const celdaTotal = sheetTotales.getCell(`${String.fromCharCode(66 + columnasApertura.length + 1)}${filaActual}`);
         celdaTotal.value = sumar(filasFacturante, 'totalComprobante');
         celdaTotal.numFmt = '#,##0.00';
         filaActual++;
@@ -1502,7 +1525,10 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         // del handoff, tabla de tipos de ítem) - quedan vacías, no en 0.
         costoUnitario: null, costoTotal: null,
     });
-    if (ajusteRaw !== 0) filas.push(filaPseudo('Ajuste', 'Recargo por transferencia (10%)', ajusteRaw));
+    // Corrección 21/09/2026 §2: tipo propio 'Recargo', no 'Ajuste' - compartía el
+    // mismo tipo que las pseudolíneas de control/conciliación, imposible de
+    // distinguir de un recargo real en una tabla dinámica del detalle valorizado.
+    if (ajusteRaw !== 0) filas.push(filaPseudo('Recargo', 'Recargo por transferencia (10%)', ajusteRaw));
     if (redondeoRaw !== 0) filas.push(filaPseudo('Redondeo', 'Redondeo', redondeoRaw));
     if (lineasCrudas.length === 0) {
         filas.push(filaPseudo('Sin detalle', (cabecera.motivo && String(cabecera.motivo).trim()) || 'Sin detalle', totalRaw));

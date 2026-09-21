@@ -104,7 +104,13 @@ class ConciliacionRepository {
                     pv.descripcion                                  AS proceso,
                     v.fecha,
                     v.hora,
-                    LPAD(IFNULL(vf.ptoVenta, e.puntoVta), 4, '0')   AS puntoVenta,
+                    -- Corrección 21/09/2026 §4: el punto de venta de un comprobante fiscal
+                    -- es el que se le informó a ARCA (vf.ptoVenta) - nunca empresas.puntoVta
+                    -- ni puntos_venta, que son de configuración y pueden desfasarse. Un
+                    -- comprobante NO fiscal (Cotización, NC X) no tiene punto de venta:
+                    -- va a '9999', no al de la empresa (170 filas de SUCEDE aparecían como
+                    -- si hubieran salido del PV fiscal 0012 sin haber sido ARCA la fuente).
+                    IF(vf.idVenta IS NOT NULL, LPAD(vf.ptoVenta, 4, '0'), '9999') AS puntoVenta,
                     com.descripcion                                 AS tipoComprobante,
                     LPAD(IFNULL(
                         CASE WHEN v.idTComprobante IN (99, 100, 101) THEN v.nroProceso ELSE vf.ticket END
@@ -166,10 +172,28 @@ class ConciliacionRepository {
                             / NULLIF(IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0), 0)
                         , 4),
                     0) AS descuentoPorcentaje,
+                    -- Corrección 21/09/2026 §2: 10% del NETO (bruto - descuento), no del
+                    -- bruto. El cálculo anterior aplicaba (1 - v.descuento/100) sobre
+                    -- prendas.total_prendas, pero v.descuento es el descuento a NIVEL
+                    -- VENTA (header) - con el descuento por ítem (listas-precio-rediseno,
+                    -- ago-2026) ese campo queda en 0 aunque haya descuento real, así que
+                    -- terminaba cobrando el 10% sobre el bruto completo (verificado:
+                    -- venta 1127, bruto 1.344.000 con 40% de descuento real por ítem,
+                    -- daba 134.400 = bruto*0,10 en vez de 80.640 = neto*0,10). Acá se usa
+                    -- el descuento REAL ya agregado por la query (prendas.descuento_prendas
+                    -- / servicios.descuento_servicios, mismos campos que alimentan la
+                    -- columna "Descuento $"), no un porcentaje. total_prendas/total_servicios
+                    -- son BRUTO (ver comentario en las subqueries) - de ahí sale el NETO.
                     IF(v.ajusteTransf = 1,
                         IF(v.idProceso = ${IdProceso.NOTA_CREDITO},
-                            ROUND((IFNULL(prendas.total_prendas, 0) * (1 - IFNULL(v.descuento, 0) / 100) + IFNULL(servicios.total_servicios, 0)) * 0.10, 2) * -1,
-                            ROUND((IFNULL(prendas.total_prendas, 0) * (1 - IFNULL(v.descuento, 0) / 100) + IFNULL(servicios.total_servicios, 0)) * 0.10, 2)
+                            ROUND((
+                                (IFNULL(prendas.total_prendas, 0) - IFNULL(prendas.descuento_prendas, 0))
+                                + (IFNULL(servicios.total_servicios_venta, 0) - IFNULL(servicios.descuento_servicios, 0))
+                            ) * 0.10, 2) * -1,
+                            ROUND((
+                                (IFNULL(prendas.total_prendas, 0) - IFNULL(prendas.descuento_prendas, 0))
+                                + (IFNULL(servicios.total_servicios_venta, 0) - IFNULL(servicios.descuento_servicios, 0))
+                            ) * 0.10, 2)
                         ),
                         0
                     ) AS ajusteTransferencia,
