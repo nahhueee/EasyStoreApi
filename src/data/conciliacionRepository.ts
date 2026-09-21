@@ -431,6 +431,10 @@ class ConciliacionRepository {
                     IFNULL(vp.importeDescuento, 0)           AS importeDescuento,
                     vp.talles,
                     vp.t1, vp.t2, vp.t3, vp.t4, vp.t5, vp.t6, vp.t7, vp.t8, vp.t9, vp.t10,
+                    -- Grilla completa del producto (ver JOIN a lt más abajo), para que
+                    -- analizarTalle() mapee t1..t10 por posición real y no por índice
+                    -- dentro de vp.talles.
+                    lt.descripcion                            AS grillaTalle,
                     -- B4-209 Fase 3: snapshot de costo cargado al facturar (ver
                     -- ResolverCostoUnitarioLinea en ventasRepository.ts). NULL si la venta
                     -- es anterior a esta funcionalidad o si el talle no tenía costo cargado
@@ -457,6 +461,20 @@ class ConciliacionRepository {
                 LEFT JOIN generos g            ON g.id = prod.idGenero
                 LEFT JOIN colores col          ON col.id = prod.idColor
                 LEFT JOIN temporadas temp      ON temp.id = prod.idTemporada
+                -- Corrección tanda "M, L sin desglose" (21/09/2026): t1..t10 son posiciones
+                -- FIJAS de la grilla completa del producto, no de vp.talles (que solo
+                -- lista los talles con movimiento) - ver analizarTalle() en
+                -- excelConciliacionService.ts. Traemos la grilla (lineas_talle.descripcion,
+                -- mismo campo que usa ObtenerLineaDeTalle en miscRepository.ts, separado por
+                -- '-') para que el TS pueda mapear t{i+1} contra la posición real, no contra
+                -- el índice dentro de vp.talles. Subquery en vez de JOIN directo a
+                -- talles_producto porque esa tabla tiene 1 fila por talle (multiplicaría
+                -- las filas de este UNION); todos los talles de un mismo producto comparten
+                -- idLineaTalle, así que cualquiera de ellos alcanza.
+                LEFT JOIN lineas_talle lt ON lt.id = (
+                    SELECT tpx.idLineaTalle FROM talles_producto tpx
+                    WHERE tpx.idProducto = prod.id LIMIT 1
+                )
                 WHERE vp.tipoItem = 'CATALOGO' AND ${condicionVentas}
 
                 UNION ALL
@@ -471,6 +489,7 @@ class ConciliacionRepository {
                     IFNULL(vp.importeDescuento, 0)           AS importeDescuento,
                     vp.talles,
                     vp.t1, vp.t2, vp.t3, vp.t4, vp.t5, vp.t6, vp.t7, vp.t8, vp.t9, vp.t10,
+                    NULL                                      AS grillaTalle,
                     -- Un ítem no catalogado no tiene talles_producto detrás - nunca costo.
                     NULL                                      AS costoUnitario,
                     NULL                                      AS codigoArticulo,
@@ -497,6 +516,7 @@ class ConciliacionRepository {
                     NULL AS talles,
                     NULL AS t1, NULL AS t2, NULL AS t3, NULL AS t4, NULL AS t5,
                     NULL AS t6, NULL AS t7, NULL AS t8, NULL AS t9, NULL AS t10,
+                    NULL                                       AS grillaTalle,
                     -- Servicio: no tiene costo cargable hoy (§Fase3 del handoff B4-209).
                     NULL                                       AS costoUnitario,
                     s.codigo                                  AS codigoArticulo,

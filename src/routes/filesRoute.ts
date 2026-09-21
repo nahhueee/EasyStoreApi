@@ -27,6 +27,7 @@ import { crearExcelCompras } from '../services/excelComprasService';
 import { ProductosRepo } from '../data/productosRepository';
 import { VentasRepo } from '../data/ventasRepository';
 import { LibrosIvaRepo } from '../data/librosIvaRepository';
+import { EmpresasRepo } from '../data/empresasRepository';
 import { ConciliacionRepo } from '../data/conciliacionRepository';
 import { ClientesRepo } from '../data/clientesRepository';
 import { CuentasRepo } from '../data/cuentasRepository';
@@ -119,9 +120,13 @@ router.post('/libro-iva-ventas-excel', async (req, res) => {
         const libro = await LibrosIvaRepo.ObtenerLibroIvaVentas(req.body);
         const correlatividad = await LibrosIvaRepo.ObtenerCorrelatividadVentas(req.body);
         const excluidos = await LibrosIvaRepo.ObtenerExcluidosDelLibro(req.body);
+        // Se necesita aparte (no se deriva de `libro[0]`) para saber si la empresa
+        // es RI o Monotributista incluso en un período sin comprobantes -
+        // HANDOFF-apertura-iva-libro-iva-ventas.md.
+        const empresa = await EmpresasRepo.ObtenerEmpresa(req.body.idEmpresa);
 
         // Generar Excel usando el servicio
-        const buffer = await crearExcelLibroIvaVentas(libro, correlatividad, excluidos);
+        const buffer = await crearExcelLibroIvaVentas(libro, correlatividad, excluidos, empresa);
 
         // Configurar headers para descarga
         res.setHeader('Content-Disposition', 'attachment; filename="libro-iva-ventas.xlsx"');

@@ -2137,7 +2137,16 @@ async function ResolverCostoUnitarioLinea(producto): Promise<number | null> {
         producto.t1, producto.t2, producto.t3, producto.t4, producto.t5,
         producto.t6, producto.t7, producto.t8, producto.t9, producto.t10
     ];
-    const info = analizarTalle(producto.tallesSeleccionados, cantidadesPorPosicion, producto.cantidad);
+    // Mismo fix que excelConciliacionService.ts (21/09/2026): t1..t10 son posiciones de la
+    // grilla completa del producto, no del orden de producto.tallesSeleccionados. tallesProducto
+    // ya viene ordenado por tp.ubicacion ASC (ver ObtenerTallesProducto) - reconstruimos la
+    // grilla completa a partir de esa ubicación real en vez de asumir que coincide con el orden
+    // de llegada del array.
+    const grillaTalle: string[] = [];
+    for (const tp of tallesProducto) {
+        if (tp.ubicacion != null && tp.talle) grillaTalle[tp.ubicacion - 1] = tp.talle;
+    }
+    const info = analizarTalle(producto.tallesSeleccionados, cantidadesPorPosicion, producto.cantidad, grillaTalle);
 
     const promediar = (pares: { talle: string; cantidad: number }[]): number | null => {
         // Ponderado por cantidad. Funciona igual de bien con cantidades negativas (línea

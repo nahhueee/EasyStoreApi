@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { MapearListaPrecio } from '../data/clientesRepository';
 import { TIPOS_COMPROBANTE_ARCA } from '../models/tiposComprobanteArca';
 import { IdProceso } from '../models/ventaEstados';
+import { aperturaIva } from './aperturaIva';
 const moment = require('moment');
 
 /**
@@ -264,25 +265,32 @@ export async function crearExcelConciliacion(
         // netoGravado/iva más abajo). Se guarda en r (no solo en la fila de Excel)
         // porque el bloque "Apertura de IVA por facturante" de la hoja Totales, más
         // abajo, reusa estas mismas filas.
-        const esRIFacturante = r.condicionFacturante === 'Responsable Inscripto';
-        const aperturaIvaAplica = esRIFacturante && r.fiscal === 'S';
-        r.netoGravado21 = aperturaIvaAplica ? (Number(r.netoGravado) || 0) : null;
-        r.iva21 = aperturaIvaAplica ? (Number(r.iva) || 0) : null;
+        // Corrección 21/09/2026 (HANDOFF-apertura-iva-libro-iva-ventas.md §2): la
+        // apertura por alícuota ahora vive en aperturaIva.ts, compartida con el
+        // Libro IVA Ventas - un solo cálculo para los dos informes, nunca dos
+        // copias que puedan desalinearse.
+        const esFiscal = r.fiscal === 'S';
+        const apertura = aperturaIva({
+            esFiscal,
+            condicionFacturante: r.condicionFacturante,
+            neto: r.netoGravado,
+            iva: r.iva,
+        });
+        r.netoGravado21 = apertura.netoGravado21;
+        r.iva21 = apertura.iva21;
+        r.netoGravado105 = apertura.netoGravado105;
+        r.iva105 = apertura.iva105;
+        r.noGravadoExento = apertura.noGravadoExento;
         // Corrección 21/09/2026 §1: única resolución de neto/IVA fiscal, reusada por
         // el bloque "Resumen por condición fiscal" de la hoja Totales más abajo - ANTES
         // ese bloque volvía a sumar r.netoGravado/r.iva crudos (que para un comprobante
         // NO fiscal siguen trayendo el derivado v.total/1.21 de la query, aunque la
         // hoja Ventas ya no lo muestre), y reaparecía el IVA al 21% inventado sobre
         // Cotizaciones/NC X. Vacío (NULL), no cero, cuando no es fiscal - mismo
-        // criterio que toda columna fiscal de este archivo.
-        r.netoGravadoResuelto = r.fiscal === 'S' ? (Number(r.netoGravado) || 0) : null;
-        r.ivaResuelto = r.fiscal === 'S' ? (Number(r.iva) || 0) : null;
-        // 10,5% y "No gravado/exento": en 0, no vacío, cuando aplica - el sistema
-        // hoy emite todo a una sola alícuota (§4 del handoff), no es que falte el
-        // dato. Ver nota al pie de la hoja Informe.
-        r.netoGravado105 = aperturaIvaAplica ? 0 : null;
-        r.iva105 = aperturaIvaAplica ? 0 : null;
-        r.noGravadoExento = aperturaIvaAplica ? 0 : null;
+        // criterio que toda columna fiscal de este archivo. Independiente de la
+        // apertura por alícuota (esto no distingue RI de Monotributista).
+        r.netoGravadoResuelto = esFiscal ? (Number(r.netoGravado) || 0) : null;
+        r.ivaResuelto = esFiscal ? (Number(r.iva) || 0) : null;
 
         const fila = sheetVentas.addRow({
             idVenta: r.idVenta,
@@ -962,6 +970,13 @@ export async function crearExcelConciliacion(
 
     sheetTotales.getColumn(3).width = 18;
     sheetTotales.getColumn(4).width = 18;
+    // E:H - usadas por "Apertura de IVA por facturante" (Neto 10,5% / IVA 10,5% /
+    // No gravado-exento / No fiscal / Total): sin esto quedaban en el ancho
+    // default de ExcelJS y el número no se veía sin agrandar la columna a mano.
+    sheetTotales.getColumn(5).width = 18;
+    sheetTotales.getColumn(6).width = 18;
+    sheetTotales.getColumn(7).width = 18;
+    sheetTotales.getColumn(8).width = 18;
 
     let filaActual = 1;
     const agregarBloque = (titulo: string, datos: Map<string, number>) => {
@@ -1107,8 +1122,8 @@ export async function crearExcelConciliacion(
     const totalIngresadoGeneral = round2(filasIngresaron.reduce((acc, f) => acc + (Number(f.importeCobrado) || 0), 0));
 
     sheetTotales.getCell(`A${filaActual}`).value = 'COBRANZAS DEL PERÍODO — por fecha de cobro';
-    sheetTotales.getRow(filaActual).font = { bold: true };
-    sheetTotales.getRow(filaActual).alignment = { horizontal: 'left' };
+    aplicarEstiloEncabezado(sheetTotales.getRow(filaActual));
+    sheetTotales.getRow(filaActual).alignment = { horizontal: 'left', vertical: 'middle' };
     filaActual++;
     sheetTotales.getCell(`A${filaActual}`).value = 'Incluye solo el dinero que efectivamente ingresó a caja o banco.';
     sheetTotales.getRow(filaActual).alignment = { horizontal: 'left' };
@@ -1116,8 +1131,8 @@ export async function crearExcelConciliacion(
 
     const agregarSubBloqueCobranzas = (titulo: string, datos: Map<string, number>) => {
         sheetTotales.getCell(`A${filaActual}`).value = titulo;
-        sheetTotales.getRow(filaActual).font = { bold: true };
-        sheetTotales.getRow(filaActual).alignment = { horizontal: 'left' };
+        aplicarEstiloEncabezado(sheetTotales.getRow(filaActual));
+        sheetTotales.getRow(filaActual).alignment = { horizontal: 'left', vertical: 'middle' };
         filaActual++;
         for (const [clave, total] of datos) {
             sheetTotales.getCell(`A${filaActual}`).value = clave || '(sin dato)';
@@ -1292,12 +1307,27 @@ export type TalleInfo =
     | { tipo: 'sin_desglose'; talle: string }
     | { tipo: 'vacio' };
 
-export function analizarTalle(talles: string | null | undefined, cantidades: any[], cantidadLinea: number): TalleInfo {
+// Corrección "M, L sin desglose" (21/09/2026, ver informes-administracion-r2-detalle-valorizado
+// en memoria del proyecto): t1..t10 son posiciones FIJAS de la grilla completa del producto
+// (lineas_talle.descripcion, p.ej. "XS-S-M-L-XL-XXL-3XL-4XL-5XL-6XL"), NO del orden en que
+// aparecen las etiquetas en vp.talles. vp.talles solo lista qué talles tuvieron movimiento en
+// la línea (subconjunto), así que indexar cantidades[i] contra etiquetas[i] (lo que hacía esta
+// función antes) da resultados falsos apenas la línea no usa la grilla completa desde la
+// posición 1 - caso real: vp.talles="M, L", cantidad real en t3/t4 (M y L son las posiciones
+// 3 y 4 de una grilla de 10), y el código viejo miraba t1/t2 (NULL) y la marcaba "sin_desglose"
+// aunque el dato estaba cargado.
+// `grilla` (opcional) es el array de talles en orden de posición real, típicamente
+// lineas_talle.descripcion.split('-') - mismo patrón que ya usa ObtenerLineaDeTalle en
+// miscRepository.ts / ObtenerStockDisponiblePorProducto en productosRepository.ts. Si no se
+// provee (producto sin talles_producto cargado, o llamador viejo) se cae al criterio anterior
+// como fallback - menos confiable, pero no rompe.
+export function analizarTalle(talles: string | null | undefined, cantidades: any[], cantidadLinea: number, grilla?: string[] | null): TalleInfo {
     const etiquetas = talles ? String(talles).split(',').map(t => t.trim()).filter(t => t.length > 0) : [];
     if (etiquetas.length === 0) return { tipo: 'vacio' };
     if (etiquetas.length === 1) return { tipo: 'unico', talle: etiquetas[0], cantidad: cantidadLinea };
 
-    const grupos = etiquetas
+    const base = grilla && grilla.length > 0 ? grilla : etiquetas;
+    const grupos = base
         .map((talle, i) => ({ talle, cantidad: Number(cantidades[i]) || 0 }))
         .filter(g => g.cantidad > 0);
     if (grupos.length === 0) return { tipo: 'sin_desglose', talle: etiquetas.join(', ') };
@@ -1444,7 +1474,8 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         // sola etiqueta o varias sin desglose real NO se pueden partir en filas
         // por talle - se quedan en una sola fila más abajo, con vp.cantidad o
         // marcadas "(sin desglose)" según el caso.
-        const infoTalle = analizarTalle(l.talles, [l.t1, l.t2, l.t3, l.t4, l.t5, l.t6, l.t7, l.t8, l.t9, l.t10], cantidad);
+        const grillaTalle = l.grillaTalle ? String(l.grillaTalle).split('-') : null;
+        const infoTalle = analizarTalle(l.talles, [l.t1, l.t2, l.t3, l.t4, l.t5, l.t6, l.t7, l.t8, l.t9, l.t10], cantidad, grillaTalle);
         const explota = formatoLargo && l.tipoItem === 'Producto' && infoTalle.tipo === 'desglosado';
 
         if (!explota) {

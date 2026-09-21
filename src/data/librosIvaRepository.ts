@@ -71,11 +71,16 @@ class LibrosIvaRepository {
                     vf.ptoVentaRelacionado,
                     vf.ticketRelacionado,
                     v.estado,
-                    v.fechaBaja
+                    v.fechaBaja,
+                    -- Condición fiscal del FACTURANTE (no del comprobante), para la
+                    -- apertura de IVA por alícuota (aperturaIva.ts) - mismo criterio
+                    -- que ya usa conciliacionRepository.ts para R1.
+                    e.condicion                                   AS condicionFacturante
                 FROM ventas v
                 INNER JOIN ventas_factura vf ON vf.idVenta = v.id
                 LEFT JOIN clientes c          ON c.id = v.idCliente
                 LEFT JOIN condiciones_iva ci  ON ci.id = c.idCondIva
+                LEFT JOIN empresas e          ON e.id = v.idEmpresa
                 WHERE v.idEmpresa = ?
                   AND v.fecha >= ? AND v.fecha < ?
                 ORDER BY vf.tipoFactura ASC, vf.ptoVenta ASC, vf.ticket ASC
