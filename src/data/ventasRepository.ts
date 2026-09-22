@@ -1034,6 +1034,33 @@ class VentasRepository{
     // habría que bifurcar y restaurar la lógica de EGRESO real / RECHAZADO de
     // valores_acreditar que existía antes de este cambio (ver historial de git).
     async RegistrarMovimientoNotaCredito(connection, pagosOriginales, notaCredito, usuario, devuelveDinero: boolean = false) {
+        // Regularización de correlatividad ARCA (sep-2026, ver migración
+        // 20260922120000_add_regularizacionarca_ventas). La factura original puede haber
+        // sido backfilleada directo en producción para un comprobante que ya existía en
+        // ARCA (emitido por error desde testing) pero nunca tuvo un cobro real. En ese
+        // caso la NC que la cancela NO puede generar el saldo a favor de siempre: el
+        // cliente quedaría con crédito por una venta que nunca pagó. Se detecta acá,
+        // apenas entra la función y antes de tocar ventas_pagos/movimientos_fondos,
+        // resolviendo la factura original por su comprobante asociado (notaCredito.factura
+        // ya viene poblado en este punto - se persiste a ventas_factura más abajo en
+        // Agregar(), pero el objeto ya está armado antes). Si está marcada, la NC queda
+        // solo como venta + ventas_factura (ya se insertan en el resto de Agregar()), sin
+        // ningún movimiento real - todo lo demás (CAE real, numeración, Libro IVA) sigue
+        // el camino normal.
+        const comprobanteAsociado = notaCredito.factura?.comprobanteAsociado;
+        if (comprobanteAsociado) {
+            const [facturasOriginales] = await connection.query(
+                `SELECT v.regularizacionArca
+                 FROM ventas_factura vf
+                 JOIN ventas v ON v.id = vf.idVenta
+                 WHERE vf.tipoFactura = ? AND vf.ptoVenta = ? AND vf.ticket = ?`,
+                [comprobanteAsociado.tipo, comprobanteAsociado.puntoVenta, comprobanteAsociado.numero]
+            );
+            if (facturasOriginales[0]?.regularizacionArca) {
+                return;
+            }
+        }
+
         // NC libre (cargada directo, sin una venta de origen de la que prorratear
         // métodos de pago, ej. desde una pantalla de NC standalone): no hay nada
         // que prorratear, se registra una única línea por el total con el método
