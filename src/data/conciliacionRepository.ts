@@ -435,6 +435,7 @@ class ConciliacionRepository {
                     -- analizarTalle() mapee t1..t10 por posición real y no por índice
                     -- dentro de vp.talles.
                     lt.descripcion                            AS grillaTalle,
+                    cb.codigosBarraPorTalle                   AS codigosBarraPorTalle,
                     -- B4-209 Fase 3: snapshot de costo cargado al facturar (ver
                     -- ResolverCostoUnitarioLinea en ventasRepository.ts). NULL si la venta
                     -- es anterior a esta funcionalidad o si el talle no tenía costo cargado
@@ -475,6 +476,17 @@ class ConciliacionRepository {
                     SELECT tpx.idLineaTalle FROM talles_producto tpx
                     WHERE tpx.idProducto = prod.id LIMIT 1
                 )
+                -- Punto 12 (SKU = código de barras cuando el talle de la fila está
+                -- resuelto): "talle:codigoBarra" por cada variante del producto, en el
+                -- mismo orden de ubicacion que grillaTalle, para resolverlo en TS sin
+                -- otra ida y vuelta a la base. codigo_barra puede venir NULL/'' - se
+                -- concatena igual, excelConciliacionService.ts decide qué hacer si falta.
+                LEFT JOIN (
+                    SELECT tpx.idProducto,
+                        GROUP_CONCAT(CONCAT(tpx.talle, ':', IFNULL(tpx.codigo_barra, '')) ORDER BY tpx.ubicacion SEPARATOR '|') AS codigosBarraPorTalle
+                    FROM talles_producto tpx
+                    GROUP BY tpx.idProducto
+                ) cb ON cb.idProducto = prod.id
                 WHERE vp.tipoItem = 'CATALOGO' AND ${condicionVentas}
 
                 UNION ALL
@@ -490,6 +502,7 @@ class ConciliacionRepository {
                     vp.talles,
                     vp.t1, vp.t2, vp.t3, vp.t4, vp.t5, vp.t6, vp.t7, vp.t8, vp.t9, vp.t10,
                     NULL                                      AS grillaTalle,
+                    NULL                                      AS codigosBarraPorTalle,
                     -- Un ítem no catalogado no tiene talles_producto detrás - nunca costo.
                     NULL                                      AS costoUnitario,
                     NULL                                      AS codigoArticulo,
@@ -510,20 +523,25 @@ class ConciliacionRepository {
                     vs.id                                   AS idLinea,
                     'Servicio'                                AS tipoItem,
                     vs.cantidad,
-                    NULL                                      AS precioLista,
+                    -- Punto 3: precio base configurado del servicio (servicios.sugerido),
+                    -- misma semántica que precioLista en Producto - de ahí sale pctDesc
+                    -- genérico (1 - precio/sugerido) y "qué se vendió por debajo/encima
+                    -- del precio base" (21/09/2026).
+                    s.sugerido                                AS precioLista,
                     vs.total,
                     IFNULL(vs.importeDescuento, 0)            AS importeDescuento,
                     NULL AS talles,
                     NULL AS t1, NULL AS t2, NULL AS t3, NULL AS t4, NULL AS t5,
                     NULL AS t6, NULL AS t7, NULL AS t8, NULL AS t9, NULL AS t10,
                     NULL                                       AS grillaTalle,
+                    NULL                                       AS codigosBarraPorTalle,
                     -- Servicio: no tiene costo cargable hoy (§Fase3 del handoff B4-209).
                     NULL                                       AS costoUnitario,
                     s.codigo                                  AS codigoArticulo,
                     -- Mismo fallback que ObtenerReporteServicios: un idServicio huérfano
                     -- (borrado del catálogo) sigue apareciendo, no desaparece del detalle.
                     IFNULL(s.descripcion, CONCAT('(servicio eliminado #', vs.idServicio, ')')) AS descripcion,
-                    NULL AS producto, NULL AS tipo, NULL AS genero, NULL AS material, NULL AS color,
+                    'SERVICIO' AS producto, NULL AS tipo, NULL AS genero, NULL AS material, NULL AS color,
                     NULL AS temporada
                 FROM ventas_servicios vs
                 INNER JOIN ventas v    ON v.id = vs.idVenta
@@ -739,11 +757,16 @@ class ConciliacionRepository {
                 IFNULL(NULLIF(c.razonSocial, ''), c.nombre)      AS cliente,
                 c.diasVencimiento                                 AS diasVencimientoCliente,
                 ${columnasCabecera},
+                -- Punto 5 (21/09/2026): a qué EMPRESA entró la plata (metodos_pago.idEmpresa),
+                -- no confundir con "Facturante" (e.razonSocial, quién emitió el comprobante -
+                -- son ejes distintos, ver comentario en excelConciliacionService.ts).
+                eCobro.razonSocial                              AS empresaCobro,
                 ${columnasValor}
             FROM ventas_pagos vp
             INNER JOIN ventas v              ON v.id = vp.idVenta
             LEFT JOIN metodos_pago mp        ON mp.id = vp.idMetodo
             LEFT JOIN fondos f               ON f.id = mp.idFondo
+            LEFT JOIN empresas eCobro        ON eCobro.id = mp.idEmpresa
             LEFT JOIN clientes c             ON c.id = v.idCliente
             LEFT JOIN tipos_comprobantes com ON com.id = v.idTComprobante
             LEFT JOIN empresas e             ON e.id = v.idEmpresa
@@ -792,12 +815,16 @@ class ConciliacionRepository {
                 )                                                  AS cliente,
                 COALESCE(c.diasVencimiento, ce.diasVencimiento)   AS diasVencimientoCliente,
                 ${columnasCabecera},
+                -- Punto 5: mismo criterio que ramaA. Estas son justamente la mitad del pedido
+                -- del cliente - las 48 filas sin comprobante (Facturante vacío) tienen acá dato.
+                eCobro.razonSocial                              AS empresaCobro,
                 ${columnasValor}
             FROM ventas_entrega_detalle ved
             INNER JOIN ventas_entrega ve     ON ve.id = ved.idEntrega
             LEFT JOIN ventas v                ON v.id = ved.idVenta
             LEFT JOIN metodos_pago mp        ON mp.id = ved.idMetodoAplicado
             LEFT JOIN fondos f               ON f.id = mp.idFondo
+            LEFT JOIN empresas eCobro        ON eCobro.id = mp.idEmpresa
             LEFT JOIN clientes c             ON c.id = v.idCliente
             -- Cliente de la ENTREGA (para las filas sin comprobante - §5.3 del handoff).
             LEFT JOIN clientes ce            ON ce.id = ve.idCliente

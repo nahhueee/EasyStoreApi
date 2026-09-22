@@ -115,6 +115,18 @@ export async function crearExcelConciliacion(
         // apertura de un comprobante de facturante monotributista contra su Total va
         // a pensar que falta plata (la suma de la apertura no da el Total ahí, a propósito).
         'Apertura de IVA (hoja "Ventas", últimas columnas): se toma del comprobante emitido. El sistema emite hoy una sola alícuota por comprobante, por lo que las columnas de 10,5% figuran en cero. En los comprobantes de facturantes monotributistas las columnas de apertura van vacías, porque no corresponde discriminar IVA: en esas filas la suma de la apertura no coincide con el Total. Los subtotales de IVA son por facturante (hoja Totales), ya que cada uno declara bajo su propio CUIT - nunca se muestra un total general de estas columnas.',
+        // Punto 12.a/12.d (21/09/2026): dos notas que pide explícitamente el handoff sobre
+        // el SKU = código de barras. No se agregó la columna "Artículo-Color-Talle" (12.c) -
+        // decisión de Nahu -, así que la nota se ajustó: la desambiguación de las 225
+        // combinaciones queda en Cód. artículo + Color + Talle (columnas ya existentes en el
+        // detalle), no en una columna aparte.
+        'Hoja "Detalle valorizado" — SKU repetido en distinto color: el código de barras se genera por modelo y talle, sin el color, así que hay 225 combinaciones (14 modelos) donde dos filas de colores distintos muestran el mismo SKU. No se inventa un desambiguador - para diferenciarlas usá Cód. artículo + Color + Talle (columnas de esta misma hoja). Se corrige aparte, en el arreglo de códigos de barra duplicados; cuando eso se aplique, este informe mejora solo.',
+        'Hoja "Detalle valorizado" — SKU no queda fijo: a diferencia del precio o el costo, el código de barras se resuelve en vivo contra el maestro de talles del producto. Si el código de un talle cambia más adelante, un informe reexportado de un período viejo va a mostrar el código nuevo - es un identificador de la variante, no un importe histórico, y es el comportamiento esperado.',
+        // Punto 4, "De paso" (21/09/2026): un Desc. (%) negativo es un RECARGO (se vendió
+        // por encima del precio de lista) - correcto, no se "arregla" con ABS(). Sin esta
+        // nota, el primero que vea un negativo en una tabla dinámica lo va a reportar como
+        // error de signo.
+        'Hoja "Detalle valorizado" — Desc. (%) negativo: significa que la línea se vendió por encima del precio de lista (un recargo, no un descuento). Es correcto tal como sale, no es un error de signo.',
         // B4-209 Fase 3: nota pedida explícitamente en el handoff (§Fase 3, último punto).
         // Solo aparece cuando el usuario tiene permiso de ver costo (las columnas ni
         // siquiera existen en el archivo si no lo tiene - ver puedeVerCosto).
@@ -127,11 +139,28 @@ export async function crearExcelConciliacion(
         // como bug cuando son 4 diferencias de criterio esperadas. \n dentro
         // del string + wrapText (ya seteado en el forEach de abajo) - Excel
         // respeta el salto de línea en una celda wrapeada.
-        'Cómo cruzar esta hoja contra caja y banco: el total de "Ingresó" no coincide directamente con los ingresos por ventas del módulo de Fondos, porque hay diferencias de criterio, todas esperadas.\n' +
+        // Corrección punto 9 (21/09/2026): el cliente la copió y preguntó "Esto que
+        // sería?" - porque vive en la lista de notas generales de "Informe" y dice
+        // "esta hoja" sin decir cuál, y el que la lee está parado en Informe, no en
+        // Cobranzas. Retitulada con la hoja en el nombre, "esta hoja" reemplazado
+        // por "la hoja Cobranzas" en todo el texto, y agregada una primera línea que
+        // dice para qué sirve la nota (no solo el mecanismo).
+        'Hoja Cobranzas — cómo cruzar el total contra caja y banco: esta nota se usa cuando el total cobrado del informe no coincide con lo que muestra el módulo de Fondos para el mismo período. Las diferencias de abajo son esperadas y explican la brecha.\n' +
+        'El total de "Ingresó" en la hoja Cobranzas no coincide directamente con los ingresos por ventas del módulo de Fondos, porque hay diferencias de criterio, todas esperadas.\n' +
         '• Los cobros que quedaron como saldo a favor del cliente entran al banco igual, pero en Fondos se registran aparte porque no cancelan cuenta corriente.\n' +
         '• Las retenciones sufridas están incluidas en el importe cobrado, y en Fondos van a su propio fondo.\n' +
-        '• Los recibos anulados no figuran en esta hoja, pero su ingreso original sigue registrado en Fondos junto con su reversión.\n' +
-        '• Los cobros con tarjeta o cheque se cuentan acá en la fecha del cobro; en Fondos entran al banco recién el día que se acreditan.',
+        '• Los recibos anulados no figuran en la hoja Cobranzas, pero su ingreso original sigue registrado en Fondos junto con su reversión.\n' +
+        '• Los cobros con tarjeta o cheque se cuentan en la hoja Cobranzas en la fecha del cobro; en Fondos entran al banco recién el día que se acreditan.',
+        // Punto 7 (21/09/2026): el cliente vio 48 filas de la hoja Cobranzas con las
+        // columnas del comprobante en blanco y preguntó si eran cobros no aplicados a
+        // una factura - tenía razón exactamente (26 Saldo a favor + 22 Cancelación de
+        // saldo inicial). Las columnas quedan bien vacías (vacío, no cero, mismo
+        // criterio de siempre): no hay un comprobante puntual al que corresponda.
+        'Hoja Cobranzas — filas sin comprobante: los cobros con Tipo de cobro = Saldo a favor o Cancelación de saldo inicial no se aplican a un comprobante puntual, así que las columnas del comprobante (punto de venta, número, fecha, total, vencimiento) van vacías. El importe cobrado y el medio están completos igual.',
+        // Punto 8 (21/09/2026): el cliente preguntó qué significan los valores de "Ref.
+        // interna" (VED208, VP401). No se tocan los prefijos - sirven para soporte y ya
+        // están verificados.
+        'Hoja Cobranzas — Ref. interna: identifica el movimiento de cobro dentro del sistema, para poder rastrearlo si hace falta. "VP" es un cobro aplicado directamente a un comprobante; "VED", la aplicación de una entrega de dinero que se repartió entre varios comprobantes. El número que sigue es el identificador interno del movimiento.',
     ];
     notasInforme.forEach(texto => {
         const filaNota = sheetInforme.addRow(['Nota', texto]);
@@ -199,7 +228,7 @@ export async function crearExcelConciliacion(
         { header: 'Venta $', key: 'venta', width: 14 },
         { header: 'Servicio $', key: 'servicio', width: 14 },
         { header: 'Descuento $', key: 'descuentoMonto', width: 14 },
-        { header: 'Descuento %', key: 'descuentoPorcentaje', width: 12 },
+        { header: 'Descuento (%)', key: 'descuentoPorcentaje', width: 12 },
         { header: 'Ajuste transferencia $', key: 'ajusteTransferencia', width: 16 },
         { header: 'Redondeo $', key: 'redondeo', width: 12 },
 
@@ -225,6 +254,12 @@ export async function crearExcelConciliacion(
 
         { header: 'Medios de pago (resumen)', key: 'metodosPago', width: 26 },
         { header: 'Montos de pago (resumen)', key: 'montosPago', width: 26 },
+        // Punto 1 (21/09/2026): "Montos de pago" sigue siendo texto cuando el
+        // comprobante tiene VARIOS medios (no se puede meter dos importes en una
+        // celda numérica), pero con UN solo medio ahora es número (antes salía
+        // string incluso en ese caso - único punto de B4-204 que seguía abierto).
+        // Esta columna es la que suma siempre, tenga uno o varios medios.
+        { header: 'Total pagado $', key: 'totalPagado', width: 16 },
 
         { header: 'CAE', key: 'cae', width: 18 },
         { header: 'Vto CAE', key: 'caeVto', width: 14 },
@@ -236,6 +271,7 @@ export async function crearExcelConciliacion(
 
     const COLUMNAS_MONEDA = [
         'venta', 'servicio', 'descuentoMonto', 'ajusteTransferencia', 'redondeo', 'totalComprobante',
+        'totalPagado',
     ];
 
     filas.forEach(r => {
@@ -340,7 +376,10 @@ export async function crearExcelConciliacion(
             venta: Number(r.venta) || 0,
             servicio: Number(r.servicio) || 0,
             descuentoMonto: Number(r.descuentoMonto) || 0,
-            descuentoPorcentaje: Number(r.descuentoPorcentaje) || 0,
+            // Corrección 21/09/2026 (pedido 2 veces por el cliente): número entero de
+            // porcentaje (50, 21), no fracción con formato %. r.descuentoPorcentaje sigue
+            // viniendo de SQL como fracción 0..1 (sin tocar esa query) - se multiplica acá.
+            descuentoPorcentaje: round2((Number(r.descuentoPorcentaje) || 0) * 100),
             ajusteTransferencia: Number(r.ajusteTransferencia) || 0,
             redondeo: Number(r.redondeo) || 0,
             totalComprobante: Number(r.totalComprobante) || 0,
@@ -374,8 +413,12 @@ export async function crearExcelConciliacion(
         if (r.fechaEntrega) fila.getCell('fechaEntrega').numFmt = 'dd/mm/yyyy';
         if (r.caeVto) fila.getCell('caeVto').numFmt = 'dd/mm/yyyy';
         fila.getCell('cae').numFmt = '@'; // texto: evita notación científica en los 14 dígitos del CAE.
-        fila.getCell('descuentoPorcentaje').numFmt = '0.00%';
+        fila.getCell('descuentoPorcentaje').numFmt = '0.00';
         COLUMNAS_MONEDA.forEach(key => { fila.getCell(key).numFmt = '#,##0.00'; }); // sin "$", pedido B4-204.
+        // Punto 1: "montosPago" es tipo mixto (número con 1 medio, texto con varios) - no
+        // puede ir en COLUMNAS_MONEDA (esa lista asume numérico siempre). Formato solo
+        // cuando el valor realmente quedó numérico.
+        if (typeof fila.getCell('montosPago').value === 'number') fila.getCell('montosPago').numFmt = '#,##0.00';
         // Fuera de COLUMNAS_MONEDA a propósito (§2 del handoff de apertura de IVA):
         // esa lista alimenta columnasSumar/escribirFilaTotal más abajo, y estas 5
         // columnas nunca deben sumarse en un total general que mezcle un Responsable
@@ -480,17 +523,26 @@ export async function crearExcelConciliacion(
         // sin migración. Solo catálogo; vacía en servicios, no catalogados y pseudolíneas.
         { header: 'Temporada', key: 'temporada', width: 16 },
         { header: 'Talle', key: 'talle', width: 16 },
+        // Punto 6: S/N para filtrar/contar sin leer el texto de "Talle". Solo tiene
+        // sentido para líneas de Producto (catálogo) - vacío en No catalogado/Servicio.
+        { header: 'Talle desglosado', key: 'talleDesglosado', width: 14 },
         { header: 'Cantidad', key: 'cantidad', width: 10 },
 
         { header: 'Precio de lista unit.', key: 'precioListaUnit', width: 16 },
-        { header: '% desc.', key: 'pctDesc', width: 10 },
+        { header: 'Desc. (%)', key: 'pctDesc', width: 10 },
         { header: 'Precio unit. neto', key: 'precioUnitNeto', width: 16 },
-        { header: 'Importe bruto', key: 'importeBruto', width: 14 },
+        // Punto 4 (21/09/2026): solo se renombran encabezados, ningún cálculo cambia.
+        // "Importe bruto" y "Importe neto" mezclaban dos ejes distintos (uno hablaba del
+        // descuento, el otro del IVA) y la resta entre columnas vecinas no cerraba, lo que
+        // iba a generar tickets de soporte apenas alguien armara una dinámica. Ahora la
+        // cadena se lee sola: "Importe s/ descuento" − "Importe descuento" = "Importe
+        // total", y "Neto gravado" + IVA = "Importe total".
+        { header: 'Importe s/ descuento', key: 'importeBruto', width: 16 },
         { header: 'Importe descuento', key: 'importeDesc', width: 16 },
-        { header: 'Importe neto', key: 'importeNeto', width: 14 },
+        { header: 'Neto gravado', key: 'importeNeto', width: 14 },
         // "Alíc. IVA" ahora es la tasa EFECTIVA (IVA/neto), no 21% fijo - corrección
         // tanda 1 punto 1: en Factura C da 0%, sale solo del prorrateo de vf.iva.
-        { header: 'Alíc. IVA', key: 'alicIva', width: 10 },
+        { header: 'Alíc. IVA (%)', key: 'alicIva', width: 10 },
         { header: 'IVA', key: 'iva', width: 14 },
         { header: 'Importe total', key: 'importeTotal', width: 14 },
         // B4-209 Fase 3: costo y margen por línea (§4.b del handoff - gateado por rol,
@@ -550,8 +602,8 @@ export async function crearExcelConciliacion(
                 ...f,
             });
             fila.getCell('fecha').numFmt = 'dd/mm/yyyy';
-            if (f.pctDesc != null) fila.getCell('pctDesc').numFmt = '0.00%';
-            fila.getCell('alicIva').numFmt = '0.00%';
+            if (f.pctDesc != null) fila.getCell('pctDesc').numFmt = '0.00';
+            fila.getCell('alicIva').numFmt = '0.00';
             if (puedeVerCosto && f.margenPct != null) fila.getCell('margenPct').numFmt = '0.00%';
             COLUMNAS_MONEDA_DETALLE.forEach(key => { fila.getCell(key).numFmt = '#,##0.00'; });
         });
@@ -637,6 +689,7 @@ export async function crearExcelConciliacion(
         { key: 'importeCobrado', width: 16 },
         { key: 'medioCobro', width: 20 },
         { key: 'fondo', width: 16 },
+        { key: 'empresaCobro', width: 22 },
         { key: 'estadoIngreso', width: 22 },
         { key: 'numeroOperacion', width: 16 },
         { key: 'estadoValor', width: 16 },
@@ -659,7 +712,7 @@ export async function crearExcelConciliacion(
         'Punto de venta', 'Tipo comprobante', 'N° comprobante', 'Fiscal', 'Facturante',
         'N° proceso', 'Condición de venta', 'Fecha comprobante', 'Total comprobante',
         'Fecha de vencimiento', 'Origen del vencimiento',
-        'Importe cobrado', 'Medio de cobro', 'Fondo',
+        'Importe cobrado', 'Medio de cobro', 'Fondo', 'Empresa del cobro',
         'Estado del ingreso', 'N° de operación', 'Estado del valor', 'Importe del valor',
         'Saldo pendiente', 'Días de atraso',
         'ID venta', 'Ref. interna',
@@ -691,6 +744,11 @@ export async function crearExcelConciliacion(
             importeCobrado: Number(f.importeCobrado) || 0,
             medioCobro: f.medioCobro ?? '',
             fondo: f.fondo ?? '',
+            // Punto 5: a qué EMPRESA entró la plata (metodos_pago.idEmpresa), distinto de
+            // "Facturante" (quién emitió el comprobante) - no siempre coinciden, ver las 48
+            // filas de Saldo a favor/Cancelación de saldo inicial (punto 7) donde Facturante
+            // va vacío pero acá sí hay dato.
+            empresaCobro: f.empresaCobro ?? '',
             estadoIngreso: f.estadoIngreso,
             numeroOperacion: f.numeroOperacion ?? '',
             estadoValor: f.estadoValor ?? '',
@@ -1158,6 +1216,15 @@ export async function crearExcelConciliacion(
     });
     agregarSubBloqueCobranzas('Cobranzas por fondo', porFondo);
 
+    // Punto 5 (21/09/2026): mismo criterio que los dos bloques de arriba, agrupado por
+    // metodos_pago.idEmpresa en vez de por fondo o medio de cobro.
+    const porEmpresa = new Map<string, number>();
+    filasIngresaron.forEach(f => {
+        const k = f.empresaCobro || '(sin dato)';
+        porEmpresa.set(k, (porEmpresa.get(k) ?? 0) + (Number(f.importeCobrado) || 0));
+    });
+    agregarSubBloqueCobranzas('Cobranzas por empresa', porEmpresa);
+
     // Cierre R3 (16/09/2026, punto 2): nombre anterior citaba la columna
     // ("Ingresó") y era la única de las tres filas del bloque sin alineación
     // seteada explícitamente - queda alineada a la izquierda como el resto.
@@ -1225,10 +1292,10 @@ function sumarPor(filas: any[], clave: (r: any) => string, campo: string): Map<s
 // "Efectivo" con 300. Preserva el orden de primera aparición (ya viene
 // alfabético por el ORDER BY mp.nombre de la query). Solo presentación: no
 // cambia qué pagos existen ni sus montos, no toca ningún total de la hoja.
-function agruparMediosDePago(metodosPago: string | null | undefined, montosPago: string | null | undefined): { metodosPago: string; montosPago: string } {
+function agruparMediosDePago(metodosPago: string | null | undefined, montosPago: string | null | undefined): { metodosPago: string; montosPago: number | string; totalPagado: number } {
     const metodos = metodosPago ? String(metodosPago).split(';') : [];
     const montos = montosPago ? String(montosPago).split(';') : [];
-    if (metodos.length === 0) return { metodosPago: '', montosPago: '' };
+    if (metodos.length === 0) return { metodosPago: '', montosPago: '', totalPagado: 0 };
 
     const totalesPorMetodo = new Map<string, number>();
     metodos.forEach((m, i) => {
@@ -1237,9 +1304,20 @@ function agruparMediosDePago(metodosPago: string | null | undefined, montosPago:
     });
 
     const metodosAgrupados = Array.from(totalesPorMetodo.keys());
+    const importes = metodosAgrupados.map(m => totalesPorMetodo.get(m)!);
+    const totalPagado = round2(importes.reduce((acc, v) => acc + v, 0));
+
+    // Punto 1: un solo medio -> número (antes salía texto siempre, era lo único
+    // de B4-204 que quedaba abierto). Varios medios -> se mantiene texto con la
+    // lista formateada, no hay forma de meter dos importes en una celda numérica.
+    const montosPagoSalida: number | string = importes.length === 1
+        ? importes[0]
+        : importes.map(v => v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })).join(' | ');
+
     return {
         metodosPago: metodosAgrupados.join(';'),
-        montosPago: metodosAgrupados.map(m => totalesPorMetodo.get(m)).join(';'),
+        montosPago: montosPagoSalida,
+        totalPagado,
     };
 }
 
@@ -1344,7 +1422,13 @@ function textoTalle(info: TalleInfo, formatoLargo: boolean): string {
     switch (info.tipo) {
         case 'unico': return formatoLargo ? info.talle : `${info.talle}:${info.cantidad}`;
         case 'desglosado': return info.grupos.map(g => `${g.talle}:${g.cantidad}`).join(', ');
-        case 'sin_desglose': return `${info.talle} (sin desglose)`;
+        // Punto 6 (21/09/2026): etiqueta explícita sobre por qué no se abre por talle -
+        // no es un límite del formato largo, es que la venta se cargó con la cantidad total
+        // y los talles como etiqueta, sin registrar cuántas unidades de cada uno. No se
+        // reparte la cantidad entre los talles (serían unidades inventadas en un informe
+        // contable) - eso no cambia, solo el texto. Ver columna "Talle desglosado" (S/N)
+        // para filtrar/contar sin tener que leer este texto.
+        case 'sin_desglose': return `${info.talle} (no se registró cuántas de cada talle)`;
         default: return '';
     }
 }
@@ -1429,7 +1513,16 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         const importeBruto = precioLista != null ? round2(cantidad * precioLista) : total;
         const importePostDesc = total - importeDescuento;
         const importeDesc = round2(importeBruto - importePostDesc);
-        const pctDesc = importeBruto !== 0 ? importeDesc / importeBruto : 0;
+        // Punto 3 (servicios sin precio base cargado) + criterio general: dividir por un
+        // importeBruto en 0 no es "0% de descuento", es "no hay base para calcular el
+        // porcentaje" - va vacío (null), no 0,00%. Antes esto quedaba en 0 siempre; con
+        // servicios ahora trayendo precioLista = sugerido, un sugerido 0/NULL hace
+        // importeBruto 0 y hay que distinguirlo (21/09/2026).
+        // Corrección 21/09/2026: número entero de porcentaje (50, 21), no fracción con
+        // formato % (pedido 2 veces por el cliente). Sigue null cuando no hay base de
+        // cálculo (importeBruto 0, ver comentario arriba) - null*100 sería 0, hay que
+        // guardar el null explícito.
+        const pctDesc = importeBruto !== 0 ? round2((importeDesc / importeBruto) * 100) : null;
         const precioUnitNeto = cantidad !== 0 ? importePostDesc / cantidad : 0;
         const importeTotal = calcularImporteTotal(importePostDesc);
 
@@ -1476,6 +1569,22 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         // marcadas "(sin desglose)" según el caso.
         const grillaTalle = l.grillaTalle ? String(l.grillaTalle).split('-') : null;
         const infoTalle = analizarTalle(l.talles, [l.t1, l.t2, l.t3, l.t4, l.t5, l.t6, l.t7, l.t8, l.t9, l.t10], cantidad, grillaTalle);
+
+        // Punto 12: SKU = código de barras cuando el talle de ESTA fila está resuelto
+        // (un solo talle posible, sin ambigüedad); si no, se mantiene el SKU compuesto
+        // de siempre (código de artículo + color) - decisión de Nahu, no se agrega
+        // columna aparte "Artículo-Color-Talle" (21/09/2026).
+        const codigoBarraPorTalle = new Map<string, string>();
+        if (l.codigosBarraPorTalle) {
+            for (const par of String(l.codigosBarraPorTalle).split('|')) {
+                const idx = par.lastIndexOf(':');
+                if (idx === -1) continue;
+                const talle = par.slice(0, idx);
+                const codigo = par.slice(idx + 1);
+                if (codigo) codigoBarraPorTalle.set(talle, codigo);
+            }
+        }
+        const skuCompuesto = `${l.codigoArticulo ?? ''}-${l.color ?? ''}`;
         const explota = formatoLargo && l.tipoItem === 'Producto' && infoTalle.tipo === 'desglosado';
 
         if (!explota) {
@@ -1485,11 +1594,23 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
             // las filas expandidas desde t1..t10). Las 30 compuestas sin desglose
             // quedan con SKU de 2 partes a propósito: no hay un talle único que
             // agregar sin inventarlo.
-            const skuTalle = formatoLargo && infoTalle.tipo === 'unico' ? `-${infoTalle.talle}` : '';
+            const skuUnico = infoTalle.tipo === 'unico' ? codigoBarraPorTalle.get(infoTalle.talle) : undefined;
+            // Punto 3: SKU de servicio = "SRV-<código>" (propuesto por el cliente, no
+            // colisiona con los SKU de catálogo que arrancan con números) - 21/09/2026.
+            const sku = l.tipoItem === 'Producto' ? (skuUnico ?? skuCompuesto)
+                : l.tipoItem === 'Servicio' ? `SRV-${l.codigoArticulo ?? ''}`
+                : '';
+            // Punto 6: solo tiene sentido para Producto - infoTalle.tipo 'vacio' (sin
+            // talles.g. No catalogado/Servicio ya vienen con l.talles NULL) también queda
+            // vacío, no forzado a 'S'.
+            const talleDesglosado = l.tipoItem === 'Producto'
+                ? (infoTalle.tipo === 'sin_desglose' ? 'N' : infoTalle.tipo === 'vacio' ? '' : 'S')
+                : '';
             filas.push({
                 ...filaBase,
-                sku: l.tipoItem === 'Producto' ? `${l.codigoArticulo ?? ''}-${l.color ?? ''}${skuTalle}` : '',
+                sku,
                 talle: textoTalle(infoTalle, formatoLargo),
+                talleDesglosado,
                 cantidad,
             });
             return;
@@ -1534,8 +1655,9 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
             const costoTotalFila = costosPorTalle ? costosPorTalle[i] : null;
             filas.push({
                 ...filaBase,
-                sku: `${l.codigoArticulo ?? ''}-${l.color ?? ''}-${g.talle}`,
+                sku: codigoBarraPorTalle.get(g.talle) ?? skuCompuesto,
                 talle: g.talle,
+                talleDesglosado: 'S',
                 cantidad: g.cantidad,
                 importeBruto: round2(importeBruto * proporcion),
                 importeDesc: round2(importeDesc * proporcion),
@@ -1549,7 +1671,7 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
     // --- §5: pseudolíneas (sin neto/iva todavía - ver prorrateo más abajo) ---
     const filaPseudo = (tipoItem: string, descripcion: string, importeTotal: number) => ({
         idLinea: null, tipoItem, sku: '', codArticulo: '', descripcion,
-        producto: '', tipo: '', genero: '', material: '', color: '', temporada: '', talle: '', cantidad: null,
+        producto: '', tipo: '', genero: '', material: '', color: '', temporada: '', talle: '', talleDesglosado: '', cantidad: null,
         precioListaUnit: null, pctDesc: null, precioUnitNeto: null, importeBruto: null, importeDesc: null,
         importeTotal,
         // Ajuste/Redondeo/Sin detalle/Diferencia no explicada: nunca tienen costo (§Fase3
@@ -1602,7 +1724,10 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         f.importeNeto = round2(f.importeTotal - f.iva);
         // Tasa EFECTIVA (no 21% fijo) - en Factura C da 0% sola, sin caso
         // especial (corrección tanda 1, punto 1 y §8 "qué no hacer").
-        f.alicIva = f.importeNeto !== 0 ? round2(f.iva / f.importeNeto) : 0;
+        // Corrección 21/09/2026: número entero de porcentaje, no fracción (pedido 2 veces
+        // por el cliente) - Factura C sigue dando 0 (no null: acá SÍ hay base de cálculo,
+        // un comprobante real con importeNeto propio, la tasa efectiva es 0%, no "sin dato").
+        f.alicIva = f.importeNeto !== 0 ? round2((f.iva / f.importeNeto) * 100) : 0;
     });
 
     // Numeración final y signo de NC (§6) - cantidad e importes, no precios
