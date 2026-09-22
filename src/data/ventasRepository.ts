@@ -691,6 +691,12 @@ class VentasRepository{
         venta.estado = row['estado'];
         venta.observacion = row['observacion'];
         venta.impaga = row['impaga'];
+        // Regularizacion correlatividad ARCA (sep-2026, ver migracion 20260922120000):
+        // viaja en el mismo SELECT v.* pero CompletarObjeto() arma el objeto Venta a mano
+        // campo por campo, no reenvia columnas nuevas de ventas por si solas - sin esta
+        // linea el flag quedaba en la fila cruda de MySQL pero nunca llegaba al front (bug
+        // real encontrado en testing: el chip no aparecia con la columna ya en 1 en la DB).
+        venta.regularizacionArca = !!row['regularizacionArca'];
         venta.entregado = parseFloat(row['entregado'] ?? 0);
         venta.deuda = parseFloat(row['deuda']) ?? 0;
         venta.ajuste = parseFloat(row['ajusteTransf']) ?? 0;

@@ -69,6 +69,11 @@ import { Color, TallesProducto } from "./Producto";
     observacion?:string;
     estado:string = "";
     impaga:number = 0;
+    // Factura backfilleada por regularizacion de correlatividad ARCA (sep-2026, ver
+    // migracion 20260922120000_add_regularizacionarca_ventas) - gatea en
+    // RegistrarMovimientoNotaCredito() que su NC no genere saldo a favor, y en el front
+    // pinta el aviso en listado-ventas.
+    regularizacionArca:boolean = false;
     entregado:number = 0;
     deuda:number = 0;
     ajuste:number = 0;
