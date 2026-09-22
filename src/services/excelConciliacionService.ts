@@ -237,20 +237,20 @@ export async function crearExcelConciliacion(
         '  Si aplicando esta f\u00f3rmula el n\u00famero cierra, la diferencia es\n' +
         '  la esperada. Si sigue sin cerrar, ah\u00ed s\u00ed hay algo para revisar.\n' +
         '\u2501'.repeat(64);
-    const filaNotaCobranzasVsFondos = sheetInforme.addRow(['', notaCobranzasVsFondos]);
-    sheetInforme.mergeCells(`B${filaNotaCobranzasVsFondos.number}:H${filaNotaCobranzasVsFondos.number}`);
-    filaNotaCobranzasVsFondos.getCell(2).font = { name: 'Consolas', size: 9 };
-    filaNotaCobranzasVsFondos.getCell(2).alignment = { wrapText: true, vertical: 'top' };
-    // Excel NO autoajusta la altura de fila para celdas combinadas con texto
-    // envuelto (a diferencia de una celda simple en una columna - ver el
-    // comentario de notasInforme más arriba, que sí depende de ese autoajuste).
-    // Como el merge B:H es mucho más ancho que cualquier línea de este bloque
-    // (cada línea ya viene cortada a mano, ver build del texto arriba), cada
-    // '\n' es exactamente una línea visual - no hay wrap adicional que contar.
-    // Alto fijo en puntos = cantidad de líneas * alto de línea aprox. para
-    // Consolas 9pt (12pt/línea), + margen chico.
-    const lineasNotaCobranzasVsFondos = notaCobranzasVsFondos.split('\n').length;
-    filaNotaCobranzasVsFondos.height = lineasNotaCobranzasVsFondos * 12 + 4;
+    // CORRECCIÓN: un único merge B:H con todo el texto en una sola celda
+    // wrapeada no funciona acá - Excel tiene un alto de fila máximo (409pt) y
+    // este bloque, con ~60 líneas, necesita bastante más que eso. El resultado
+    // era contenido invisible más allá del corte (no hay forma de "scrollear"
+    // dentro de una celda). Solución: una fila real por línea de texto, cada
+    // una mergeada B:H - así cada fila se autoajusta a su propia línea (alto
+    // por defecto) sin depender de ningún cálculo de altura total, y no hay
+    // techo de tamaño posible.
+    for (const lineaNota of notaCobranzasVsFondos.split('\n')) {
+        const filaLineaNota = sheetInforme.addRow(['', lineaNota]);
+        sheetInforme.mergeCells(`B${filaLineaNota.number}:H${filaLineaNota.number}`);
+        filaLineaNota.getCell(2).font = { name: 'Consolas', size: 9 };
+        filaLineaNota.getCell(2).alignment = { vertical: 'top' };
+    }
 
     // =========================
     // HOJA 2: VENTAS
