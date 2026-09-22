@@ -1451,13 +1451,29 @@ function textoTalle(info: TalleInfo, formatoLargo: boolean): string {
  * vfIvaRaw (IVA real informado a ARCA, NULL si no es fiscal). `lineasCrudas`
  * son las filas de ObtenerDetalleLineas para ese idVenta.
  */
+// Descripción exacta con la que HANDOFF-recargo-transferencia-10.md persiste el
+// recargo como línea real en ventas_productos (frontend: DESCRIPCION_ITEM_
+// RECARGO_TRANSFERENCIA en venta.constants.ts, ChazaGolfApp - no hay forma de
+// importarla entre los dos repos, se duplica el literal). Ventas ANTERIORES al
+// fix del 21/09/2026 tienen ajusteTransf=1 pero ninguna línea real en
+// ventas_productos - para esas, cabecera.ajusteTransferencia (calculado acá, ver
+// conciliacionRepository.ts) sigue siendo la única fuente. Ventas posteriores ya
+// traen la línea real dentro de lineasCrudas - sumarla de nuevo via
+// ajusteTransferencia duplicaría el recargo (línea real + pseudolínea, con una
+// "Diferencia no explicada" negativa tapando el excedente).
+const DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA = 'Recargo transferencia 10%';
+
 function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: boolean): {
     filas: any[]; convencion: Convencion; totalDetalle: number;
     ivaCabecera: number; ivaDetalle: number; tuvoPseudolineaDiferencia: boolean;
 } {
     const signo = Number(cabecera.idProcesoRaw) === IdProceso.NOTA_CREDITO ? -1 : 1;
     const totalRaw = signo * (Number(cabecera.totalComprobante) || 0);
-    const ajusteRaw = signo * (Number(cabecera.ajusteTransferencia) || 0);
+    // Solo se usa como fallback para ventas históricas sin línea real (ver
+    // DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA arriba) - se neutraliza más abajo en
+    // cuanto lineasCrudas ya trae la línea real.
+    const tieneLineaRealDeRecargo = lineasCrudas.some(l => l.descripcion === DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA);
+    const ajusteRaw = tieneLineaRealDeRecargo ? 0 : signo * (Number(cabecera.ajusteTransferencia) || 0);
     const redondeoRaw = Number(cabecera.redondeo) || 0;
     // IVA real de ARCA, SIN signo (se destranza como el resto) - 0 si no es
     // fiscal (vfIvaRaw NULL), consistente con el criterio ya usado en R1 tanda 2
@@ -1472,6 +1488,8 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         .filter(l => l.tipoItem === 'Servicio')
         .reduce((acc, l) => acc + (Number(l.total) || 0), 0);
     const sumaDesc = lineasCrudas.reduce((acc, l) => acc + (Number(l.importeDescuento) || 0), 0);
+    // Cuando ya hay línea real, sumaProductos ya la incluye - ajusteRaw está en 0
+    // acá arriba, así que no hace falta ninguna rama extra.
     const base = (sumaProductos + sumaServicios) - sumaDesc + ajusteRaw + redondeoRaw;
 
     let convencion: Convencion;
