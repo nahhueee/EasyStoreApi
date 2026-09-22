@@ -142,7 +142,10 @@ class ProductosRepository{
                 let consultaProducto = await ObtenerQuery({id: resultado.idProducto},false);
                 const rowsProducto = await connection.query(consultaProducto);
 
-                if (Array.isArray(rowsProducto)) {
+                // Si el codigo pertenece a un producto dado de baja, ObtenerQuery no devuelve
+                // filas (filtra fechaBaja IS NULL) y antes esto rompia con un 500 al intentar
+                // leer row['id'] de undefined. Lo tratamos igual que "no encontrado".
+                if (Array.isArray(rowsProducto) && rowsProducto[0]?.[0]) {
                     let resultado:Producto = new Producto();
 
                     const row = rowsProducto[0][0];
@@ -499,6 +502,12 @@ class ProductosRepository{
         } catch (error:any) {
             //Si ocurre un error volvemos todo para atras
             await connection.rollback();
+
+            //Si choco contra el UNIQUE de codigo_barra, devolvemos un mensaje entendible
+            //en vez del error crudo de MySQL (ver MensajeSiCodigoBarraDuplicado mas abajo).
+            const mensajeDuplicado = await MensajeSiCodigoBarraDuplicado(connection, error);
+            if (mensajeDuplicado) return mensajeDuplicado;
+
             throw error;
         } finally{
             connection.release();
@@ -615,6 +624,10 @@ class ProductosRepository{
         } catch (error:any) {
             //Si ocurre un error volvemos todo para atras
             await connection.rollback();
+
+            const mensajeDuplicado = await MensajeSiCodigoBarraDuplicado(connection, error);
+            if (mensajeDuplicado) return mensajeDuplicado;
+
             throw error;
         } finally{
             connection.release();
@@ -623,16 +636,33 @@ class ProductosRepository{
 
    async Eliminar(id:string): Promise<string>{
         const connection = await db.getConnection();
-        
+
         try {
+            await connection.beginTransaction();
+
             let consulta = " UPDATE productos " +
                            " SET fechaBaja = ? " +
                            " WHERE id = ?";
 
             await connection.query(consulta, [new Date(), id]);
+
+            // Liberamos el codigo_barra de los talles del producto dado de baja:
+            // GenerarCodigo() es deterministico (empresa+codigo+talle+color), asi que
+            // si mas adelante se vuelve a cargar el mismo modelo/color/talle, el codigo
+            // generado va a coincidir con el que quedo en este producto de baja. Sin
+            // liberarlo, el UNIQUE de talles_producto.codigo_barra rechazaria el alta
+            // nueva. La trazabilidad de ventas no depende del codigo_barra (usa
+            // idProducto/idLineaTalle), asi que no se pierde nada ahi.
+            await connection.query(
+                " UPDATE talles_producto SET codigo_barra = NULL WHERE idProducto = ? ",
+                [id]
+            );
+
+            await connection.commit();
             return "OK";
 
         } catch (error:any) {
+            await connection.rollback();
             throw error;
         } finally{
             connection.release();
@@ -1138,6 +1168,35 @@ async function ValidarExistencia(connection, data:any, modificando:boolean):Prom
         
     } catch (error) {
         throw error; 
+    }
+}
+
+// Traduce un ER_DUP_ENTRY del UNIQUE de talles_producto.codigo_barra a un mensaje
+// legible, indicando con que articulo choca. Devuelve null si el error no es este caso
+// (para que el catch que llama lo siga tratando como error real y lo relance).
+async function MensajeSiCodigoBarraDuplicado(connection, error:any): Promise<string|null> {
+    if (error?.code !== 'ER_DUP_ENTRY') return null;
+
+    const match = /Duplicate entry '([^']+)'/.exec(error.sqlMessage ?? error.message ?? '');
+    const codigoChocado = match?.[1];
+    if (!codigoChocado) return null;
+
+    try {
+        const rows = await connection.query(
+            `SELECT p.codigo, p.nombre, tp.talle
+             FROM talles_producto tp
+             JOIN productos p ON p.id = tp.idProducto
+             WHERE tp.codigo_barra = ?
+             LIMIT 1`,
+            [codigoChocado]
+        );
+        const choque = Array.isArray(rows[0]) ? rows[0][0] : null;
+
+        return choque
+            ? `Ya existe un artículo con el código de barra ${codigoChocado}: ${choque.codigo} - ${choque.nombre} (talle ${choque.talle}).`
+            : `Ya existe un artículo con el código de barra ${codigoChocado}.`;
+    } catch {
+        return `Ya existe un artículo con el código de barra ${codigoChocado}.`;
     }
 }
 
