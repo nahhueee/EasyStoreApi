@@ -241,6 +241,16 @@ export async function crearExcelConciliacion(
     sheetInforme.mergeCells(`B${filaNotaCobranzasVsFondos.number}:H${filaNotaCobranzasVsFondos.number}`);
     filaNotaCobranzasVsFondos.getCell(2).font = { name: 'Consolas', size: 9 };
     filaNotaCobranzasVsFondos.getCell(2).alignment = { wrapText: true, vertical: 'top' };
+    // Excel NO autoajusta la altura de fila para celdas combinadas con texto
+    // envuelto (a diferencia de una celda simple en una columna - ver el
+    // comentario de notasInforme más arriba, que sí depende de ese autoajuste).
+    // Como el merge B:H es mucho más ancho que cualquier línea de este bloque
+    // (cada línea ya viene cortada a mano, ver build del texto arriba), cada
+    // '\n' es exactamente una línea visual - no hay wrap adicional que contar.
+    // Alto fijo en puntos = cantidad de líneas * alto de línea aprox. para
+    // Consolas 9pt (12pt/línea), + margen chico.
+    const lineasNotaCobranzasVsFondos = notaCobranzasVsFondos.split('\n').length;
+    filaNotaCobranzasVsFondos.height = lineasNotaCobranzasVsFondos * 12 + 4;
 
     // =========================
     // HOJA 2: VENTAS
