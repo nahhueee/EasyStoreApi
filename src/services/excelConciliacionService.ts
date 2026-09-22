@@ -111,22 +111,6 @@ export async function crearExcelConciliacion(
         'Medios de pago (resumen): muestra los medios agrupados de cada comprobante. El detalle de cada cobro, con su fecha e importe, está en la hoja Cobranzas.',
         // Corrección presentación 15/09/2026, punto 5 (cierra B4-218).
         'Criterio de signos: las notas de crédito y las aplicaciones de saldo a favor se muestran en negativo, porque restan del total del período.',
-        // HANDOFF-apertura-iva-R1.md §7: nota obligatoria - sin esto, quien cruce la
-        // apertura de un comprobante de facturante monotributista contra su Total va
-        // a pensar que falta plata (la suma de la apertura no da el Total ahí, a propósito).
-        'Apertura de IVA (hoja "Ventas", últimas columnas): se toma del comprobante emitido. El sistema emite hoy una sola alícuota por comprobante, por lo que las columnas de 10,5% figuran en cero. En los comprobantes de facturantes monotributistas las columnas de apertura van vacías, porque no corresponde discriminar IVA: en esas filas la suma de la apertura no coincide con el Total. Los subtotales de IVA son por facturante (hoja Totales), ya que cada uno declara bajo su propio CUIT - nunca se muestra un total general de estas columnas.',
-        // Punto 12.a/12.d (21/09/2026): dos notas que pide explícitamente el handoff sobre
-        // el SKU = código de barras. No se agregó la columna "Artículo-Color-Talle" (12.c) -
-        // decisión de Nahu -, así que la nota se ajustó: la desambiguación de las 225
-        // combinaciones queda en Cód. artículo + Color + Talle (columnas ya existentes en el
-        // detalle), no en una columna aparte.
-        'Hoja "Detalle valorizado" — SKU repetido en distinto color: el código de barras se genera por modelo y talle, sin el color, así que hay 225 combinaciones (14 modelos) donde dos filas de colores distintos muestran el mismo SKU. No se inventa un desambiguador - para diferenciarlas usá Cód. artículo + Color + Talle (columnas de esta misma hoja). Se corrige aparte, en el arreglo de códigos de barra duplicados; cuando eso se aplique, este informe mejora solo.',
-        'Hoja "Detalle valorizado" — SKU no queda fijo: a diferencia del precio o el costo, el código de barras se resuelve en vivo contra el maestro de talles del producto. Si el código de un talle cambia más adelante, un informe reexportado de un período viejo va a mostrar el código nuevo - es un identificador de la variante, no un importe histórico, y es el comportamiento esperado.',
-        // Punto 4, "De paso" (21/09/2026): un Desc. (%) negativo es un RECARGO (se vendió
-        // por encima del precio de lista) - correcto, no se "arregla" con ABS(). Sin esta
-        // nota, el primero que vea un negativo en una tabla dinámica lo va a reportar como
-        // error de signo.
-        'Hoja "Detalle valorizado" — Desc. (%) negativo: significa que la línea se vendió por encima del precio de lista (un recargo, no un descuento). Es correcto tal como sale, no es un error de signo.',
         // B4-209 Fase 3: nota pedida explícitamente en el handoff (§Fase 3, último punto).
         // Solo aparece cuando el usuario tiene permiso de ver costo (las columnas ni
         // siquiera existen en el archivo si no lo tiene - ver puedeVerCosto).
@@ -139,18 +123,14 @@ export async function crearExcelConciliacion(
         // como bug cuando son 4 diferencias de criterio esperadas. \n dentro
         // del string + wrapText (ya seteado en el forEach de abajo) - Excel
         // respeta el salto de línea en una celda wrapeada.
-        // Corrección punto 9 (21/09/2026): el cliente la copió y preguntó "Esto que
-        // sería?" - porque vive en la lista de notas generales de "Informe" y dice
-        // "esta hoja" sin decir cuál, y el que la lee está parado en Informe, no en
-        // Cobranzas. Retitulada con la hoja en el nombre, "esta hoja" reemplazado
-        // por "la hoja Cobranzas" en todo el texto, y agregada una primera línea que
-        // dice para qué sirve la nota (no solo el mecanismo).
-        'Hoja Cobranzas — cómo cruzar el total contra caja y banco: esta nota se usa cuando el total cobrado del informe no coincide con lo que muestra el módulo de Fondos para el mismo período. Las diferencias de abajo son esperadas y explican la brecha.\n' +
-        'El total de "Ingresó" en la hoja Cobranzas no coincide directamente con los ingresos por ventas del módulo de Fondos, porque hay diferencias de criterio, todas esperadas.\n' +
-        '• Los cobros que quedaron como saldo a favor del cliente entran al banco igual, pero en Fondos se registran aparte porque no cancelan cuenta corriente.\n' +
-        '• Las retenciones sufridas están incluidas en el importe cobrado, y en Fondos van a su propio fondo.\n' +
-        '• Los recibos anulados no figuran en la hoja Cobranzas, pero su ingreso original sigue registrado en Fondos junto con su reversión.\n' +
-        '• Los cobros con tarjeta o cheque se cuentan en la hoja Cobranzas en la fecha del cobro; en Fondos entran al banco recién el día que se acreditan.',
+        // Corrección punto 10 (21/09/2026): la nota original (una sola oración +
+        // 4 viñetas cortas) no alcanzaba para que el cliente entendiera POR QUÉ
+        // pasa esto, solo listaba los casos. Se saca de acá (lista de notas cortas
+        // en formato Nota/texto) y se arma como bloque aparte, al pie de la hoja
+        // Informe (después de escribirse todas las notas de esta lista - ver más
+        // abajo) - fuente monoespaciada, sin la etiqueta "Nota" en negrita, para que
+        // el cuadro ASCII se lea alineado como una explicación aparte, no como una
+        // nota más entre las demás.
         // Punto 7 (21/09/2026): el cliente vio 48 filas de la hoja Cobranzas con las
         // columnas del comprobante en blanco y preguntó si eran cobros no aplicados a
         // una factura - tenía razón exactamente (26 Saldo a favor + 22 Cancelación de
@@ -177,6 +157,90 @@ export async function crearExcelConciliacion(
         // el visor autoajusta - mismo criterio que ya usan sin problema el
         // resto de las notas de esta hoja.
     });
+
+    // Bloque aparte (corrección punto 10, 21/09/2026): reemplaza a la nota
+    // "Hoja Cobranzas — cómo cruzar el total contra caja y banco" que vivía en
+    // notasInforme de arriba (formato Nota/texto en negrita+cursiva, una fila
+    // por nota). El cliente la entendía a medias - la nueva versión explica el
+    // PORQUÉ (dos fechas distintas para el mismo hecho: cuándo cobró vs. cuándo
+    // el banco acreditó) antes de listar los 4 casos, y agrega una fórmula de
+    // verificación al pie. Va al final de la hoja Informe, después de todas las
+    // notas cortas - es deliberadamente MÁS grande y con otro tratamiento
+    // visual (fuente monoespaciada, sin la etiqueta "Nota" en negrita) para que
+    // se lea como una explicación aparte, no como una nota más de la lista.
+    //
+    // Merge B:H + fuente Consolas: el cuadro ASCII depende de que cada columna
+    // de caracteres se alinee - con la fuente proporcional del resto de la hoja
+    // (Calibri) las líneas no calzan. wrapText sigue en true (necesario para que
+    // Excel respete los '\n', igual que en notasInforme) pero el merge deja
+    // ancho de sobra para que ninguna línea individual vuelva a wrapear sola.
+    sheetInforme.addRow([]);
+    const notaCobranzasVsFondos =
+        '\u2501'.repeat(64) + '\n' +
+        'COBRANZAS vs FONDOS \u2014 por qu\u00e9 pueden mostrar totales distintos\n' +
+        '\u2501'.repeat(64) + '\n' +
+        '\n' +
+        'Cobranzas y Fondos responden preguntas distintas, a prop\u00f3sito:\n' +
+        '\n' +
+        '  \u2022 Cobranzas responde: "\u00bfqu\u00e9 cobr\u00e9, cu\u00e1ndo, y de qui\u00e9n?"\n' +
+        '    \u2192 Es la vista comercial. Usa la fecha en que el cliente pag\u00f3\n' +
+        '      (entreg\u00f3 el cheque, pas\u00f3 la tarjeta, transfiri\u00f3).\n' +
+        '\n' +
+        '  \u2022 Fondos responde: "\u00bfqu\u00e9 plata tengo disponible, y cu\u00e1ndo entr\u00f3\n' +
+        '    al banco?"\n' +
+        '    \u2192 Es la vista de tesorer\u00eda. Usa la fecha en que esa plata est\u00e1\n' +
+        '      efectivamente acreditada y disponible.\n' +
+        '\n' +
+        'Son dos fechas distintas para el mismo hecho, no un error de carga.\n' +
+        'En un per\u00edodo con solo cobros en efectivo (donde ambas fechas\n' +
+        'coinciden), los dos totales cierran exactos.\n' +
+        '\n' +
+        'Cuando el total NO coincide, casi siempre es por una de estas 4\n' +
+        'situaciones \u2014 todas esperadas:\n' +
+        '\n' +
+        '\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n' +
+        '\u2502 Situaci\u00f3n              \u2502 Qu\u00e9 pasa                       \u2502 Aparece en \u2502\n' +
+        '\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n' +
+        '\u2502 Cobro con tarjeta o    \u2502 Cobranzas lo cuenta el d\u00eda que \u2502 Cobranzas: \u2502\n' +
+        '\u2502 cheque                 \u2502 el cliente pag\u00f3. Fondos lo     \u2502 este mes.  \u2502\n' +
+        '\u2502                        \u2502 cuenta el d\u00eda que el banco lo  \u2502 Fondos:    \u2502\n' +
+        '\u2502                        \u2502 acredita (la diferencia m\u00e1s    \u2502 mes sgte.  \u2502\n' +
+        '\u2502                        \u2502 com\u00fan).                        \u2502            \u2502\n' +
+        '\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n' +
+        '\u2502 Saldo a favor del      \u2502 Entra al banco (es plata       \u2502 Cobranzas: \u2502\n' +
+        '\u2502 cliente                \u2502 real), pero no cancela una     \u2502 suma.      \u2502\n' +
+        '\u2502                        \u2502 cuenta corriente, as\u00ed que      \u2502 Fondos: lo \u2502\n' +
+        '\u2502                        \u2502 Fondos lo registra aparte.     \u2502 separa     \u2502\n' +
+        '\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n' +
+        '\u2502 Retenci\u00f3n sufrida      \u2502 Est\u00e1 incluida en lo cobrado,   \u2502 Est\u00e1 en    \u2502\n' +
+        '\u2502                        \u2502 pero en Fondos se registra en  \u2502 ambos, con \u2502\n' +
+        '\u2502                        \u2502 un fondo propio (no es plata   \u2502 distinta   \u2502\n' +
+        '\u2502                        \u2502 bancarizada).                  \u2502 etiqueta   \u2502\n' +
+        '\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n' +
+        '\u2502 Recibo anulado en el   \u2502 No suma al total de Cobranzas. \u2502 Cobranzas: \u2502\n' +
+        '\u2502 per\u00edodo                \u2502 Est\u00e1 detallado aparte, en      \u2502 en su      \u2502\n' +
+        '\u2502                        \u2502 "Recibos dados de baja en el   \u2502 propia     \u2502\n' +
+        '\u2502                        \u2502 per\u00edodo" (con motivo). Fondos  \u2502 secci\u00f3n.   \u2502\n' +
+        '\u2502                        \u2502 deja el ingreso original MAS   \u2502 Fondos:    \u2502\n' +
+        '\u2502                        \u2502 la reversi\u00f3n (historial        \u2502 quedan     \u2502\n' +
+        '\u2502                        \u2502 completo).                     \u2502 ambos      \u2502\n' +
+        '\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n' +
+        '\n' +
+        'C\u00f3mo verificar si la diferencia es "sana":\n' +
+        '\n' +
+        '  Cobranzas (sin tarjetas/cheques)\n' +
+        '    = Fondos [ventas + cobros de cuenta corriente]\n' +
+        '    + Saldos a favor del cliente\n' +
+        '    + Retenciones sufridas\n' +
+        '    \u2212 Recibos anulados con cobro en el per\u00edodo\n' +
+        '\n' +
+        '  Si aplicando esta f\u00f3rmula el n\u00famero cierra, la diferencia es\n' +
+        '  la esperada. Si sigue sin cerrar, ah\u00ed s\u00ed hay algo para revisar.\n' +
+        '\u2501'.repeat(64);
+    const filaNotaCobranzasVsFondos = sheetInforme.addRow(['', notaCobranzasVsFondos]);
+    sheetInforme.mergeCells(`B${filaNotaCobranzasVsFondos.number}:H${filaNotaCobranzasVsFondos.number}`);
+    filaNotaCobranzasVsFondos.getCell(2).font = { name: 'Consolas', size: 9 };
+    filaNotaCobranzasVsFondos.getCell(2).alignment = { wrapText: true, vertical: 'top' };
 
     // =========================
     // HOJA 2: VENTAS
