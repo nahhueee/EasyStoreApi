@@ -1149,7 +1149,10 @@ class VentasRepository{
     // recibo, ni descuento de stock (eso solo pasa al facturarse/finalizar una
     // Cotización) - por eso alcanza con marcar fechaBaja. El cálculo de
     // "disponible" de Nota de Empaque (productosRepository.ObtenerStockDisponiblePorProducto)
-    // ya filtra por fechaBaja IS NULL, así que un Pedido dado de baja deja de
+    // filtra por estado = 'Aprobado' AND fechaBaja IS NULL (corregido sep-2026 - antes
+    // NO filtraba nada de esto, así que un Pedido dado de baja o ya facturado seguía
+    // reservando stock para siempre y "disponible" daba negativo aunque el stock físico
+    // estuviera bien, ver caso producto 827), así que un Pedido dado de baja deja de
     // reservar stock automáticamente, sin tocar nada más.
     async DarBajaVenta(idVenta: number, motivo: string): Promise<void> {
         const motivoLimpio = (motivo || '').trim();

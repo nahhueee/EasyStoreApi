@@ -3,6 +3,8 @@ import db from '../db';
 import { Color, ExcelProducto, Genero, Material, Producto, Relacionado, SubtipoProducto, TablaProducto, TallesProducto, Temporada, TipoProducto } from '../models/Producto';
 import { ProductoPresupuesto } from '../models/ProductoPresupuesto';
 import { MiscRepo } from './miscRepository';
+import { AppError } from '../logger/AppError';
+import { CodigoError } from '../logger/CodigosError';
 
 class ProductosRepository{
 
@@ -369,11 +371,18 @@ class ProductosRepository{
         const tallesProducto = await this.ObtenerTallesProducto(idProducto);
 
         // Traer todas las ventas del producto
+        // Solo Pedidos todavía vigentes (estado "Aprobado", sin dar de baja): uno ya
+        // facturado (estado "Facturado", ver RELACION_CIERRE en ventaEstados.ts) ya
+        // descontó stock real vía ActualizarInventario al cerrarse - si se lo sigue
+        // sumando acá esas unidades se restan dos veces (una real, otra "fantasma" del
+        // Pedido que lo originó) y "disponible" da negativo aunque el stock físico esté
+        // bien. Mismo motivo para fechaBaja: un Pedido dado de baja deja de reservar.
+        // Bug real (sep-2026, ver producto 827 / PLL LUCRECIA).
         const [ventas] = await db.query(
             `SELECT t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 
             FROM ventas_productos vp
             INNER JOIN ventas v ON vp.idVenta = v.id
-            WHERE vp.idProducto = ? AND v.idProceso = 6`,
+            WHERE vp.idProducto = ? AND v.idProceso = 6 AND v.estado = 'Aprobado' AND v.fechaBaja IS NULL`,
             [idProducto]
         );
 
@@ -839,8 +848,32 @@ class ProductosRepository{
                 if (index === -1) continue;
 
                 const campoTx = `t${index + 1}`;
-                const cantDescontar = detalle[campoTx];
-                
+                const cantDescontar = Number(detalle[campoTx]) || 0;
+
+                if (operacion === "-" && cantDescontar > 0) {
+                    // Bloquea la fila y valida stock real antes de restar (mismo criterio de
+                    // lock que stockRepository.AjustarStock). Sin esto, el UPDATE de abajo
+                    // restaba a ciegas: dos ventas concurrentes sobre el mismo talle, o
+                    // facturar un Pedido que reservó más de lo que hoy queda disponible
+                    // (ver ObtenerStockDisponiblePorProducto), dejaban `cantidad` en
+                    // negativo sin que nada lo impidiera - el único freno era client-side
+                    // (ActualizarCantidad en addmod-ventas.component.ts), que no corre para
+                    // el escaneo por código de barras ni contempla que el stock cambió
+                    // entre que se armó la venta y se guardó. Caso real: producto 827 (sep-2026).
+                    const [rowsStock]: any = await connection.query(
+                        `SELECT cantidad FROM talles_producto WHERE talle = ? AND idProducto = ? FOR UPDATE`,
+                        [talle, detalle.idProducto]
+                    );
+                    const cantidadActual = Number(rowsStock[0]?.cantidad ?? 0);
+                    if (cantidadActual < cantDescontar) {
+                        throw new AppError(
+                            CodigoError.VALIDACION,
+                            `No hay stock suficiente en el talle ${talle} (disponible: ${cantidadActual}, solicitado: ${cantDescontar}).`,
+                            400
+                        );
+                    }
+                }
+
                 const consulta = `UPDATE talles_producto SET cantidad = cantidad ${operacion} ? 
                                 WHERE talle = ? AND idProducto = ?`;
 
