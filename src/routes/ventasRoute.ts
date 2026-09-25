@@ -1,4 +1,5 @@
 import {VentasRepo} from '../data/ventasRepository';
+import {ProductosRepo} from '../data/productosRepository';
 import {FacturacionServ} from '../services/facturacionService';
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
@@ -139,6 +140,20 @@ router.put('/aprobar', async (req:Request, res:Response) => {
 router.get('/obtenerQR/:id', async (req:Request, res:Response, next) => {
     try{ 
         res.json(await FacturacionServ.ObtenerQRFactura(req.params.id));
+    } catch(error){
+        next(error);
+    }
+});
+
+// Chequeo preventivo de stock (ProductosRepo.ValidarStockVenta), llamado desde
+// ConfirmarFacturacion() en el front ANTES de abrir el modal de facturar - o sea,
+// antes de pedir el CAE a AFIP. No reemplaza el chequeo con lock que sigue estando
+// en Agregar/ActualizarInventario (esa es la garantia real contra condiciones de
+// carrera); esto corta el caso comun ANTES del punto de no retorno fiscal.
+router.post('/validar-stock', async (req:Request, res:Response, next) => {
+    try{
+        await ProductosRepo.ValidarStockVenta(req.body.productos);
+        res.json({ ok: true });
     } catch(error){
         next(error);
     }

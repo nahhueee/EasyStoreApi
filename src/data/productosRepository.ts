@@ -5,6 +5,8 @@ import { ProductoPresupuesto } from '../models/ProductoPresupuesto';
 import { MiscRepo } from './miscRepository';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
+import { TipoItemVenta } from '../models/ventaEstados';
+import { logger } from '../logger/logger';
 
 class ProductosRepository{
 
@@ -473,8 +475,6 @@ class ProductosRepository{
                                 idGenero,idTemporada,idMaterial,idColor,moldeleria,topeDescuento)
                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
-                              console.log(producto)
-
             const parametros = [producto.codigo!.toUpperCase(),
                                 producto.nombre!.toUpperCase(),
                                 producto.empresa,
@@ -866,10 +866,18 @@ class ProductosRepository{
                     );
                     const cantidadActual = Number(rowsStock[0]?.cantidad ?? 0);
                     if (cantidadActual < cantDescontar) {
-                        throw new AppError(
-                            CodigoError.VALIDACION,
-                            `No hay stock suficiente en el talle ${talle} (disponible: ${cantidadActual}, solicitado: ${cantDescontar}).`,
-                            400
+                        // TEMPORAL (sep-2026, hasta reingenieria del metodo de facturacion con
+                        // Opus - sacar este bloque y volver al throw de abajo apenas este listo):
+                        // degradado de bloqueante a warning. Motivo: este chequeo vive DESPUES de
+                        // pedir el CAE a AFIP (ver ValidarStockVenta en el pre-chequeo, que corre
+                        // ANTES de facturar y SI sigue bloqueando) - si frena aca, el comprobante
+                        // fiscal ya esta emitido y la venta se pierde igual (caso real: Factura A
+                        // PtoVenta 12 Nro 80, sep-2026). Mientras tanto se deja pasar el UPDATE
+                        // igual (puede dejar `cantidad` en negativo, mismo riesgo que motivo
+                        // agregar este chequeo originalmente - producto 827) pero se loguea para
+                        // no perder rastro, en vez de fallar en silencio.
+                        logger.warn(
+                            `[stock negativo permitido temporalmente] idProducto=${detalle.idProducto} talle=${talle} disponible=${cantidadActual} solicitado=${cantDescontar}`
                         );
                     }
                 }
@@ -882,6 +890,56 @@ class ProductosRepository{
             } 
         } catch (error) {
             throw error; 
+        }
+    }
+
+    // Chequeo preventivo de stock, de solo lectura (sin UPDATE, sin FOR UPDATE) - pensado
+    // para llamarse desde el front ANTES de facturar (ConfirmarFacturacion en
+    // addmod-ventas), no reemplaza el chequeo con lock de ActualizarInventario. Ese
+    // sigue siendo la unica garantia real contra una condicion de carrera entre este
+    // chequeo y el guardado final (dos cajas vendiendo el mismo talle a la vez); esto
+    // es una red adicional para el caso comun, que hoy se detecta recien en Agregar,
+    // DESPUES de haber pedido el CAE a AFIP - accion irreversible. Caso real que motivo
+    // esto: Factura A PtoVenta 12 Nro 80 (sep-2026), CAE emitido en ARCA y venta nunca
+    // persistida porque el talle no alcanzaba.
+    async ValidarStockVenta(productos: any[]): Promise<void> {
+        if (!Array.isArray(productos) || productos.length === 0) return;
+
+        const connection = await db.getConnection();
+        try {
+            for (const detalle of productos) {
+                // Mismo gate que ActualizarInventario: un item no catalogado
+                // (tipoItem = PRESUPUESTO) no tiene talles ni linea de talle.
+                if (detalle.tipoItem === TipoItemVenta.PRESUPUESTO) continue;
+                if (!detalle.tallesSeleccionados || !detalle.idLineaTalle) continue;
+
+                const seleccionados = detalle.tallesSeleccionados.split(",").map((t: string) => t.trim());
+                const lineaTalle = await MiscRepo.ObtenerLineaDeTalle(detalle.idLineaTalle);
+
+                for (const talle of seleccionados) {
+                    const index = lineaTalle.talles.indexOf(talle);
+                    if (index === -1) continue;
+
+                    const campoTx = `t${index + 1}`;
+                    const cantRequerida = Number(detalle[campoTx]) || 0;
+                    if (cantRequerida <= 0) continue;
+
+                    const [rowsStock]: any = await connection.query(
+                        `SELECT cantidad FROM talles_producto WHERE talle = ? AND idProducto = ?`,
+                        [talle, detalle.idProducto]
+                    );
+                    const cantidadActual = Number(rowsStock[0]?.cantidad ?? 0);
+                    if (cantidadActual < cantRequerida) {
+                        throw new AppError(
+                            CodigoError.VALIDACION,
+                            `No hay stock suficiente en el talle ${talle} (disponible: ${cantidadActual}, solicitado: ${cantRequerida}).`,
+                            400
+                        );
+                    }
+                }
+            }
+        } finally {
+            connection.release();
         }
     }
 

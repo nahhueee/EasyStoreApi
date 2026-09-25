@@ -146,6 +146,7 @@ class FacturacionService{
                 datosFacturacion.puntoVta!,
                 objFactura.tipoComprobante!
             );
+            console.log(`Comprobante aprobado: CAE ${detalle.CAE}, Vto ${detalle.CAEFchVto}, Nro ${lastVoucher.CbteNro}`);
 
             return {
                 estado: 'Aprobado',

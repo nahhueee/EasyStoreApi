@@ -273,7 +273,6 @@ class CuentasRepository{
             `;
             
             const [rows]: any = await connection.query(consulta, [idRecibo]);
-            console.log(`Recibo #${idRecibo} obtenido con ${rows.length} filas de detalle.`);
             const recibo = {
                 id: rows[0].id,
                 cliente: rows[0].cliente,

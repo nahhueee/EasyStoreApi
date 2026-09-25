@@ -97,8 +97,6 @@ router.post('/ventas-excel', async (req, res) => {
         const res3 = await VentasRepo.ObtenerReporteDetalles(req.body);
         const res4 = await VentasRepo.ObtenerReporteServicios(req.body);
 
-        //console.log(res1, res2, res3, res4)
-        //Generar Excel usando el servicio
         const buffer = await crearExcelVentas(res1, res2, res3, res4);
 
         // Configurar headers para descarga
