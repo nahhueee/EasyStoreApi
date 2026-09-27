@@ -2,6 +2,9 @@ import express from 'express';
 import morgan from 'morgan';
 import cors from 'cors';
 import config from './conf/app.config';
+import { logger } from './logger/logger';
+import { CodigoError } from './logger/CodigosError';
+import { ParametrosRepo } from './data/parametrosRepository';
 const http = require('http');
 const path = require('path');
 
@@ -43,6 +46,41 @@ if(config.esServer){
 server.listen(app.get('port'), host, () => {
     console.log('server ' + process.env.NODE_ENV + ' en puerto ' + app.get('port'));
 });
+
+//#region Log de arranque: entorno y estado de la facturacion (F0.3 - HANDOFF blindaje facturacion)
+// Informativo: el bloqueo real de la facturacion pasa por VerificarEntorno() en
+// facturacionService.ts en cada llamada, esto solo lo deja explicito en el log al arrancar.
+(async () => {
+    const nodeEnv = process.env.NODE_ENV;
+    let entornoDb: string | null = null;
+    let errorConsulta: string | undefined;
+
+    try {
+        entornoDb = await ParametrosRepo.ObtenerParametros('entorno');
+    } catch (err: any) {
+        errorConsulta = err?.message;
+    }
+
+    const entornoProduccionOk = config.produccion !== true || nodeEnv === 'prod';
+    const entornoDbOk = !!entornoDb && entornoDb === nodeEnv;
+    const facturacionHabilitada = entornoProduccionOk && entornoDbOk && !errorConsulta;
+
+    const datosArranque = {
+        type: 'ARRANQUE',
+        nodeEnv,
+        produccion: config.produccion,
+        entornoDb: entornoDb ?? null,
+        database: config.db?.database,
+        facturacion: facturacionHabilitada ? 'HABILITADA' : 'BLOQUEADA'
+    };
+
+    if (facturacionHabilitada) {
+        logger.info(datosArranque);
+    } else {
+        logger.error({ ...datosArranque, code: CodigoError.ENTORNO_INVALIDO, errorConsulta });
+    }
+})();
+//#endregion
 
 //#region Rutas
 import actualizacionRuta from './routes/actualizacionRoute';

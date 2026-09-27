@@ -65,6 +65,20 @@ jobs:
         env:
           NODE_ENV: ${{ steps.vars.outputs.node_env }}
 
+      # Corta el deploy si el produccion del build no coincide con lo esperado para la rama.
+      # Protege en las dos direcciones: testing con produccion=true (comprobantes reales
+      # emitidos desde homologacion) y produccion con produccion=false (facturando en
+      # homologacion sin darse cuenta).
+      - name: Verificar entorno del build
+        run: |
+          ESPERADO=$([ "${{ steps.vars.outputs.node_env }}" = "prod" ] && echo true || echo false)
+          REAL=$(node -p "require('./out/config.${{ steps.vars.outputs.node_env }}.json').produccion === true")
+          echo "rama=${{ github.ref_name }} node_env=${{ steps.vars.outputs.node_env }} produccion=$REAL esperado=$ESPERADO"
+          if [ "$REAL" != "$ESPERADO" ]; then
+            echo "::error::out/config.${{ steps.vars.outputs.node_env }}.json tiene produccion=$REAL y se esperaba $ESPERADO. Deploy abortado."
+            exit 1
+          fi
+
       # Sin --delete a propósito: certs AFIP, tokens, uploads, logs, session.json y los
       # JSON de referencia geográfica (calles/localidades/provincias) viven solo en el
       # servidor y no deben tocarse en cada deploy.

@@ -15,6 +15,10 @@ export enum CodigoError {
 
   AUTH_NO_HABILITADO = 'AUTH_NO_HABILITADO',
 
+  // Entorno de ejecucion (NODE_ENV / config.produccion / parametro 'entorno' en DB)
+  // inconsistente. Bloquea la facturacion (fail-closed) sin tirar el proceso.
+  ENTORNO_INVALIDO = 'ENTORNO_INVALIDO',
+
   NOT_FOUND = 'NOT_FOUND',
   INTERNAL_ERROR = 'INTERNAL_ERROR'
 }

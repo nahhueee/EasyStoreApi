@@ -18,6 +18,8 @@ const afipInstances: Record<string, any> = {};
 
 class FacturacionService{
     async Facturar(objFactura:ObjFacturar){
+        await VerificarEntorno();
+
         const datosFacturacion = await EmpresasRepo.ObtenerEmpresa(objFactura.idEmpresa!);
         const afip = await ObtenerInstanciaAfip(datosFacturacion.cuil);
 
@@ -216,6 +218,8 @@ class FacturacionService{
 
 
 async function ObtenerInstanciaAfip(cuilTitular): Promise<Afip> {
+    await VerificarEntorno();
+
     // Reutilizar instancia
     if (afipInstances[cuilTitular]) {
         return afipInstances[cuilTitular];
@@ -292,3 +296,35 @@ function requiereAsociacion(tipo: TipoComprobante): boolean {
 export const FacturacionServ = new FacturacionService();
 
 
+/**
+ * Chequeo de coherencia de entorno antes de tocar ARCA (F0.3 - HANDOFF blindaje facturacion).
+ *
+ * Fail-closed: si algo no se puede confirmar, bloquea la facturacion en vez de arriesgar
+ * un comprobante real emitido desde el ambiente equivocado (ver Incidente B del handoff).
+ * No tira el proceso: solo esta llamada (Facturar / ObtenerInstanciaAfip) queda bloqueada,
+ * el resto del sistema sigue funcionando.
+ */
+async function VerificarEntorno(): Promise<void> {
+    // 1) Si el build quedo marcado como produccion, el proceso tiene que correr con NODE_ENV=prod.
+    if (config.produccion === true && process.env.NODE_ENV !== 'prod') {
+        throw new AppError(
+            CodigoError.ENTORNO_INVALIDO,
+            'La configuracion de este build esta marcada como produccion pero el proceso no corre con NODE_ENV=prod. Facturacion bloqueada.',
+            500,
+            { modulo: 'FacturacionService', metodo: 'VerificarEntorno', nodeEnv: process.env.NODE_ENV, produccion: config.produccion }
+        );
+    }
+
+    // 2) El parametro 'entorno' de la DB (seteado a mano por DB, ver F0.4) tiene que coincidir
+    //    con NODE_ENV. Si no existe o no coincide, se bloquea (fail-closed): p.ej. un clon de
+    //    produccion sobre testing sin volver a correr el seed de testing.
+    const entornoDb = await ParametrosRepo.ObtenerParametros('entorno');
+    if (!entornoDb || entornoDb !== process.env.NODE_ENV) {
+        throw new AppError(
+            CodigoError.ENTORNO_INVALIDO,
+            `El parametro 'entorno' de la base de datos (${entornoDb ?? 'no cargado'}) no coincide con NODE_ENV (${process.env.NODE_ENV}). Facturacion bloqueada.`,
+            500,
+            { modulo: 'FacturacionService', metodo: 'VerificarEntorno', nodeEnv: process.env.NODE_ENV, entornoDb: entornoDb ?? null }
+        );
+    }
+}
