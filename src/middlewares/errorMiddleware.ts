@@ -1,13 +1,17 @@
 import { logger } from "../logger/logger";
 import { AppError } from "../logger/AppError";
-
-type Severity = 'INFO' | 'WARN' | 'ERROR';
+import { CodigoError, SEVERIDAD, Severidad } from "../logger/CodigosError";
 
 export function errorMiddleware(err, req, res, next) {
   const isAppError = err instanceof AppError;
 
   const status = err.status || 500;
-  const severity = getSeverity(status);
+  const code: CodigoError | undefined = err.code;
+  // F2 - HANDOFF blindaje facturacion y logs.
+  // Prioridad: severidad de negocio por codigo (SEVERIDAD) cuando el codigo esta
+  // mapeado; si no (errores no controlados, codigos legacy no emitidos), fallback
+  // al viejo criterio basado en status HTTP.
+  const severity = (code && SEVERIDAD[code]) || getSeverity(status);
 
   // stringify seguro: evita circular references (ej: ClientRequest de afip.ts)
   const safeStringify = (obj: any): string => {
@@ -51,10 +55,11 @@ export function errorMiddleware(err, req, res, next) {
   });
 }
 
-function getSeverity(status?: number): Severity {
-  if (!status) return 'ERROR';
-  if (status >= 500) return 'ERROR';
-  if (status >= 400) return 'WARN';
-  return 'INFO';
+// Fallback legacy: solo se usa para errores sin CodigoError mapeado en SEVERIDAD
+// (errores no controlados / bugs, o codigos que no se emiten desde AppError).
+function getSeverity(status?: number): Severidad {
+  if (!status) return 'ALTA';
+  if (status >= 500) return 'ALTA';
+  if (status >= 400) return 'MEDIA';
+  return 'BAJA';
 }
-

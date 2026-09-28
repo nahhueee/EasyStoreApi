@@ -1,5 +1,4 @@
-import logger from "../log/loggerGeneral";
-import loggerFacturacion from "../log/loggerFacturacion";
+import { logger } from "../logger/logger";
 import {ParametrosRepo} from '../data/parametrosRepository';
 import { Afip } from "afip.ts";
 import fs from "fs";
@@ -164,9 +163,14 @@ class FacturacionService{
                 // En homologacion, sin el flag, la numeracion de ARCA no tiene relacion
                 // con una DB de testing que puede ser un clon de produccion: solo se
                 // loguea el descalce, no se bloquea (ver HANDOFF F1.2).
-                logger.warn(
-                    `[correlatividad ARCA] descalce en homologacion (no bloquea): cuit=${cuit} pto=${pto} tipo=${tipo} ultimoArca=${ultimoArca} ultimoLocal=${ultimoLocal}`
-                );
+                // F2 - logueado como error (no solo warn) para que quede visible en la
+                // pantalla de Errores con la severidad de CORRELATIVIDAD_ARCA (ver SEVERIDAD).
+                // Sigue sin bloquear la emision: es diagnostico, no control.
+                logger.error({
+                    code: CodigoError.CORRELATIVIDAD_ARCA,
+                    message: `[correlatividad ARCA] descalce en homologacion (no bloquea): cuit=${cuit} pto=${pto} tipo=${tipo} ultimoArca=${ultimoArca} ultimoLocal=${ultimoLocal}`,
+                    requestId, cuit, pto, tipo, ultimoArca, ultimoLocal
+                });
             }
 
             const nro = ultimoArca + 1;
@@ -202,10 +206,10 @@ class FacturacionService{
                 }
 
                 if (info?.Resultado === 'A' && info?.CodAutorizacion) {
-                    logger.warn({
+                    logger.error({
                         code: CodigoError.COMPROBANTE_RECUPERADO,
                         message: `Comprobante recuperado tras timeout: CAE ${info.CodAutorizacion}, Nro ${info.CbteDesde}`,
-                        cuit, pto, tipo, nro
+                        requestId, cuit, pto, tipo, nro
                     });
                     return {
                         estado: 'Aprobado',
@@ -252,10 +256,10 @@ class FacturacionService{
             // ver ObjFacturar en el front y hallazgo 6 del handoff).
             const netoFront = (objFactura as any).neto;
             if (typeof netoFront === 'number' && Math.abs(netoFront - neto) > 0.01) {
-                logger.warn({
+                logger.error({
                     code: CodigoError.NETO_DESCALCE,
                     message: `Neto enviado por la app (${netoFront}) difiere del neto calculado para ARCA (${neto})`,
-                    idEmpresa: objFactura.idEmpresa, tipo, netoFront, netoCalculado: neto
+                    requestId, idEmpresa: objFactura.idEmpresa, tipo, netoFront, netoCalculado: neto
                 });
             }
 
@@ -288,10 +292,8 @@ class FacturacionService{
                 mensajes.push('ARCA rechazó el comprobante sin detalles');
             };
 
-            //logeamos mensajes por separado
-            mensajes.forEach(m => loggerFacturacion.error(`${requestId ? `[Ref: ${requestId}] ` : ''}${m}`));
-
-            //Devolvemos y logeamos error tecnico
+            //Devolvemos y logeamos error tecnico (detallesAfip queda en el context del
+            //AppError de abajo; errorMiddleware lo loguea junto con requestId/ref)
             throw new AppError(
                 CodigoError.AFIP_RECHAZO, 'El comprobante fue rechazado por ARCA', 422,
                 {
