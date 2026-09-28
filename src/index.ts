@@ -5,6 +5,7 @@ import config from './conf/app.config';
 import { logger } from './logger/logger';
 import { CodigoError } from './logger/CodigosError';
 import { ParametrosRepo } from './data/parametrosRepository';
+import { requestIdMiddleware } from './middlewares/requestIdMiddleware';
 const http = require('http');
 const path = require('path');
 
@@ -18,6 +19,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'upload')));
+app.use(requestIdMiddleware);
 
 if(!config.produccion){
     app.use(morgan("dev"));

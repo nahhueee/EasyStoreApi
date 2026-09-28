@@ -35,6 +35,7 @@ export function errorMiddleware(err, req, res, next) {
     status: status,
     route: req.originalUrl,
     method: req.method,
+    requestId: req.requestId,
     context: err.context,
     cause: err.cause?.message,
     stack: err.stack,
@@ -45,7 +46,8 @@ export function errorMiddleware(err, req, res, next) {
     code: err.code || 'INTERNAL_ERROR',
     message: isAppError
       ? err.message
-      : 'Error interno del servidor'
+      : 'Error interno del servidor',
+    ref: req.requestId
   });
 }
 

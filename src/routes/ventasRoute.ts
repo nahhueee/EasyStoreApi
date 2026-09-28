@@ -76,25 +76,21 @@ router.get('/verificar-nota/:nroNota', async (req:Request, res:Response) => {
 //#endregion
 
 //#region ABM
-router.post('/agregar', authMiddleware, async (req:Request, res:Response) => {
+router.post('/agregar', authMiddleware, async (req:Request, res:Response, next) => {
     try{
         res.json(await VentasRepo.Agregar(req.body.venta, req.usuario!.usuario));
 
     } catch(error:any){
-        let msg = "Error al intentar agregar la venta.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
+        next(error);
     }
 });
 
-router.put('/modificar', authMiddleware, async (req:Request, res:Response) => {
+router.put('/modificar', authMiddleware, async (req:Request, res:Response, next) => {
     try{
         res.json(await VentasRepo.Modificar(req.body, req.usuario!.usuario));
 
     } catch(error:any){
-        let msg = "Error al intentar modificar la venta.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
+        next(error);
     }
 });
 
@@ -110,17 +106,6 @@ router.put('/dar-baja', async (req:Request, res:Response) => {
         // estado no abierto, motivo faltante), así el front puede mostrar el motivo
         // específico en vez de un 500 genérico.
         res.status(error.status || 500).send(error.message || msg);
-    }
-});
-
-router.post('/guardar-factura', async (req:Request, res:Response) => {
-    try{ 
-        res.json(await VentasRepo.GuardarFactura(req.body));
-
-    } catch(error:any){
-        let msg = "Error al intentar guardar los datos de facturacion para la venta.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
     }
 });
 
@@ -161,7 +146,7 @@ router.post('/validar-stock', async (req:Request, res:Response, next) => {
 
 router.post('/facturar', async (req:Request, res:Response, next) => {
     try{ 
-        res.json(await FacturacionServ.Facturar(req.body));
+        res.json(await FacturacionServ.Facturar(req.body, req.requestId));
     } catch(error){
         next(error);
     }

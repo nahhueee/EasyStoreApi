@@ -1295,21 +1295,6 @@ class VentasRepository{
     }
 
 
-    async GuardarFactura(data:any){
-        const connection = await db.getConnection();
-        
-        try {
-            data.factura.idVenta = data.idVenta;
-            await InsertFacturaVenta(connection, data.factura);
-            return("OK");
-
-        } catch (error:any) {
-            throw error;
-        } finally{
-            connection.release();
-        }
-    }
-
     async Aprobar(data:any){
         const connection = await db.getConnection();
         
