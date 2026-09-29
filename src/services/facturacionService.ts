@@ -169,7 +169,8 @@ class FacturacionService{
                 logger.error({
                     code: CodigoError.CORRELATIVIDAD_ARCA,
                     message: `[correlatividad ARCA] descalce en homologacion (no bloquea): cuit=${cuit} pto=${pto} tipo=${tipo} ultimoArca=${ultimoArca} ultimoLocal=${ultimoLocal}`,
-                    requestId, cuit, pto, tipo, ultimoArca, ultimoLocal
+                    requestId,
+                    context: { modulo: 'FacturacionService', metodo: 'Facturar', cuit, pto, tipo, ultimoArca, ultimoLocal }
                 });
             }
 
@@ -209,7 +210,8 @@ class FacturacionService{
                     logger.error({
                         code: CodigoError.COMPROBANTE_RECUPERADO,
                         message: `Comprobante recuperado tras timeout: CAE ${info.CodAutorizacion}, Nro ${info.CbteDesde}`,
-                        requestId, cuit, pto, tipo, nro
+                        requestId,
+                        context: { modulo: 'FacturacionService', metodo: 'Facturar', cuit, pto, tipo, nro, cae: info.CodAutorizacion }
                     });
                     return {
                         estado: 'Aprobado',
@@ -259,7 +261,8 @@ class FacturacionService{
                 logger.error({
                     code: CodigoError.NETO_DESCALCE,
                     message: `Neto enviado por la app (${netoFront}) difiere del neto calculado para ARCA (${neto})`,
-                    requestId, idEmpresa: objFactura.idEmpresa, tipo, netoFront, netoCalculado: neto
+                    requestId,
+                    context: { modulo: 'FacturacionService', metodo: 'Facturar', idEmpresa: objFactura.idEmpresa, tipo, netoFront, netoCalculado: neto }
                 });
             }
 
