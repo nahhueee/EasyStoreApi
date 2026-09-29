@@ -8,6 +8,7 @@ import { Cliente } from '../models/Cliente';
 import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, SQL_METODO_PAGO_CASE } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 import { analizarTalle } from '../services/excelConciliacionService';
+import { FeEmisionesRepo } from './feEmisionesRepository';
 const moment = require('moment');
 
 // Actualiza el estado del proceso relacionado (Presupuesto/Pedido/Nota de Empaque)
@@ -904,7 +905,17 @@ class VentasRepository{
             //insertamos los datos de la factura de la venta
             if(venta.factura){
                 venta.factura.idVenta = venta.id;
-                await InsertFacturaVenta(connection, venta.factura);
+                await InsertFacturaVenta(connection, venta.factura, venta.idEmpresa!);
+
+                // F3.3 - HANDOFF blindaje facturacion y logs. /facturar todavia no conoce
+                // idVenta (se genera aca, en Agregar/Modificar); si vino un idEmision
+                // (respuesta de FacturacionServ.Facturar) se vincula la fila fe_emisiones
+                // con esta venta, DENTRO de la misma transaccion (ver comentario de
+                // FeEmisionesRepo.VincularVenta - si esta transaccion hace rollback, el
+                // vinculo tiene que revertirse con ella).
+                if (venta.factura.idEmision) {
+                    await FeEmisionesRepo.VincularVenta(connection, venta.factura.idEmision, venta.id!);
+                }
             }
 
             //Mandamos la transaccion
@@ -1278,7 +1289,17 @@ class VentasRepository{
             //insertamos los datos de la factura de la venta
             if(venta.factura){
                 venta.factura.idVenta = venta.id;
-                await InsertFacturaVenta(connection, venta.factura);
+                await InsertFacturaVenta(connection, venta.factura, venta.idEmpresa!);
+
+                // F3.3 - HANDOFF blindaje facturacion y logs. /facturar todavia no conoce
+                // idVenta (se genera aca, en Agregar/Modificar); si vino un idEmision
+                // (respuesta de FacturacionServ.Facturar) se vincula la fila fe_emisiones
+                // con esta venta, DENTRO de la misma transaccion (ver comentario de
+                // FeEmisionesRepo.VincularVenta - si esta transaccion hace rollback, el
+                // vinculo tiene que revertirse con ella).
+                if (venta.factura.idEmision) {
+                    await FeEmisionesRepo.VincularVenta(connection, venta.factura.idEmision, venta.id!);
+                }
             }
 
             //Mandamos la transaccion
@@ -2315,10 +2336,17 @@ async function InsertPagoVenta(connection, pago): Promise<number> {
     }
 }
 
-async function InsertFacturaVenta(connection, factura): Promise<void> {
+// F3 - HANDOFF blindaje facturacion y logs (sec. F3.2: "InsertFacturaVenta pasa a
+// guardar cuitEmisor"). Se resuelve via empresas.cuil por idEmpresa en vez de confiar en
+// que el caller lo haya puesto en `factura`: es la misma fuente que usa el backfill de la
+// migracion 20260929120000, y no depende de que el front ya mande cuitEmisor en el payload.
+async function InsertFacturaVenta(connection, factura, idEmpresa: number): Promise<void> {
     try {
-        const consulta = " INSERT INTO ventas_factura(idVenta, cae, caeVto, ticket, tipoFactura, neto, iva, dni, tipoDni, ptoVenta, condReceptor, tipoRelacionado, ticketRelacionado, ptoVentaRelacionado) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
+        const [empresaRows]: any = await connection.query('SELECT cuil FROM empresas WHERE id = ?', [idEmpresa]);
+        const cuitEmisor = empresaRows?.[0]?.cuil ?? null;
+
+        const consulta = " INSERT INTO ventas_factura(idVenta, cae, caeVto, ticket, tipoFactura, neto, iva, dni, tipoDni, ptoVenta, condReceptor, tipoRelacionado, ticketRelacionado, ptoVentaRelacionado, cuitEmisor) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ";
         const asociado = factura.comprobanteAsociado ?? {};
         const parametros = [
             factura.idVenta,
@@ -2334,7 +2362,8 @@ async function InsertFacturaVenta(connection, factura): Promise<void> {
             factura.condReceptor,
             asociado.tipo ?? null,
             asociado.numero ?? null,
-            asociado.puntoVenta ?? null
+            asociado.puntoVenta ?? null,
+            cuitEmisor
         ];
         await connection.query(consulta, parametros);
     } catch (error) {

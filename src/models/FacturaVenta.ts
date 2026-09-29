@@ -2,6 +2,10 @@ import { TipoComprobante } from "./objFacturar";
 
 export class FacturaVenta{
     idVenta?:number;
+    // F3 - HANDOFF blindaje facturacion y logs. Id de la fila fe_emisiones creada por
+    // FacturacionService.Facturar() para este comprobante. Agregar/Modificar la usan para
+    // vincular fe_emisiones.idVenta dentro de su propia transaccion (ver VentasRepository).
+    idEmision?: number;
     cae?: string;
     caeVto?: Date;
     ticket? : number;
@@ -22,6 +26,7 @@ export class FacturaVenta{
 
     constructor(data?: any) {
       if (data) {
+        this.idEmision = data.idEmision;
         this.cae = data.cae;
         this.caeVto = data.caeVto;
         this.ticket = data.ticket;

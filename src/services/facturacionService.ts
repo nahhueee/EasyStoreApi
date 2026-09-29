@@ -10,6 +10,7 @@ import moment from "moment";
 import { EmpresasRepo } from "../data/empresasRepository";
 import { AppError } from "../logger/AppError";
 import { CodigoError } from "../logger/CodigosError";
+import { FeEmisionesRepo } from "../data/feEmisionesRepository";
 import db from '../db';
 const QRCode = require('qrcode');
 
@@ -130,6 +131,7 @@ class FacturacionService{
         const nombreLock = `fe_${config.db.database}_${cuit}_${pto}_${tipo}`;
         const lockConnection = await db.getConnection();
         let lockObtenido = false;
+        let idEmision: number | undefined;
 
         try {
             const [lockRows]: any = await lockConnection.query('SELECT GET_LOCK(?, 15) AS obtenido', [nombreLock]);
@@ -144,11 +146,38 @@ class FacturacionService{
                 );
             }
 
+            // F3.3 - HANDOFF blindaje facturacion y logs. Un talonario con una fila
+            // fe_emisiones PENDIENTE colgada (>2 min, seguramente un proceso que murio
+            // antes de actualizar el estado) o INCIERTO (timeout sin confirmar, ver F1.4)
+            // NO puede emitir de nuevo hasta reconciliarse: podria estar pidiendo un CAE
+            // para un numero que en realidad ya tiene uno. Se corre ANTES de calcular
+            // ultimoArca/ultimoLocal para esta emision, con el mismo talonario ya
+            // serializado por el lock de arriba.
+            await ReconciliarFilaBloqueante(afip, cuit, pto, tipo, requestId);
+
             // F1.1 - numero explicito desde ARCA (createNextVoucher hace internamente
             // getLastVoucher + 1 y perdia el numero real con dos emisiones simultaneas).
             // F1.2 - mismo getLastVoucher sirve para la correlatividad contra la DB.
             const ultimoArca = (await afip.electronicBillingService.getLastVoucher(pto, tipo)).CbteNro;
-            const ultimoLocal = await ObtenerUltimoTicketLocal(cuit, pto, tipo);
+
+            // F3.3 - ultimoLocal ya no sale solo de ventas_factura (F1.2): fe_emisiones
+            // es la fuente durable de "que numero se consumio de verdad" y puede ir un
+            // paso adelante de ventas_factura (p.ej. un APROBADO todavia sin idVenta
+            // vinculado porque /agregar no se llamo todavia). Se toma el mayor de los
+            // dos y se loguea si difieren - una diferencia real ahi es señal de que algo
+            // no esta sincronizado y amerita revision, no debe pasar desapercibida.
+            const ultimoLocalFe = await FeEmisionesRepo.ObtenerUltimoNroLocal(cuit, pto, tipo);
+            const ultimoLocalVf = await ObtenerUltimoTicketLocal(cuit, pto, tipo);
+            const ultimoLocal = Math.max(ultimoLocalFe, ultimoLocalVf);
+
+            if (ultimoLocalFe !== ultimoLocalVf) {
+                logger.error({
+                    code: CodigoError.CORRELATIVIDAD_ARCA,
+                    message: `[correlatividad local] fe_emisiones (${ultimoLocalFe}) y ventas_factura (${ultimoLocalVf}) no coinciden para cuit=${cuit} pto=${pto} tipo=${tipo}. Se toma ${ultimoLocal}.`,
+                    requestId,
+                    context: { modulo: 'FacturacionService', metodo: 'Facturar', cuit, pto, tipo, ultimoLocalFe, ultimoLocalVf }
+                });
+            }
 
             if (ultimoArca !== ultimoLocal) {
                 const correlatividadEstrictaTest = config.facturacion?.correlatividadEstricta === true;
@@ -178,6 +207,21 @@ class FacturacionService{
             data.CbteDesde = nro;
             data.CbteHasta = nro;
 
+            // F3.3 - se guarda la fila PENDIENTE ANTES de pedir el CAE (regla del
+            // HANDOFF sec. 2: "nunca se pide un CAE a ARCA sin haber guardado antes, de
+            // forma durable y fuera de la transaccion de la venta, que se va a pedir").
+            // Conexion propia en autocommit dentro del repositorio, no la de este lock.
+            idEmision = await FeEmisionesRepo.InsertarOReintentarPendiente({
+                idEmpresa: objFactura.idEmpresa!,
+                cuitEmisor: cuit,
+                ptoVenta: pto,
+                tipoCbte: tipo,
+                nro,
+                payloadVenta: objFactura,
+                entornoProduccion: config.produccion === true,
+                requestId
+            });
+
             let res: any;
             try {
                 res = await afip.electronicBillingService.createVoucher(data);
@@ -188,6 +232,17 @@ class FacturacionService{
                     || err?.message?.toLowerCase?.().includes('timeout');
 
                 if (!pareceTimeout) {
+                    // Error tecnico antes/durante el envio (no timeout): se asume que el
+                    // request nunca llego a ARCA, igual que hacia esta rama antes de F3
+                    // (comportamiento sin cambios). La fila fe_emisiones se marca
+                    // RECHAZADO (no INCIERTO): el numero no se consumio y el proximo
+                    // intento lo puede reutilizar, mismo criterio que un rechazo real
+                    // de ARCA - no es que ARCA lo haya rechazado, pero el efecto sobre
+                    // la correlatividad es el mismo (nro libre).
+                    await FeEmisionesRepo.MarcarRechazado(idEmision, {
+                        payloadArca: data,
+                        respuestaArca: { motivo: 'error tecnico antes de confirmar envio a ARCA (no timeout)', error: err?.message }
+                    });
                     throw new AppError(
                         CodigoError.AFIP_ERROR, 'Ocurrió un error al intentar generar el comprobante', 500,
                         { modulo: 'FacturacionService', metodo: 'Facturar', cuit, pto, tipo, nro },
@@ -207,6 +262,12 @@ class FacturacionService{
                 }
 
                 if (info?.Resultado === 'A' && info?.CodAutorizacion) {
+                    await FeEmisionesRepo.MarcarAprobado(idEmision, {
+                        cae: info.CodAutorizacion,
+                        caeVto: moment(info.FchVto, 'YYYYMMDD').format('YYYY-MM-DD'),
+                        payloadArca: data,
+                        respuestaArca: info
+                    });
                     logger.error({
                         code: CodigoError.COMPROBANTE_RECUPERADO,
                         message: `Comprobante recuperado tras timeout: CAE ${info.CodAutorizacion}, Nro ${info.CbteDesde}`,
@@ -220,7 +281,8 @@ class FacturacionService{
                         ticket: info.CbteDesde,
                         ptoVenta: pto,
                         neto,
-                        iva
+                        iva,
+                        idEmision
                     };
                 }
 
@@ -233,6 +295,10 @@ class FacturacionService{
 
                 if (ultimoTrasTimeout === nro - 1) {
                     // Confirmado: el numero no se consumio, se puede reintentar.
+                    await FeEmisionesRepo.MarcarRechazado(idEmision, {
+                        payloadArca: data,
+                        respuestaArca: { motivo: 'timeout, ARCA confirmo que el comprobante no se emitio', ultimoTrasTimeout }
+                    });
                     throw new AppError(
                         CodigoError.AFIP_TIMEOUT,
                         'ARCA no respondió (timeout). El comprobante no se emitió, puede reintentar.',
@@ -242,7 +308,13 @@ class FacturacionService{
                     );
                 }
 
-                // Ni se pudo confirmar que existe ni que no existe: NO reintentar.
+                // Ni se pudo confirmar que existe ni que no existe: NO reintentar. La
+                // fila queda INCIERTO y bloquea el talonario (ver ReconciliarFilaBloqueante)
+                // hasta que se resuelva sola en un proximo intento o a mano.
+                await FeEmisionesRepo.MarcarIncierto(idEmision, {
+                    payloadArca: data,
+                    respuestaArca: { motivo: 'timeout, ARCA no confirmo ni existencia ni ausencia', error: err?.message }
+                });
                 throw new AppError(
                     CodigoError.COMPROBANTE_INCIERTO,
                     `ARCA no confirmó si el comprobante ${nro} se emitió. NO reintente: verifique en ARCA antes de volver a facturar.`,
@@ -271,6 +343,12 @@ class FacturacionService{
 
             //COMPROBANTE APROBADO
             if (detalle?.Resultado === 'A') {
+                await FeEmisionesRepo.MarcarAprobado(idEmision, {
+                    cae: detalle.CAE,
+                    caeVto: moment(detalle.CAEFchVto, 'YYYYMMDD').format('YYYY-MM-DD'),
+                    payloadArca: data,
+                    respuestaArca: res.response
+                });
                 return {
                     estado: 'Aprobado',
                     cae: detalle.CAE,
@@ -278,7 +356,8 @@ class FacturacionService{
                     ticket: detalle.CbteDesde,
                     ptoVenta: pto,
                     neto,
-                    iva
+                    iva,
+                    idEmision
                 };
             }
 
@@ -294,6 +373,11 @@ class FacturacionService{
             if (mensajes.length === 0) {
                 mensajes.push('ARCA rechazó el comprobante sin detalles');
             };
+
+            await FeEmisionesRepo.MarcarRechazado(idEmision, {
+                payloadArca: data,
+                respuestaArca: { observaciones: observacionesAfip, errores: erroresAfip, resultado: detalle?.Resultado }
+            });
 
             //Devolvemos y logeamos error tecnico (detallesAfip queda en el context del
             //AppError de abajo; errorMiddleware lo loguea junto con requestId/ref)
@@ -435,6 +519,10 @@ export const FacturacionServ = new FacturacionService();
  * A proposito NO se filtra por ventas.fechaBaja: DarBajaVenta es una baja logica,
  * el numero fiscal ya se consumio en ARCA. Se incluyen las filas con
  * regularizacionArca = 1 (son comprobantes reales, cuentan para la correlatividad).
+ *
+ * F3.3: sigue existiendo como piso minimo/cruce de F3.3 (ver ultimoLocalVf en
+ * Facturar()), pero fe_emisiones (FeEmisionesRepo.ObtenerUltimoNroLocal) es ahora
+ * la fuente principal.
  */
 async function ObtenerUltimoTicketLocal(cuit: number, ptoVenta: number, tipoFactura: number): Promise<number> {
     const connection = await db.getConnection();
@@ -451,6 +539,75 @@ async function ObtenerUltimoTicketLocal(cuit: number, ptoVenta: number, tipoFact
     } finally {
         connection.release();
     }
+}
+
+
+/**
+ * F3.3 - HANDOFF blindaje facturacion y logs. Reconcilia la fila de fe_emisiones que
+ * este bloqueando el talonario (INCIERTO, o PENDIENTE de mas de 2 minutos) ANTES de
+ * dejar avanzar una nueva emision. Mismo mecanismo de consulta que F1.4 (getVoucherInfo
+ * + getLastVoucher) pero disparado al INICIO de Facturar() en vez de en el catch de
+ * createVoucher, porque la fila puede venir de un intento anterior (otro request, o el
+ * mismo proceso que se cayo).
+ *
+ * Si no puede resolverse, tira COMPROBANTE_INCIERTO y dejar la fila en ese estado: el
+ * talonario sigue bloqueado hasta el proximo intento (o resolucion manual en F4).
+ */
+async function ReconciliarFilaBloqueante(afip: Afip, cuit: number, pto: number, tipo: number, requestId?: string): Promise<void> {
+    const fila = await FeEmisionesRepo.ObtenerFilaBloqueante(cuit, pto, tipo);
+    if (!fila) return;
+
+    let info: any = null;
+    try {
+        info = await afip.electronicBillingService.getVoucherInfo(fila.nro, pto, tipo);
+    } catch {
+        info = null;
+    }
+
+    if (info?.Resultado === 'A' && info?.CodAutorizacion) {
+        await FeEmisionesRepo.MarcarAprobado(fila.id, {
+            cae: info.CodAutorizacion,
+            caeVto: moment(info.FchVto, 'YYYYMMDD').format('YYYY-MM-DD'),
+            respuestaArca: info
+        });
+        logger.error({
+            code: CodigoError.COMPROBANTE_RECUPERADO,
+            message: `[reconciliacion previa] fe_emisiones #${fila.id} (nro ${fila.nro}): comprobante existe en ARCA, CAE ${info.CodAutorizacion}. Talonario liberado.`,
+            requestId,
+            context: { modulo: 'FacturacionService', metodo: 'ReconciliarFilaBloqueante', cuit, pto, tipo, idEmision: fila.id, nro: fila.nro, cae: info.CodAutorizacion }
+        });
+        return;
+    }
+
+    let ultimoArcaCheck: number | undefined;
+    try {
+        ultimoArcaCheck = (await afip.electronicBillingService.getLastVoucher(pto, tipo)).CbteNro;
+    } catch {
+        ultimoArcaCheck = undefined;
+    }
+
+    if (ultimoArcaCheck === fila.nro - 1) {
+        await FeEmisionesRepo.MarcarRechazado(fila.id, {
+            respuestaArca: { motivo: 'reconciliacion previa a nueva emision: ARCA confirmo que no se emitio', ultimoArcaCheck }
+        });
+        logger.error({
+            code: CodigoError.COMPROBANTE_RECUPERADO,
+            message: `[reconciliacion previa] fe_emisiones #${fila.id} (nro ${fila.nro}): ARCA confirmo que no se emitio. Talonario liberado, numero disponible para reintento.`,
+            requestId,
+            context: { modulo: 'FacturacionService', metodo: 'ReconciliarFilaBloqueante', cuit, pto, tipo, idEmision: fila.id, nro: fila.nro }
+        });
+        return;
+    }
+
+    await FeEmisionesRepo.MarcarIncierto(fila.id, {
+        respuestaArca: { motivo: 'reconciliacion previa a nueva emision: ARCA sigue sin confirmar', reintentoEn: new Date().toISOString() }
+    });
+    throw new AppError(
+        CodigoError.COMPROBANTE_INCIERTO,
+        `Hay un comprobante (nro ${fila.nro}, PtoVta ${pto}, tipo ${tipo}) sin confirmar en ARCA. NO se puede emitir hasta resolverlo manualmente.`,
+        504,
+        { modulo: 'FacturacionService', metodo: 'ReconciliarFilaBloqueante', cuit, pto, tipo, idEmision: fila.id, nro: fila.nro }
+    );
 }
 
 
