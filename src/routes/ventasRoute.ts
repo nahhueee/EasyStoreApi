@@ -144,9 +144,9 @@ router.post('/validar-stock', async (req:Request, res:Response, next) => {
     }
 });
 
-router.post('/facturar', async (req:Request, res:Response, next) => {
+router.post('/facturar', authMiddleware, async (req:Request, res:Response, next) => {
     try{ 
-        res.json(await FacturacionServ.Facturar(req.body, req.requestId));
+        res.json(await FacturacionServ.Facturar(req.body, req.requestId, req.usuario?.usuario));
     } catch(error){
         next(error);
     }

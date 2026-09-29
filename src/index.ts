@@ -67,8 +67,18 @@ server.listen(app.get('port'), host, () => {
     const entornoDbOk = !!entornoDb && entornoDb === nodeEnv;
     const facturacionHabilitada = entornoProduccionOk && entornoDbOk && !errorConsulta;
 
+    // message explicito (F2 - antes este log solo tenia campos crudos sin `message`,
+    // asi que en la pantalla de Errores aparecia una fila CRITICA sin texto: no es un
+    // log mal armado, es este chequeo de arranque que no pasa por errorMiddleware
+    // (no hay request, por eso tampoco tiene Ruta/Ref).
+    const mensajeArranque = facturacionHabilitada
+        ? `Chequeo de arranque: facturación habilitada (nodeEnv=${nodeEnv}, entornoDb=${entornoDb}).`
+        : `Chequeo de arranque: facturación BLOQUEADA - nodeEnv=${nodeEnv}, entornoDb=${entornoDb ?? 'no cargado'}` +
+          (errorConsulta ? `, error al consultar parametro 'entorno': ${errorConsulta}` : ', no coincide con NODE_ENV o no esta cargado') + '.';
+
     const datosArranque = {
         type: 'ARRANQUE',
+        message: mensajeArranque,
         nodeEnv,
         produccion: config.produccion,
         entornoDb: entornoDb ?? null,

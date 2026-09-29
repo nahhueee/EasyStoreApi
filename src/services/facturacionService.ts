@@ -18,7 +18,7 @@ const afipInstances: Record<string, any> = {};
 
 
 class FacturacionService{
-    async Facturar(objFactura:ObjFacturar, requestId?: string){
+    async Facturar(objFactura:ObjFacturar, requestId?: string, usuario?: string){
         await VerificarEntorno();
 
         const datosFacturacion = await EmpresasRepo.ObtenerEmpresa(objFactura.idEmpresa!);
@@ -219,6 +219,7 @@ class FacturacionService{
                 nro,
                 payloadVenta: objFactura,
                 entornoProduccion: config.produccion === true,
+                usuario,
                 requestId
             });
 
