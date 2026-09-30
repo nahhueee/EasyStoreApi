@@ -119,6 +119,7 @@ import proveedoresRuta from './routes/proveedoresRoute';
 import comprasRuta from './routes/comprasRoute';
 import comprasCuentasRuta from './routes/comprasCuentasRoute';
 import stockRuta from './routes/stockRoute';
+import feEmisionesRuta from './routes/feEmisionesRoute';
 
 const base = config.servidor;
 app.use(`${base}/update`, actualizacionRuta)
@@ -145,6 +146,7 @@ app.use(`${base}/proveedores`, proveedoresRuta);
 app.use(`${base}/compras`, comprasRuta);
 app.use(`${base}/compras-cuentas`, comprasCuentasRuta);
 app.use(`${base}/stock`, stockRuta);
+app.use(`${base}/fe-emisiones`, feEmisionesRuta);
 
 // AdminServer Route
 import adminServerRuta from './routes/adminRoute';

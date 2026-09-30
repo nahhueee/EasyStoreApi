@@ -27,6 +27,12 @@ export enum CodigoError {
   NETO_DESCALCE = 'NETO_DESCALCE',
   STOCK_INSUFICIENTE = 'STOCK_INSUFICIENTE',
 
+  // F4 - HANDOFF blindaje facturacion y logs. ARCA aprobo el CAE pero el
+  // guardado posterior de la venta fallo (fe_emisiones queda APROBADO_SIN_REGISTRAR).
+  // El comprobante es real y valido: hay que ir a 'Pendientes fiscales' a
+  // Regularizar, NUNCA volver a facturar la misma venta.
+  COMPROBANTE_SIN_REGISTRAR = 'COMPROBANTE_SIN_REGISTRAR',
+
   // F2 - HANDOFF blindaje facturacion y logs. Errores de JS/runtime capturados
   // en el frontend por GlobalErrorHandlerService y reportados via POST /logs/front.
   FRONT_ERROR = 'FRONT_ERROR',
@@ -87,6 +93,9 @@ export const SEVERIDAD: Record<CodigoError, Severidad> = {
   // amerita revision de redondeos/alicuotas si se repite.
   NETO_DESCALCE: 'MEDIA',
   STOCK_INSUFICIENTE: 'BAJA',
+  // El CAE existe en ARCA pero la venta no quedo registrada: dato fiscal real
+  // sin contrapartida en el sistema hasta que se Regularice. Maxima severidad.
+  COMPROBANTE_SIN_REGISTRAR: 'CRITICA',
 
   // F2 - HANDOFF blindaje facturacion y logs
   FRONT_ERROR: 'MEDIA',

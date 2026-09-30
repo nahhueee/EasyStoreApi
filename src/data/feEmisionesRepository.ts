@@ -108,6 +108,83 @@ class FeEmisionesRepository {
         await this.actualizarEstado(id, EstadoEmision.INCIERTO, datos);
     }
 
+    // F4.1 - HANDOFF blindaje facturacion y logs. ARCA aprobo el CAE (MarcarAprobado ya
+    // corrio antes, dentro de FacturacionService.SolicitarCAE) pero el guardado de la
+    // venta en la misma transaccion fallo despues. El comprobante es real: se pasa de
+    // APROBADO a APROBADO_SIN_REGISTRAR sin volver a llamar a ARCA. cae/caeVto se vuelven
+    // a pasar explicitos (no opcionales) porque actualizarEstado sobreescribe esas
+    // columnas con NULL si no vienen en `datos` - perderlas aca seria perder el rastro
+    // del CAE ya emitido, justo lo que esta fila existe para evitar.
+    async MarcarAprobadoSinRegistrar(id: number, datos: { cae: string | number; caeVto: string; payloadArca?: any; respuestaArca?: any }): Promise<void> {
+        await this.actualizarEstado(id, EstadoEmision.APROBADO_SIN_REGISTRAR, datos);
+    }
+
+    // F4.3 - HANDOFF blindaje facturacion y logs. Pendientes a resolver desde la pantalla
+    // "Pendientes fiscales": INCIERTO, APROBADO_SIN_REGISTRAR, y el caso que señala el
+    // comentario de VincularVenta mas abajo - un APROBADO cuyo idVenta quedo NULL porque
+    // la transaccion de Agregar/Modificar hizo rollback DESPUES de vincularlo (mismo
+    // resultado que APROBADO_SIN_REGISTRAR: comprobante real, sin venta registrada).
+    async ObtenerPendientes(): Promise<any[]> {
+        const connection = await db.getConnection();
+        try {
+            const [rows]: any = await connection.query(
+                `SELECT * FROM fe_emisiones
+                 WHERE estado = '${EstadoEmision.INCIERTO}'
+                    OR estado = '${EstadoEmision.APROBADO_SIN_REGISTRAR}'
+                    OR (estado = '${EstadoEmision.APROBADO}' AND idVenta IS NULL)
+                 ORDER BY fechaAlta DESC`
+            );
+            return rows;
+        } finally {
+            connection.release();
+        }
+    }
+
+    // Historial de lo ya resuelto por "Regularizar" - auditoria (quien, cuando, motivo).
+    async ObtenerHistorialRegularizados(limit: number = 100): Promise<any[]> {
+        const connection = await db.getConnection();
+        try {
+            const [rows]: any = await connection.query(
+                `SELECT * FROM fe_emisiones
+                 WHERE estado = '${EstadoEmision.REGULARIZADO}'
+                 ORDER BY fechaRegulariza DESC
+                 LIMIT ?`,
+                [limit]
+            );
+            return rows;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async ObtenerPorId(id: number): Promise<any | null> {
+        const connection = await db.getConnection();
+        try {
+            const [rows]: any = await connection.query(`SELECT * FROM fe_emisiones WHERE id = ?`, [id]);
+            return rows?.[0] ?? null;
+        } finally {
+            connection.release();
+        }
+    }
+
+    // Deja registrada la regularizacion (usuario, fecha, motivo) sin tocar cae/caeVto/
+    // payloadArca/respuestaArca: a diferencia de actualizarEstado, esos campos quedan
+    // como estaban - son historia real de lo que paso con ARCA, no hay nada que
+    // "actualizar" en ellos aca.
+    async MarcarRegularizado(id: number, usuario: string, motivo: string): Promise<void> {
+        const connection = await db.getConnection();
+        try {
+            await connection.query(
+                `UPDATE fe_emisiones
+                 SET estado = '${EstadoEmision.REGULARIZADO}', usuarioRegulariza = ?, fechaRegulariza = NOW(), motivoRegulariza = ?
+                 WHERE id = ?`,
+                [usuario, motivo, id]
+            );
+        } finally {
+            connection.release();
+        }
+    }
+
     private async actualizarEstado(id: number, estado: EstadoEmision, datos: { cae?: string | number; caeVto?: string; payloadArca?: any; respuestaArca?: any }): Promise<void> {
         const connection = await db.getConnection();
         try {

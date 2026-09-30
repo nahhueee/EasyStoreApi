@@ -838,7 +838,7 @@ class ProductosRepository{
     //#endregion
 
 
-    async ActualizarInventario(connection, detalle, operacion):Promise<void>{
+    async ActualizarInventario(connection, detalle, operacion, permitirNegativo: boolean = false):Promise<void>{
         try {
             const seleccionados = detalle.tallesSeleccionados.split(",").map(t => t.trim());
             const lineaTalle = await MiscRepo.ObtenerLineaDeTalle(detalle.idLineaTalle);
@@ -866,19 +866,25 @@ class ProductosRepository{
                     );
                     const cantidadActual = Number(rowsStock[0]?.cantidad ?? 0);
                     if (cantidadActual < cantDescontar) {
-                        // TEMPORAL (sep-2026, hasta reingenieria del metodo de facturacion con
-                        // Opus - sacar este bloque y volver al throw de abajo apenas este listo):
-                        // degradado de bloqueante a warning. Motivo: este chequeo vive DESPUES de
-                        // pedir el CAE a AFIP (ver ValidarStockVenta en el pre-chequeo, que corre
-                        // ANTES de facturar y SI sigue bloqueando) - si frena aca, el comprobante
-                        // fiscal ya esta emitido y la venta se pierde igual (caso real: Factura A
-                        // PtoVenta 12 Nro 80, sep-2026). Mientras tanto se deja pasar el UPDATE
-                        // igual (puede dejar `cantidad` en negativo, mismo riesgo que motivo
-                        // agregar este chequeo originalmente - producto 827) pero se loguea para
-                        // no perder rastro, en vez de fallar en silencio.
-                        logger.warn(
-                            `[stock negativo permitido temporalmente] idProducto=${detalle.idProducto} talle=${talle} disponible=${cantidadActual} solicitado=${cantDescontar}`
-                        );
+                        // F4.3 - HANDOFF blindaje facturacion y logs. `permitirNegativo` es SOLO
+                        // para FacturacionService.Regularizar(): un comprobante con CAE real ya
+                        // emitido en ARCA manda sobre el stock (decision de negocio, sec. 2 del
+                        // handoff) - se deja pasar el UPDATE igual (puede dejar `cantidad` en
+                        // negativo) pero se loguea para no perder rastro. Para cualquier otro
+                        // caller (el default, false) sigue bloqueando como siempre.
+                        if (permitirNegativo) {
+                            logger.warn({
+                                code: 'STOCK_NEGATIVO_REGULARIZACION',
+                                message: `[stock negativo por regularizacion] idProducto=${detalle.idProducto} talle=${talle} disponible=${cantidadActual} solicitado=${cantDescontar}`,
+                                context: { modulo: 'ProductosRepository', metodo: 'ActualizarInventario', idProducto: detalle.idProducto, talle, cantidadActual, cantDescontar }
+                            });
+                        } else {
+                            throw new AppError(
+                                CodigoError.STOCK_INSUFICIENTE,
+                                `No hay stock suficiente en el talle ${talle} (disponible: ${cantidadActual}, solicitado: ${cantDescontar}).`,
+                                409
+                            );
+                        }
                     }
                 }
 

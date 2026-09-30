@@ -4,6 +4,7 @@ import { ObjQR } from '../models/ObjQR';
 import { FacturaVenta } from '../models/FacturaVenta';
 import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
+import { PoolConnection } from 'mysql2/promise';
 import { Cliente } from '../models/Cliente';
 import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, SQL_METODO_PAGO_CASE } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
@@ -759,6 +760,163 @@ class VentasRepository{
     //#endregion
 
     //#region ABM
+    // F4.1 - HANDOFF blindaje facturacion y logs. Cuerpo de Agregar extraido a una
+    // funcion que recibe una conexion YA ABIERTA (sin beginTransaction/commit/release),
+    // para que /ventas/emitir pueda correrlo dentro de su propia transaccion (junto con
+    // el pedido de CAE) sin duplicar logica. Agregar() sigue siendo el wrapper publico
+    // que usan Presupuestos/Pedidos/Notas de Empaque/NC X/ND X, sin cambio de
+    // comportamiento - ver diff, el cuerpo movido es identico.
+    // `facturando` (F4.1): senal explicita de si esta venta va a llevar factura,
+    // para el descuento de stock de abajo. Default = !!venta.factura preserva EXACTO
+    // el comportamiento de siempre para Agregar()/Cotizacion/NC X (venta.factura ya
+    // viene seteado cuando llega aca). /ventas/emitir (F4.1) pasa `true` explicito
+    // porque ahi la venta se persiste ANTES de que ARCA apruebe el CAE - venta.factura
+    // todavia no existe en ese punto, pero el stock se tiene que descontar igual.
+    private async AgregarBody(connection: PoolConnection, venta:Venta, usuario: string, facturando: boolean = !!venta.factura, permitirNegativo: boolean = false): Promise<string> {
+        // Obtenemos el proximo nro de venta e insertamos, con reintento si choca
+        // contra UNIQUE(idProceso, nroProceso). El FOR UPDATE de abajo debería
+        // alcanzar solo para serializar guardados concurrentes, pero en
+        // producción se siguieron viendo nroProceso duplicados incluso con ese
+        // lock puesto (causa de fondo todavía no identificada - ago-2026, ver
+        // memoria pedidos-nroproceso-duplicados). Este reintento es la red de
+        // seguridad real: no importa por qué se calculó mal el número, la base
+        // lo rechaza (ER_DUP_ENTRY) y acá se recalcula contra el estado actual
+        // en vez de dejar que el duplicado se guarde en silencio.
+        const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega,fechaVencimiento,usuarioAlta) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?,?) ";
+
+        const fechaVencimiento = await ObtenerFechaVencimiento(connection, venta.idProceso, venta.cliente?.id, venta.fecha);
+
+        let resultado: ResultSetHeader;
+        let intentos = 0;
+        while (true) {
+            venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
+            // usuarioAlta: quién CREÓ la venta (§7.a del handoff) - toma el mismo
+            // `usuario` que ya llega por parámetro para los movimientos de fondos, NO
+            // se vuelve a setear en Modificar().
+            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, fechaVencimiento, usuario ?? null];
+
+            try {
+                [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
+                break;
+            } catch (errorInsert: any) {
+                intentos++;
+                // Log explícito (no silencioso) para poder cruzar timestamp/usuario
+                // la próxima vez que esto dispare - ver memoria pedidos-nroproceso-duplicados.
+                if (errorInsert.code === 'ER_DUP_ENTRY' && intentos < 5) {
+                    console.warn(`[nroProceso duplicado] idProceso=${venta.idProceso} nroProceso=${venta.nroProceso} chocó contra UNIQUE, reintento ${intentos}/5`);
+                    continue;
+                }
+                throw errorInsert;
+            }
+        }
+        venta.id =  resultado!.insertId;
+
+        //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
+        await ActualizarEstadoRelacionado(connection, venta);
+
+        //insertamos los datos del pago de la venta
+        const usuarioActivo = usuario;
+        let pagosProcesados = [...(venta.pagos || [])];
+
+        if(venta.idProceso === IdProceso.NOTA_CREDITO)
+        {
+            await this.RegistrarMovimientoNotaCredito(connection, pagosProcesados, venta, usuarioActivo);
+        }else{
+            // El recibo, los pagos y el movimiento de fondo se generan cuando llegan
+            // pagos reales (venta.pagos con longitud > 0), sin importar si la venta
+            // tiene un comprobante fiscal (venta.factura) o es un Ticket X/Cotización
+            // (idTComprobante = SIN_COMPROBANTE). ProcesarCobroVenta ya contempla el
+            // caso sin factura (usa ptoVenta 9999 como fallback). Antes se exigía
+            // venta.factura también, lo que hacía que toda venta cobrada sin factura
+            // AFIP (Cotizaciones, Pedidos/Notas de Empaque cerrados con Ticket X)
+            // perdiera silenciosamente el pago: no se guardaba ventas_pagos, no había
+            // recibo ni movimiento de fondo. Si se guarda pendiente de facturar (sin
+            // pagos todavía), los pagos quedan solo como intención del front y se
+            // procesan recién en Modificar cuando lleguen los pagos reales.
+            //
+            // Restringido a procesos facturables: Factura(1)/Cotización(2)/Nota de
+            // Débito(4). Presupuesto(5)/Pedido(6)/Nota de Empaque(7) no son ventas
+            // confirmadas todavía: el front les arma igual una línea "Cuenta Corriente"
+            // por el saldo pendiente cuando no tienen formulario de pago (ver
+            // getSaldoPendiente/pagoCompleto en addmod-ventas), y sin este filtro esa
+            // línea fantasma terminaría generando un cobro real sobre un documento que
+            // todavía puede no convertirse nunca en venta.
+            const esProcesoFacturable = [IdProceso.FACTURA, IdProceso.COTIZACION, IdProceso.NOTA_DEBITO].includes(venta.idProceso!);
+            if (esProcesoFacturable && pagosProcesados.length > 0) {
+                await this.ProcesarCobroVenta(connection, venta, pagosProcesados, usuarioActivo);
+            }
+        }
+
+
+        //insertamos los productos de la venta
+        if(venta.productos){
+            for (const element of venta.productos) {
+                element.idVenta = venta.id;
+                await InsertProductoVenta(connection, element, true); // Agregar: venta nueva, resuelve costo
+                const finalizandoCotizacion = venta.idProceso == IdProceso.COTIZACION && venta.estado == EstadoVenta.FINALIZADA;
+
+                // Signo del movimiento de stock atado a idProceso, no a un flag aparte:
+                // una Nota de Crédito SIEMPRE devuelve stock (venga del flujo clásico
+                // desde listado-ventas/notas-venta.component, o de una NC libre cargada
+                // directo). Antes esto dependía de un booleano "desdeNotas" pasado a mano
+                // por cada caller, señal redundante con idProceso que podía desincronizarse
+                // (una NC creada desde otro flujo sin pasar el flag no devolvía stock).
+                // Nota de Débito X (nota-debito-x.component.ts, idProceso=NOTA_DEBITO):
+                // decisión de diseño (jul-2026) - NUNCA descuenta stock, a diferencia
+                // de la NC X que sí puede devolver stock real. La ND X solo registra un
+                // cargo monetario (ej. "CARGO POR DEPÓSITO") y siempre viaja con
+                // productos=[], así que este loop no se ejecuta para ella - no hace
+                // falta una rama explícita acá. Si en el futuro aparece un caso real de
+                // ND con mercadería asociada, es una decisión de negocio aparte (evaluar
+                // ahí si conviene simetría total con NC, ej. resta de stock).
+                // Un ítem no catalogado (tipoItem = PRESUPUESTO) NUNCA mueve stock: su
+                // idProducto no existe en `productos`/`talles_producto`, y no tiene
+                // talles ni línea de talle. Sin este gate, ActualizarInventario llamaba
+                // a ObtenerLineaDeTalle(null) -> devuelve undefined -> TypeError al leer
+                // lineaTalle.talles -> rollback de toda la transacción. Como el CAE se
+                // pide a AFIP ANTES de guardar (ver comentario en Guardar(),
+                // addmod-ventas), eso dejaba un comprobante fiscal emitido y sin registro
+                // en el sistema. Confirmado por diagnóstico (ago-2026) que nunca llegó a
+                // pasar en producción sólo porque nadie facturó un presupuesto todavía.
+                if(element.tipoItem === TipoItemVenta.PRESUPUESTO) continue;
+
+                if(venta.idProceso === IdProceso.NOTA_CREDITO){
+                    await ProductosRepo.ActualizarInventario(connection, element, "+");
+                }else{
+                    if(facturando || finalizandoCotizacion)
+                        await ProductosRepo.ActualizarInventario(connection, element, "-", permitirNegativo);
+                }
+            }
+        }
+     
+        //insertamos los servicios de la venta
+        if(venta.servicios){
+            for (const element of venta.servicios) {
+                element.idVenta = venta.id;
+                await InsertServicioVenta(connection, element);
+            }
+        }
+
+        //insertamos los datos de la factura de la venta
+        if(venta.factura){
+            venta.factura.idVenta = venta.id;
+            await InsertFacturaVenta(connection, venta.factura, venta.idEmpresa!);
+
+            // F3.3 - HANDOFF blindaje facturacion y logs. /facturar todavia no conoce
+            // idVenta (se genera aca, en Agregar/Modificar); si vino un idEmision
+            // (respuesta de FacturacionServ.Facturar) se vincula la fila fe_emisiones
+            // con esta venta, DENTRO de la misma transaccion (ver comentario de
+            // FeEmisionesRepo.VincularVenta - si esta transaccion hace rollback, el
+            // vinculo tiene que revertirse con ella).
+            if (venta.factura.idEmision) {
+                await FeEmisionesRepo.VincularVenta(connection, venta.factura.idEmision, venta.id!);
+            }
+        }
+
+        return venta.id.toString();
+    }
+
     async Agregar(venta:Venta, usuario: string): Promise<string>{
         const connection = await db.getConnection();
 
@@ -776,151 +934,10 @@ class VentasRepository{
         try {
             //Iniciamos una transaccion
             await connection.beginTransaction();
-
-            // Obtenemos el proximo nro de venta e insertamos, con reintento si choca
-            // contra UNIQUE(idProceso, nroProceso). El FOR UPDATE de abajo debería
-            // alcanzar solo para serializar guardados concurrentes, pero en
-            // producción se siguieron viendo nroProceso duplicados incluso con ese
-            // lock puesto (causa de fondo todavía no identificada - ago-2026, ver
-            // memoria pedidos-nroproceso-duplicados). Este reintento es la red de
-            // seguridad real: no importa por qué se calculó mal el número, la base
-            // lo rechaza (ER_DUP_ENTRY) y acá se recalcula contra el estado actual
-            // en vez de dejar que el duplicado se guarde en silencio.
-            const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega,fechaVencimiento,usuarioAlta) " +
-                             " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?,?) ";
-
-            const fechaVencimiento = await ObtenerFechaVencimiento(connection, venta.idProceso, venta.cliente?.id, venta.fecha);
-
-            let resultado: ResultSetHeader;
-            let intentos = 0;
-            while (true) {
-                venta.nroProceso = await ObtenerProximoNroProceso(connection, venta.idProceso);
-                // usuarioAlta: quién CREÓ la venta (§7.a del handoff) - toma el mismo
-                // `usuario` que ya llega por parámetro para los movimientos de fondos, NO
-                // se vuelve a setear en Modificar().
-                const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, fechaVencimiento, usuario ?? null];
-
-                try {
-                    [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
-                    break;
-                } catch (errorInsert: any) {
-                    intentos++;
-                    // Log explícito (no silencioso) para poder cruzar timestamp/usuario
-                    // la próxima vez que esto dispare - ver memoria pedidos-nroproceso-duplicados.
-                    if (errorInsert.code === 'ER_DUP_ENTRY' && intentos < 5) {
-                        console.warn(`[nroProceso duplicado] idProceso=${venta.idProceso} nroProceso=${venta.nroProceso} chocó contra UNIQUE, reintento ${intentos}/5`);
-                        continue;
-                    }
-                    throw errorInsert;
-                }
-            }
-            venta.id =  resultado!.insertId;
-
-            //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
-            await ActualizarEstadoRelacionado(connection, venta);
-
-            //insertamos los datos del pago de la venta
-            const usuarioActivo = usuario;
-            let pagosProcesados = [...(venta.pagos || [])];
-
-            if(venta.idProceso === IdProceso.NOTA_CREDITO)
-            {
-                await this.RegistrarMovimientoNotaCredito(connection, pagosProcesados, venta, usuarioActivo);
-            }else{
-                // El recibo, los pagos y el movimiento de fondo se generan cuando llegan
-                // pagos reales (venta.pagos con longitud > 0), sin importar si la venta
-                // tiene un comprobante fiscal (venta.factura) o es un Ticket X/Cotización
-                // (idTComprobante = SIN_COMPROBANTE). ProcesarCobroVenta ya contempla el
-                // caso sin factura (usa ptoVenta 9999 como fallback). Antes se exigía
-                // venta.factura también, lo que hacía que toda venta cobrada sin factura
-                // AFIP (Cotizaciones, Pedidos/Notas de Empaque cerrados con Ticket X)
-                // perdiera silenciosamente el pago: no se guardaba ventas_pagos, no había
-                // recibo ni movimiento de fondo. Si se guarda pendiente de facturar (sin
-                // pagos todavía), los pagos quedan solo como intención del front y se
-                // procesan recién en Modificar cuando lleguen los pagos reales.
-                //
-                // Restringido a procesos facturables: Factura(1)/Cotización(2)/Nota de
-                // Débito(4). Presupuesto(5)/Pedido(6)/Nota de Empaque(7) no son ventas
-                // confirmadas todavía: el front les arma igual una línea "Cuenta Corriente"
-                // por el saldo pendiente cuando no tienen formulario de pago (ver
-                // getSaldoPendiente/pagoCompleto en addmod-ventas), y sin este filtro esa
-                // línea fantasma terminaría generando un cobro real sobre un documento que
-                // todavía puede no convertirse nunca en venta.
-                const esProcesoFacturable = [IdProceso.FACTURA, IdProceso.COTIZACION, IdProceso.NOTA_DEBITO].includes(venta.idProceso!);
-                if (esProcesoFacturable && pagosProcesados.length > 0) {
-                    await this.ProcesarCobroVenta(connection, venta, pagosProcesados, usuarioActivo);
-                }
-            }
-
-
-            //insertamos los productos de la venta
-            if(venta.productos){
-                for (const element of venta.productos) {
-                    element.idVenta = venta.id;
-                    await InsertProductoVenta(connection, element, true); // Agregar: venta nueva, resuelve costo
-                    const finalizandoCotizacion = venta.idProceso == IdProceso.COTIZACION && venta.estado == EstadoVenta.FINALIZADA;
-
-                    // Signo del movimiento de stock atado a idProceso, no a un flag aparte:
-                    // una Nota de Crédito SIEMPRE devuelve stock (venga del flujo clásico
-                    // desde listado-ventas/notas-venta.component, o de una NC libre cargada
-                    // directo). Antes esto dependía de un booleano "desdeNotas" pasado a mano
-                    // por cada caller, señal redundante con idProceso que podía desincronizarse
-                    // (una NC creada desde otro flujo sin pasar el flag no devolvía stock).
-                    // Nota de Débito X (nota-debito-x.component.ts, idProceso=NOTA_DEBITO):
-                    // decisión de diseño (jul-2026) - NUNCA descuenta stock, a diferencia
-                    // de la NC X que sí puede devolver stock real. La ND X solo registra un
-                    // cargo monetario (ej. "CARGO POR DEPÓSITO") y siempre viaja con
-                    // productos=[], así que este loop no se ejecuta para ella - no hace
-                    // falta una rama explícita acá. Si en el futuro aparece un caso real de
-                    // ND con mercadería asociada, es una decisión de negocio aparte (evaluar
-                    // ahí si conviene simetría total con NC, ej. resta de stock).
-                    // Un ítem no catalogado (tipoItem = PRESUPUESTO) NUNCA mueve stock: su
-                    // idProducto no existe en `productos`/`talles_producto`, y no tiene
-                    // talles ni línea de talle. Sin este gate, ActualizarInventario llamaba
-                    // a ObtenerLineaDeTalle(null) -> devuelve undefined -> TypeError al leer
-                    // lineaTalle.talles -> rollback de toda la transacción. Como el CAE se
-                    // pide a AFIP ANTES de guardar (ver comentario en Guardar(),
-                    // addmod-ventas), eso dejaba un comprobante fiscal emitido y sin registro
-                    // en el sistema. Confirmado por diagnóstico (ago-2026) que nunca llegó a
-                    // pasar en producción sólo porque nadie facturó un presupuesto todavía.
-                    if(element.tipoItem === TipoItemVenta.PRESUPUESTO) continue;
-
-                    if(venta.idProceso === IdProceso.NOTA_CREDITO){
-                        await ProductosRepo.ActualizarInventario(connection, element, "+");
-                    }else{
-                        if(venta.factura || finalizandoCotizacion)
-                            await ProductosRepo.ActualizarInventario(connection, element, "-");
-                    }
-                }
-            }
-         
-            //insertamos los servicios de la venta
-            if(venta.servicios){
-                for (const element of venta.servicios) {
-                    element.idVenta = venta.id;
-                    await InsertServicioVenta(connection, element);
-                }
-            }
-
-            //insertamos los datos de la factura de la venta
-            if(venta.factura){
-                venta.factura.idVenta = venta.id;
-                await InsertFacturaVenta(connection, venta.factura, venta.idEmpresa!);
-
-                // F3.3 - HANDOFF blindaje facturacion y logs. /facturar todavia no conoce
-                // idVenta (se genera aca, en Agregar/Modificar); si vino un idEmision
-                // (respuesta de FacturacionServ.Facturar) se vincula la fila fe_emisiones
-                // con esta venta, DENTRO de la misma transaccion (ver comentario de
-                // FeEmisionesRepo.VincularVenta - si esta transaccion hace rollback, el
-                // vinculo tiene que revertirse con ella).
-                if (venta.factura.idEmision) {
-                    await FeEmisionesRepo.VincularVenta(connection, venta.factura.idEmision, venta.id!);
-                }
-            }
-
+            const resultado = await this.AgregarBody(connection, venta, usuario);
             //Mandamos la transaccion
             await connection.commit();
-            return venta.id.toString();
+            return resultado;
 
         } catch (error:any) {
             //Si ocurre un error volvemos todo para atras
@@ -1052,31 +1069,16 @@ class VentasRepository{
     // valores_acreditar que existía antes de este cambio (ver historial de git).
     async RegistrarMovimientoNotaCredito(connection, pagosOriginales, notaCredito, usuario, devuelveDinero: boolean = false) {
         // Regularización de correlatividad ARCA (sep-2026, ver migración
-        // 20260922120000_add_regularizacionarca_ventas). La factura original puede haber
-        // sido backfilleada directo en producción para un comprobante que ya existía en
-        // ARCA (emitido por error desde testing) pero nunca tuvo un cobro real. En ese
-        // caso la NC que la cancela NO puede generar el saldo a favor de siempre: el
-        // cliente quedaría con crédito por una venta que nunca pagó. Se detecta acá,
-        // apenas entra la función y antes de tocar ventas_pagos/movimientos_fondos,
-        // resolviendo la factura original por su comprobante asociado (notaCredito.factura
-        // ya viene poblado en este punto - se persiste a ventas_factura más abajo en
-        // Agregar(), pero el objeto ya está armado antes). Si está marcada, la NC queda
-        // solo como venta + ventas_factura (ya se insertan en el resto de Agregar()), sin
-        // ningún movimiento real - todo lo demás (CAE real, numeración, Libro IVA) sigue
-        // el camino normal.
-        const comprobanteAsociado = notaCredito.factura?.comprobanteAsociado;
-        if (comprobanteAsociado) {
-            const [facturasOriginales] = await connection.query(
-                `SELECT v.regularizacionArca
-                 FROM ventas_factura vf
-                 JOIN ventas v ON v.id = vf.idVenta
-                 WHERE vf.tipoFactura = ? AND vf.ptoVenta = ? AND vf.ticket = ?`,
-                [comprobanteAsociado.tipo, comprobanteAsociado.puntoVenta, comprobanteAsociado.numero]
-            );
-            if (facturasOriginales[0]?.regularizacionArca) {
-                return;
-            }
-        }
+        // 20260922120000_add_regularizacionarca_ventas). HISTORICO: esta función tuvo acá
+        // un gate que, para una venta con `regularizacionArca=1`, evitaba que su NC generara
+        // saldo a favor (pensado para el Incidente B - comprobantes backfilleados sin cobro
+        // real detrás). Se sacó (sep-2026, HANDOFF blindaje facturacion y logs F4.3): esa
+        // misma columna se reutiliza ahora también para las ventas regularizadas vía
+        // "Pendientes fiscales" (Regularizar), que SÍ tuvieron un cobro real - a esas su NC
+        // debe generar saldo a favor como cualquier otra. Confirmado con el cliente que no
+        // quedan ventas del Incidente B original pendientes de recibir una NC futura, así que
+        // `regularizacionArca` pasa a ser puramente informativo (tag en listado-ventas), sin
+        // ningún efecto sobre el movimiento de la NC.
 
         // NC libre (cargada directo, sin una venta de origen de la que prorratear
         // métodos de pago, ej. desde una pantalla de NC standalone): no hay nada
@@ -1197,114 +1199,121 @@ class VentasRepository{
         }
     }
 
+    // F4.1 - HANDOFF blindaje facturacion y logs. Mismo patron que AgregarBody: cuerpo
+    // extraido para que /ventas/emitir lo corra dentro de su propia transaccion.
+    // Modificar() sigue siendo el wrapper publico, sin cambio de comportamiento.
+    // Mismo `facturando` que AgregarBody, mismo motivo.
+    private async ModificarBody(connection: PoolConnection, venta:Venta, usuario: string, facturando: boolean = !!venta.factura, permitirNegativo: boolean = false): Promise<string> {
+        //Insertamos la venta
+        await UpdateVenta(connection,venta);
+
+        //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
+        await ActualizarEstadoRelacionado(connection, venta);
+
+        if(venta.idProceso === IdProceso.NOTA_CREDITO){
+            // Notas de credito: nunca generan recibo, se mantiene el comportamiento original.
+            await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
+            if(venta.pagos){
+                for (const element of venta.pagos) {
+                    element.idVenta = venta.id;
+                    await InsertPagoVenta(connection, element);
+                }
+            }
+        } else if ([IdProceso.FACTURA, IdProceso.COTIZACION, IdProceso.NOTA_DEBITO].includes(venta.idProceso!) && (venta.pagos || []).length > 0) {
+            // El recibo/pago/movimiento de fondo se procesa cuando llegan pagos
+            // reales, con o sin comprobante fiscal (ver mismo criterio en Agregar).
+            // Restringido a procesos facturables (1,2,4): Presupuesto/Pedido/Nota de
+            // Empaque no deben generar cobro real todavía (ver comentario en Agregar).
+            // Si ya existe un recibo (la venta se cobró en un guardado anterior),
+            // se reutiliza en vez de generar uno nuevo y no se vuelve a disparar el
+            // movimiento de fondo (ya se registró en su momento).
+            const [reciboPrevio]: any = await connection.query(
+                "SELECT idRecibo FROM ventas_pagos WHERE idVenta = ? AND idRecibo IS NOT NULL LIMIT 1",
+                [venta.id]
+            );
+            const idReciboExistente = reciboPrevio.length ? reciboPrevio[0].idRecibo : null;
+
+            await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
+
+            const pagosProcesados = venta.pagos || [];
+            if (pagosProcesados.length > 0) {
+                if (idReciboExistente) {
+                    for (const pago of pagosProcesados) {
+                        const { tipo } = await GetMetodoPago(connection, pago.idMetodo);
+                        pago.tipo = tipo;
+                        pago.idVenta = venta.id;
+                        pago.idRecibo = tipo === 'CUENTA_CORRIENTE' ? null : idReciboExistente;
+                        pago.idVentaPago = await InsertPagoVenta(connection, pago);
+                    }
+
+                    // La composición de métodos pudo cambiar (ej: parte pasó a Cuenta
+                    // Corriente), así que el total del recibo hay que recalcularlo.
+                    const totalPagado = pagosProcesados
+                        .filter(p => p.tipo !== 'CUENTA_CORRIENTE')
+                        .reduce((acc, p) => acc + (p.monto || 0), 0);
+                    await connection.query(
+                        "UPDATE recibos SET total = ? WHERE id = ?",
+                        [totalPagado, idReciboExistente]
+                    );
+                } else {
+                    await this.ProcesarCobroVenta(connection, venta, pagosProcesados, usuario);
+                }
+            }
+        }
+
+        await connection.query("DELETE FROM ventas_productos WHERE idVenta = ?", [venta.id]);
+        //insertamos los productos de la venta
+        if(venta.productos){
+            for (const element of venta.productos) {
+                element.idVenta = venta.id;
+                await InsertProductoVenta(connection, element, false); // Modificar: no recalcula costo, ver nota arriba
+
+                // Mismo gate que en Agregar: un ítem no catalogado no mueve stock.
+                if(element.tipoItem === TipoItemVenta.PRESUPUESTO) continue;
+
+                if(facturando)
+                    await ProductosRepo.ActualizarInventario(connection, element, "-", permitirNegativo)
+            }
+        }
+     
+        await connection.query("DELETE FROM ventas_servicios WHERE idVenta = ?", [venta.id]);
+        //insertamos los servicios de la venta
+        if(venta.servicios){
+            for (const element of venta.servicios) {
+                element.idVenta = venta.id;
+                await InsertServicioVenta(connection, element);
+            }
+        }
+
+        //insertamos los datos de la factura de la venta
+        if(venta.factura){
+            venta.factura.idVenta = venta.id;
+            await InsertFacturaVenta(connection, venta.factura, venta.idEmpresa!);
+
+            // F3.3 - HANDOFF blindaje facturacion y logs. /facturar todavia no conoce
+            // idVenta (se genera aca, en Agregar/Modificar); si vino un idEmision
+            // (respuesta de FacturacionServ.Facturar) se vincula la fila fe_emisiones
+            // con esta venta, DENTRO de la misma transaccion (ver comentario de
+            // FeEmisionesRepo.VincularVenta - si esta transaccion hace rollback, el
+            // vinculo tiene que revertirse con ella).
+            if (venta.factura.idEmision) {
+                await FeEmisionesRepo.VincularVenta(connection, venta.factura.idEmision, venta.id!);
+            }
+        }
+
+        return "OK"
+    }
+
     async Modificar(venta:Venta, usuario: string): Promise<string>{
         const connection = await db.getConnection();
-        
+
         try {
-        
             //Iniciamos una transaccion
             await connection.beginTransaction();
-
-            //Insertamos la venta
-            await UpdateVenta(connection,venta);
-
-            //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
-            await ActualizarEstadoRelacionado(connection, venta);
-
-            if(venta.idProceso === IdProceso.NOTA_CREDITO){
-                // Notas de credito: nunca generan recibo, se mantiene el comportamiento original.
-                await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
-                if(venta.pagos){
-                    for (const element of venta.pagos) {
-                        element.idVenta = venta.id;
-                        await InsertPagoVenta(connection, element);
-                    }
-                }
-            } else if ([IdProceso.FACTURA, IdProceso.COTIZACION, IdProceso.NOTA_DEBITO].includes(venta.idProceso!) && (venta.pagos || []).length > 0) {
-                // El recibo/pago/movimiento de fondo se procesa cuando llegan pagos
-                // reales, con o sin comprobante fiscal (ver mismo criterio en Agregar).
-                // Restringido a procesos facturables (1,2,4): Presupuesto/Pedido/Nota de
-                // Empaque no deben generar cobro real todavía (ver comentario en Agregar).
-                // Si ya existe un recibo (la venta se cobró en un guardado anterior),
-                // se reutiliza en vez de generar uno nuevo y no se vuelve a disparar el
-                // movimiento de fondo (ya se registró en su momento).
-                const [reciboPrevio]: any = await connection.query(
-                    "SELECT idRecibo FROM ventas_pagos WHERE idVenta = ? AND idRecibo IS NOT NULL LIMIT 1",
-                    [venta.id]
-                );
-                const idReciboExistente = reciboPrevio.length ? reciboPrevio[0].idRecibo : null;
-
-                await connection.query("DELETE FROM ventas_pagos WHERE idVenta = ?", [venta.id]);
-
-                const pagosProcesados = venta.pagos || [];
-                if (pagosProcesados.length > 0) {
-                    if (idReciboExistente) {
-                        for (const pago of pagosProcesados) {
-                            const { tipo } = await GetMetodoPago(connection, pago.idMetodo);
-                            pago.tipo = tipo;
-                            pago.idVenta = venta.id;
-                            pago.idRecibo = tipo === 'CUENTA_CORRIENTE' ? null : idReciboExistente;
-                            pago.idVentaPago = await InsertPagoVenta(connection, pago);
-                        }
-
-                        // La composición de métodos pudo cambiar (ej: parte pasó a Cuenta
-                        // Corriente), así que el total del recibo hay que recalcularlo.
-                        const totalPagado = pagosProcesados
-                            .filter(p => p.tipo !== 'CUENTA_CORRIENTE')
-                            .reduce((acc, p) => acc + (p.monto || 0), 0);
-                        await connection.query(
-                            "UPDATE recibos SET total = ? WHERE id = ?",
-                            [totalPagado, idReciboExistente]
-                        );
-                    } else {
-                        await this.ProcesarCobroVenta(connection, venta, pagosProcesados, usuario);
-                    }
-                }
-            }
-
-            await connection.query("DELETE FROM ventas_productos WHERE idVenta = ?", [venta.id]);
-            //insertamos los productos de la venta
-            if(venta.productos){
-                for (const element of venta.productos) {
-                    element.idVenta = venta.id;
-                    await InsertProductoVenta(connection, element, false); // Modificar: no recalcula costo, ver nota arriba
-
-                    // Mismo gate que en Agregar: un ítem no catalogado no mueve stock.
-                    if(element.tipoItem === TipoItemVenta.PRESUPUESTO) continue;
-
-                    if(venta.factura)
-                        await ProductosRepo.ActualizarInventario(connection, element, "-")
-                }
-            }
-         
-            await connection.query("DELETE FROM ventas_servicios WHERE idVenta = ?", [venta.id]);
-            //insertamos los servicios de la venta
-            if(venta.servicios){
-                for (const element of venta.servicios) {
-                    element.idVenta = venta.id;
-                    await InsertServicioVenta(connection, element);
-                }
-            }
-
-            //insertamos los datos de la factura de la venta
-            if(venta.factura){
-                venta.factura.idVenta = venta.id;
-                await InsertFacturaVenta(connection, venta.factura, venta.idEmpresa!);
-
-                // F3.3 - HANDOFF blindaje facturacion y logs. /facturar todavia no conoce
-                // idVenta (se genera aca, en Agregar/Modificar); si vino un idEmision
-                // (respuesta de FacturacionServ.Facturar) se vincula la fila fe_emisiones
-                // con esta venta, DENTRO de la misma transaccion (ver comentario de
-                // FeEmisionesRepo.VincularVenta - si esta transaccion hace rollback, el
-                // vinculo tiene que revertirse con ella).
-                if (venta.factura.idEmision) {
-                    await FeEmisionesRepo.VincularVenta(connection, venta.factura.idEmision, venta.id!);
-                }
-            }
-
+            const resultado = await this.ModificarBody(connection, venta, usuario);
             //Mandamos la transaccion
             await connection.commit();
-            return "OK"
+            return resultado;
 
         } catch (error:any) {
             //Si ocurre un error volvemos todo para atras
@@ -1315,6 +1324,68 @@ class VentasRepository{
         }
     }
 
+    // F4.1 - HANDOFF blindaje facturacion y logs. Metodos usados por FacturacionService
+    // (endpoint /ventas/emitir) para persistir la venta DENTRO de su propia transaccion,
+    // compartida con el pedido de CAE a ARCA. A diferencia de Agregar()/Modificar(), acá
+    // el caller abre y cierra la transaccion (no estos metodos), y la venta llega
+    // TODAVIA SIN venta.factura: AgregarBody/ModificarBody no insertan nada en
+    // ventas_factura si no hay factura seteada (mismo `if(venta.factura)` de siempre), asi
+    // que el stock/la venta se persisten primero, y recien despues de que ARCA aprueba el
+    // CAE se llama a VincularFacturaVenta con venta.factura ya completo.
+    async PersistirVentaNueva(connection: PoolConnection, venta: Venta, usuario: string): Promise<string> {
+        // facturando=true explicito: ver comentario en AgregarBody.
+        return this.AgregarBody(connection, venta, usuario, true);
+    }
+
+    async PersistirVentaExistente(connection: PoolConnection, venta: Venta, usuario: string): Promise<string> {
+        return this.ModificarBody(connection, venta, usuario, true);
+    }
+
+    // Mismo bloque que ya corre dentro de AgregarBody/ModificarBody cuando venta.factura
+    // viene seteado desde el arranque (caso Cotizacion/NC X, que siguen llamando a
+    // Agregar/Modificar directo). Para /ventas/emitir se llama aparte, una vez que ARCA
+    // ya aprobo el CAE y venta.factura se completo con el resultado.
+    async VincularFacturaVenta(connection: PoolConnection, venta: Venta): Promise<void> {
+        if (venta.factura) {
+            venta.factura.idVenta = venta.id;
+            await InsertFacturaVenta(connection, venta.factura, venta.idEmpresa!);
+
+            if (venta.factura.idEmision) {
+                await FeEmisionesRepo.VincularVenta(connection, venta.factura.idEmision, venta.id!);
+            }
+        }
+    }
+
+    // Wrapper publico de ValidarFacturacionDePresupuesto (funcion de modulo, no exportada)
+    // para que FacturacionService la corra como primer paso de /ventas/emitir (validacion
+    // de negocio, sin ARCA de por medio), igual que ya hace Agregar().
+    async ValidarPresupuestoParaFacturar(connection: PoolConnection, venta: Venta): Promise<string | null> {
+        return ValidarFacturacionDePresupuesto(connection, venta);
+    }
+
+    // F4.3 - HANDOFF blindaje facturacion y logs. Persiste la venta de un pendiente
+    // fiscal (fe_emisiones APROBADO_SIN_REGISTRAR o INCIERTO-que-existia) a partir del
+    // `payloadVenta` guardado, SIN volver a llamar a ARCA - el CAE ya es real. A
+    // diferencia de PersistirVentaNueva/PersistirVentaExistente:
+    // - permitirNegativo=true en ActualizarInventario (decision de negocio: el
+    //   comprobante fiscal manda sobre el stock, sec. 2 del handoff).
+    // - marca ventas.regularizacionArca=1 DESPUES de persistir, con un UPDATE aparte
+    //   (ni AgregarBody ni UpdateVenta tocan esa columna hoy - no se las modifica para
+    //   este unico caso, total son todos los otros callers los que las usan).
+    async PersistirVentaRegularizada(connection: PoolConnection, venta: Venta, usuario: string, modificando: boolean): Promise<string> {
+        if (modificando) {
+            // ModificarBody devuelve "OK" (no un id): la venta modificada ya trae su
+            // propio `id` en el payload, igual que Emitir() lo usa para su propia rama
+            // `modificando`.
+            await this.ModificarBody(connection, venta, usuario, true, true);
+        } else {
+            venta.id = Number(await this.AgregarBody(connection, venta, usuario, true, true));
+        }
+
+        await connection.query("UPDATE ventas SET regularizacionArca = 1 WHERE id = ?", [venta.id]);
+
+        return venta.id!.toString();
+    }
 
     async Aprobar(data:any){
         const connection = await db.getConnection();

@@ -151,6 +151,19 @@ router.post('/facturar', authMiddleware, async (req:Request, res:Response, next)
         next(error);
     }
 });
+
+// F4.1 - HANDOFF blindaje facturacion y logs. Endpoint unificado: persiste la venta y
+// pide el CAE en una sola operacion (a diferencia de /facturar + /agregar|/modificar,
+// que son dos llamadas separadas). Body: { venta, objFacturar, modificando }. Todavia
+// no lo usa el front (eso es F4.2) - /facturar sigue activo para Cotizacion/NC X.
+router.post('/emitir', authMiddleware, async (req:Request, res:Response, next) => {
+    try{
+        const { venta, objFacturar, modificando } = req.body;
+        res.json(await FacturacionServ.Emitir(venta, objFacturar, !!modificando, req.requestId, req.usuario?.usuario));
+    } catch(error){
+        next(error);
+    }
+});
 //#endregion
 
 // Export the router
