@@ -16,6 +16,7 @@ function puedeVerCostoInforme(req: Request): boolean {
 }
 
 import { crearExcelVentas } from '../services/excelVentasService';
+import { crearExcelPreFacturacion } from '../services/excelPreFacturacionService';
 import { crearExcelLibroIvaVentas } from '../services/excelLibroIvaService';
 import { crearExcelConciliacion } from '../services/excelConciliacionService';
 import { crearExcelProductos } from '../services/excelProductosService';
@@ -111,6 +112,26 @@ router.post('/ventas-excel', async (req, res) => {
     }
 });
 
+
+// Export de la pantalla Pre-Facturación (Presupuesto/Pedido/Nota de Empaque). Independiente de
+// /ventas-excel: esas queries están recortadas a comprobantes de facturación (procesos 1-4).
+router.post('/prefacturacion-excel', async (req, res) => {
+    try {
+        const documentos = await VentasRepo.ObtenerReportePreFacturacion(req.body);
+        const detalle = await VentasRepo.ObtenerDetallePreFacturacion(req.body);
+
+        const buffer = await crearExcelPreFacturacion(documentos, detalle);
+
+        res.setHeader('Content-Disposition', 'attachment; filename="prefacturacion.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch(error:any){
+        let msg = "Error al intentar generar el excel de pre-facturación.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
 
 router.post('/libro-iva-ventas-excel', async (req, res) => {
     try {

@@ -56,7 +56,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[], re
   sheet2.columns = [
     { header: 'Proceso', key: 'proceso', width: 15 },
     { header: 'N° Proceso', key: 'nroProceso', width: 15 },
-    { header: 'Punto de venta', key: 'punto_venta', width: 20 },
+    { header: 'Canal de venta', key: 'punto_venta', width: 20 },
     { header: 'Fecha / Hora', key: 'fecha_hora', width: 20 },
     { header: 'Cliente', key: 'cliente', width: 30 },
     { header: 'Venta', key: 'venta', width: 15 },
@@ -114,7 +114,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[], re
   sheet3.columns = [
     { header: 'Proceso', key: 'proceso', width: 15 },
     { header: 'Fecha / Hora', key: 'fecha_hora', width: 20 },
-    { header: 'Punto de venta', key: 'punto_venta', width: 20 },
+    { header: 'Canal de venta', key: 'punto_venta', width: 20 },
     { header: 'Cliente', key: 'cliente', width: 30 },
     { header: 'Facturante', key: 'facturante', width: 25 },
     { header: 'Remito', key: 'remito', width: 20 },

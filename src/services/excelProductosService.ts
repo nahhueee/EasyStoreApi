@@ -52,7 +52,7 @@ export async function crearExcelProductos(data: any[]) {
   // 3. Encabezados de tallas (filas 1-3, columnas I-R)
   const encabezadosTallas = [
     ["XXP", "PE", "ME", "GR", "XXG", "", "", "", "", ""],
-    [4, 6, 8, 10, 12, 14, 16, 18, "", ""],
+    ["4", "6-8", "8-10", "10-12", "12-14", "14-16", "16-18", "18", "", ""],
     [28, 30, 32, 34, 36, 38, 40, 42, 44, 46],
   ];
 

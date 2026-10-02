@@ -1,6 +1,6 @@
 import db from '../db';
 import { RowDataPacket } from 'mysql2';
-import { IdProceso, SQL_METODO_PAGO_CASE } from '../models/ventaEstados';
+import { IdProceso, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO } from '../models/ventaEstados';
 const moment = require('moment');
 
 /**
@@ -150,28 +150,30 @@ class ConciliacionRepository {
                     IF(v.idProceso = ${IdProceso.NOTA_CREDITO},
                         IF(prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                             v.total,
-                            IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0)
+                            (IFNULL(prendas.total_prendas, 0) - IF(${SQL_LISTA_PRECIO_NETO}, IFNULL(prendas.descuento_prendas, 0), 0)) + IFNULL(servicios.total_servicios_venta, 0)
                         ) * -1,
                         IF(v.idProceso = ${IdProceso.NOTA_DEBITO} AND prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                             v.total,
-                            IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0)
+                            (IFNULL(prendas.total_prendas, 0) - IF(${SQL_LISTA_PRECIO_NETO}, IFNULL(prendas.descuento_prendas, 0), 0)) + IFNULL(servicios.total_servicios_venta, 0)
                         )
                     ) AS venta,
                     IF(v.idProceso = ${IdProceso.NOTA_CREDITO},
-                        (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0)) * -1,
-                        (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0))
+                        (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0) - IF(${SQL_LISTA_PRECIO_NETO}, IFNULL(servicios.descuento_servicios, 0), 0)) * -1,
+                        (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0) - IF(${SQL_LISTA_PRECIO_NETO}, IFNULL(servicios.descuento_servicios, 0), 0))
                     ) AS servicio,
-                    IF(v.idProceso = ${IdProceso.NOTA_CREDITO},
-                        IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0),
-                        (IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0)) * -1
+                    IF(${SQL_LISTA_PRECIO_NETO}, 0,
+                        IF(v.idProceso = ${IdProceso.NOTA_CREDITO},
+                            IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0),
+                            (IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0)) * -1
+                        )
                     ) AS descuentoMonto,
                     -- % efectivo (Descuento$/Bruto$), como número 0..1 (B4-204) - no como texto "50.00 %".
-                    IFNULL(
+                    IF(${SQL_LISTA_PRECIO_NETO}, 0, IFNULL(
                         ROUND(
                             (IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0))
                             / NULLIF(IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0), 0)
                         , 4),
-                    0) AS descuentoPorcentaje,
+                    0)) AS descuentoPorcentaje,
                     -- Corrección 21/09/2026 §2: 10% del NETO (bruto - descuento), no del
                     -- bruto. El cálculo anterior aplicaba (1 - v.descuento/100) sobre
                     -- prendas.total_prendas, pero v.descuento es el descuento a NIVEL

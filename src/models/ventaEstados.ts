@@ -69,6 +69,16 @@ export enum EstadoVenta {
 }
 
 /**
+ * Estados en los que un Presupuesto/Pedido/Nota de Empaque ya está CERRADO (circuito terminado:
+ * facturado, o presupuesto usado para armar otro documento). Todo lo demás (Aprobado/a, Pendiente,
+ * Asociado/a) sigue "pendiente" a efectos del export de Pre-Facturación (oct-2026): todavía no hay
+ * comprobante, así que la mercadería sigue afectada. Asociado/a cuenta como pendiente a propósito.
+ */
+export const ESTADOS_PRE_CERRADOS: string[] = [
+    EstadoVenta.FACTURADO, EstadoVenta.FACTURADA, EstadoVenta.FINALIZADA, EstadoVenta.RELACIONADO,
+];
+
+/**
  * A qué proceso destino (idProceso) apunta cada tipoRelacionado, y qué
  * estado toma ese relacionado mientras está "en uso" (todavía no cerrado
  * por una Factura/Cotización).
@@ -168,3 +178,55 @@ export const SQL_METODO_PAGO_CASE = `
         ELSE mp.nombre
     END
 `;
+
+/**
+ * Descripción fija con la que el frontend persiste el recargo por transferencia como una
+ * línea más de ventas_productos (espejo de DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA en
+ * ChazaGolfApp venta.constants.ts - no se puede importar entre repos, se duplica el literal).
+ */
+export const DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA = 'Recargo transferencia 10%';
+
+/**
+ * Punto de venta del COMPROBANTE (B4-219, oct-2026): el que se le informó a ARCA
+ * (ventas_factura.ptoVenta), nunca empresas.puntoVta ni puntos_venta. Un comprobante no
+ * fiscal (Cotización, NC/ND X) no tiene fila en ventas_factura -> '9999'. Alias requerido:
+ * `vf` = ventas_factura. Mismo criterio que conciliacionRepository.ts. Que el mismo PV se
+ * repita entre facturantes distintos es correcto (es único por CUIT): no renumerar.
+ */
+export const SQL_PUNTO_VENTA_COMPROBANTE = `IF(vf.idVenta IS NOT NULL, LPAD(vf.ptoVenta, 4, '0'), '9999')`;
+
+/**
+ * Recargo por transferencia (10%), SIN signo, para queries de reporte con alias
+ * `v` = ventas y subqueries `prendas` / `servicios` (ver ObtenerReporteVentas).
+ * - Venta con la línea real del recargo en ventas_productos (post 21/09/2026): se usa el
+ *   importe de esa línea (prendas.recargo_linea). `prendas.total_prendas` ya la EXCLUYE.
+ * - Venta histórica sin línea: 10% del NETO de TODOS los ítems de la factura (productos +
+ *   todos los servicios, descontando el importeDescuento real de cada ítem). No usa
+ *   v.descuento (cabecera): con descuento por ítem ese campo queda en 0 y el 10% terminaba
+ *   calculándose sobre el bruto.
+ */
+export const SQL_RECARGO_TRANSFERENCIA = `
+    IF(IFNULL(prendas.recargo_linea, 0) <> 0,
+        prendas.recargo_linea,
+        ROUND((
+            (IFNULL(prendas.total_prendas, 0) - IFNULL(prendas.descuento_prendas, 0))
+            + (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.descuento_servicios, 0))
+        ) * 0.10, 2)
+    )
+`;
+
+/**
+ * Listas de precio cuyo descuento es parte del PRECIO, no un descuento visible (oct-2026,
+ * pedido del cliente): Lista 4.0/4.5/5.0 (ids 4, 5, 6 - espejo de LISTA_PRECIO en el frontend,
+ * venta.constants.ts; Lista 3.0 = id 2 queda afuera a propósito, esa sí muestra su %).
+ * Para estas ventas los reportes tratan el importe como YA neto de lista: Venta = total -
+ * importeDescuento, Descuento $ = 0, Descuento % = 0. Aplica igual a ventas históricas
+ * (que persistieron bruto + importeDescuento) y a las nuevas (que persisten el unitario ya
+ * neto, importeDescuento = 0) - la misma fórmula da lo correcto en las dos.
+ */
+export const IDS_LISTA_PRECIO_NETO = [4, 5, 6] as const;
+export function esListaPrecioNeto(idLista?: number | null): boolean {
+    return idLista != null && (IDS_LISTA_PRECIO_NETO as readonly number[]).includes(Number(idLista));
+}
+/** Fragmento SQL equivalente a esListaPrecioNeto, para queries con alias `v` = ventas. */
+export const SQL_LISTA_PRECIO_NETO = `v.idLista IN (${IDS_LISTA_PRECIO_NETO.join(', ')})`;

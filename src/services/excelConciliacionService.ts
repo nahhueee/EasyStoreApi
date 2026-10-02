@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { MapearListaPrecio } from '../data/clientesRepository';
 import { TIPOS_COMPROBANTE_ARCA } from '../models/tiposComprobanteArca';
-import { IdProceso } from '../models/ventaEstados';
+import { IdProceso, esListaPrecioNeto } from '../models/ventaEstados';
 import { aperturaIva } from './aperturaIva';
 const moment = require('moment');
 
@@ -1821,6 +1821,27 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
         // un comprobante real con importeNeto propio, la tasa efectiva es 0%, no "sin dato").
         f.alicIva = f.importeNeto !== 0 ? round2((f.iva / f.importeNeto) * 100) : 0;
     });
+
+    // Oct-2026 (pedido del cliente): en Lista 4.0/4.5/5.0 la lista ES el precio - no hay
+    // "precio de lista" ni "descuento" que mostrar. Para las líneas reales de esas ventas
+    // (históricas o nuevas, la fórmula es la misma) el precio de lista, el precio unitario
+    // neto y el importe s/ descuento pasan a ser el NETO GRAVADO ya calculado arriba
+    // (post-prorrateo de vf.iva), y el descuento queda en 0 / 0%. Importe total, neto e IVA
+    // no se tocan: siguen cerrando contra el comprobante. Antes esto mostraba el precio de
+    // catálogo (sin IVA) contra un unitario con IVA y daba un % de descuento sin sentido
+    // (39,5% en vez de 50%).
+    if (esListaPrecioNeto(cabecera.idListaVenta)) {
+        filas.forEach(f => {
+            if (f.idLinea == null) return; // pseudolíneas: sin precio/descuento
+            const cant = Number(f.cantidad) || 0;
+            const unitarioNeto = cant !== 0 ? f.importeNeto / cant : null;
+            f.precioListaUnit = unitarioNeto;
+            f.precioUnitNeto = unitarioNeto;
+            f.importeBruto = f.importeNeto;
+            f.importeDesc = 0;
+            f.pctDesc = 0;
+        });
+    }
 
     // Numeración final y signo de NC (§6) - cantidad e importes, no precios
     // unitarios, alícuotas ni porcentajes (ver comentario de la función). costoTotal es

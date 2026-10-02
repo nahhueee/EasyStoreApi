@@ -333,11 +333,15 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 
         // #region FILTROS
         if (filtros.nombre != null && filtros.nombre != "") 
-            filtro += " AND c.nombre LIKE '%"+ filtros.nombre.toUpperCase().trim() + "%'";
+            filtro += FiltroCodigoONombre(filtros.nombre);
         if (filtros.condicionIva != null && filtros.condicionIva != "")
             filtro += " AND c.idCondIva = "+ filtros.condicionIva;
         if (filtros.condicionPago != null && filtros.condicionPago != "")
             filtro += " AND c.idCondicionPago = "+ filtros.condicionPago;
+        if (filtros.categoria != null && filtros.categoria != "" && !isNaN(parseInt(filtros.categoria)))
+            filtro += " AND c.idCategoria = "+ parseInt(filtros.categoria);
+        if (filtros.listaPrecio != null && filtros.listaPrecio != "" && !isNaN(parseInt(filtros.listaPrecio)))
+            filtro += " AND c.idListaPrecio = "+ parseInt(filtros.listaPrecio);
         if (filtros.documento != null && filtros.documento != 0)
             filtro += " AND c.documento = " + filtros.documento;
         if (filtros.idCliente != null && filtros.idCliente != 0)
@@ -375,18 +379,37 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
     }
 }
 
-// Mismos filtros que ObtenerQuery (nombre, condicionIva, condicionPago, documento), para que
+// Filtro del buscador del listado: "Código o nombre". Si el texto son solo dígitos matchea por
+// código exacto (c.id) además del LIKE por nombre; si no, solo por nombre. Escapa \ y ' porque la
+// query se arma por concatenación (antes un apóstrofe en el texto rompía la consulta).
+function FiltroCodigoONombre(texto:any):string {
+    const t = String(texto).trim();
+    if (t === "") return "";
+
+    const seguro = t.toUpperCase().replace(/\\/g, "\\\\").replace(/'/g, "''");
+    const porNombre = "c.nombre LIKE '%" + seguro + "%'";
+
+    return /^\d+$/.test(t)
+        ? " AND (" + porNombre + " OR c.id = " + parseInt(t, 10) + ")"
+        : " AND " + porNombre;
+}
+
+// Mismos filtros que ObtenerQuery (nombre/código, condicionIva, condicionPago, categoria, listaPrecio, documento), para que
 // el export siempre refleje exactamente lo que el listado tiene filtrado en pantalla.
 async function ObtenerQueryParaExcel(filtros:any):Promise<string>{
     try {
         let filtro:string = "";
 
         if (filtros.nombre != null && filtros.nombre != "")
-            filtro += " AND c.nombre LIKE '%"+ filtros.nombre.toUpperCase().trim() + "%'";
+            filtro += FiltroCodigoONombre(filtros.nombre);
         if (filtros.condicionIva != null && filtros.condicionIva != "")
             filtro += " AND c.idCondIva = "+ filtros.condicionIva;
         if (filtros.condicionPago != null && filtros.condicionPago != "")
             filtro += " AND c.idCondicionPago = "+ filtros.condicionPago;
+        if (filtros.categoria != null && filtros.categoria != "" && !isNaN(parseInt(filtros.categoria)))
+            filtro += " AND c.idCategoria = "+ parseInt(filtros.categoria);
+        if (filtros.listaPrecio != null && filtros.listaPrecio != "" && !isNaN(parseInt(filtros.listaPrecio)))
+            filtro += " AND c.idListaPrecio = "+ parseInt(filtros.listaPrecio);
         if (filtros.documento != null && filtros.documento != 0)
             filtro += " AND c.documento = " + filtros.documento;
 

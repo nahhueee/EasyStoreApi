@@ -6,7 +6,7 @@ import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { PoolConnection } from 'mysql2/promise';
 import { Cliente } from '../models/Cliente';
-import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, SQL_METODO_PAGO_CASE } from '../models/ventaEstados';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 import { analizarTalle } from '../services/excelConciliacionService';
 import { FeEmisionesRepo } from './feEmisionesRepository';
@@ -203,18 +203,18 @@ class VentasRepository{
                 IF(v.idProceso = 3,
                     IF(prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                         v.total,
-                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0)
+                        (IFNULL(prendas.total_prendas, 0) - IF(${SQL_LISTA_PRECIO_NETO}, IFNULL(prendas.descuento_prendas, 0), 0)) + IFNULL(servicios.total_servicios_venta, 0)
                     ) * -1,
                     IF(v.idProceso = 4 AND prendas.total_prendas IS NULL AND servicios.total_servicios IS NULL,
                         v.total,
-                        IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios_venta, 0)
+                        (IFNULL(prendas.total_prendas, 0) - IF(${SQL_LISTA_PRECIO_NETO}, IFNULL(prendas.descuento_prendas, 0), 0)) + IFNULL(servicios.total_servicios_venta, 0)
                     )
                 ) AS venta,
                 -- "servicio" = total_servicios (todos) menos el subtotal ya reclasificado
                 -- arriba (total_servicios_venta), para no duplicarlo.
                 IF(v.idProceso = 3,
-                    (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0)) * -1,
-                    (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0))
+                    (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0) - IF(${SQL_LISTA_PRECIO_NETO}, IFNULL(servicios.descuento_servicios, 0), 0)) * -1,
+                    (IFNULL(servicios.total_servicios, 0) - IFNULL(servicios.total_servicios_venta, 0) - IF(${SQL_LISTA_PRECIO_NETO}, IFNULL(servicios.descuento_servicios, 0), 0))
                 ) AS servicio,
                 -- Suma el importeDescuento REAL persistido por ítem (productos + servicios),
                 -- no un recálculo de venta.descuento% asumiendo que el descuento nunca toca
@@ -227,20 +227,20 @@ class VentasRepository{
                 -- - Descuento + Ajuste" no cerraba contra "Cobrado". Sumar importeDescuento
                 -- real es correcto siempre que el dato esté persistido (confirmado por
                 -- auditoría jul-2026: sin casos pendientes fuera de #69/#120).
-                IF(v.idProceso = 3,
-                    IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0),
-                    (IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0)) * -1
+                IF(${SQL_LISTA_PRECIO_NETO}, 0,
+                    IF(v.idProceso = 3,
+                        IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0),
+                        (IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0)) * -1
+                    )
                 ) AS des,
-                -- Recargo del 10% por transferencia (ajusteTransf=1), aplicado sobre
-                -- Venta neta de descuento + Servicio (el descuento nunca toca Servicio,
-                -- mismo criterio que "des" arriba). Sin esta columna, "Venta + Servicio -
+                -- Recargo del 10% por transferencia (ajusteTransf=1) - ver
+                -- SQL_RECARGO_TRANSFERENCIA (ventaEstados.ts): línea real si existe, si no 10%
+                -- del neto de TODOS los ítems (productos + servicios, con su descuento real).
+                -- Sin esta columna, "Venta + Servicio -
                 -- Descuento" no cerraba contra "Cobrado" en ninguna venta con recargo por
                 -- transferencia (pedido explícito del usuario, jul-2026).
                 IF(v.ajusteTransf = 1,
-                    IF(v.idProceso = 3,
-                        ROUND((IFNULL(prendas.total_prendas, 0) * (1 - IFNULL(v.descuento, 0) / 100) + IFNULL(servicios.total_servicios, 0)) * 0.10, 2) * -1,
-                        ROUND((IFNULL(prendas.total_prendas, 0) * (1 - IFNULL(v.descuento, 0) / 100) + IFNULL(servicios.total_servicios, 0)) * 0.10, 2)
-                    ),
+                    IF(v.idProceso = 3, (${SQL_RECARGO_TRANSFERENCIA}) * -1, (${SQL_RECARGO_TRANSFERENCIA})),
                     0
                 ) AS ajuste,
                 -- IVA discriminado según lo confirmado por AFIP en ventas_factura (mismo
@@ -268,17 +268,17 @@ class VentasRepository{
                 -- afuera resuelve ese caso a "0 %".
                 CONCAT(
                     IFNULL(
-                        ROUND(
+                        IF(${SQL_LISTA_PRECIO_NETO}, 0, ROUND(
                             (IFNULL(prendas.descuento_prendas, 0) + IFNULL(servicios.descuento_servicios, 0))
                             / NULLIF(IFNULL(prendas.total_prendas, 0) + IFNULL(servicios.total_servicios, 0), 0)
                             * 100,
-                        2),
+                        2)),
                     0),
                     ' %'
                 ) AS descuento,
                 com.descripcion AS comprobante,
                 CONCAT(
-                    LPAD(IFNULL(e.puntoVta, 0), 4, '0'),
+                    ${SQL_PUNTO_VENTA_COMPROBANTE},
                     '-',
                     LPAD(
                         IFNULL(
@@ -326,8 +326,11 @@ class VentasRepository{
                 SELECT 
                     vp.idVenta,
 
+                    -- B4-217: mismo nombre que la hoja Acumulado (constante compartida), no
+                    -- mp.nombre crudo. El ORDER BY sigue siendo mp.nombre en ambos GROUP_CONCAT
+                    -- (formatearMontosPago alinea metodos y montos por posición).
                     GROUP_CONCAT(
-                        mp.nombre
+                        ${SQL_METODO_PAGO_CASE}
                         ORDER BY mp.nombre
                         SEPARATOR ';'
                     ) AS metodos,
@@ -341,6 +344,8 @@ class VentasRepository{
                 FROM ventas_pagos vp
                 INNER JOIN metodos_pago mp 
                     ON mp.id = vp.idMetodo
+                LEFT JOIN fondos f
+                    ON f.id = mp.idFondo
 
                 GROUP BY vp.idVenta
             ) pagos 
@@ -355,8 +360,12 @@ class VentasRepository{
                     -- descuento_prendas) SI los incluyen: son plata facturada y tienen que
                     -- seguir cerrando contra "Cobrado".
                     SUM(CASE WHEN tipoItem = '${TipoItemVenta.CATALOGO}' THEN cantidad ELSE 0 END) AS cantidad_prendas,
-                    SUM(total) AS total_prendas,
-                    SUM(importeDescuento) AS descuento_prendas
+                    -- total_prendas EXCLUYE la línea real del recargo por transferencia (se
+                    -- informa aparte en recargo_linea): si no, inflaba la columna "Venta", el
+                    -- Descuento % y la base sobre la que se recalculaba el recargo (cobrado 2 veces).
+                    SUM(CASE WHEN IFNULL(descripcion, '') <> '${DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA}' THEN total ELSE 0 END) AS total_prendas,
+                    SUM(importeDescuento) AS descuento_prendas,
+                    SUM(CASE WHEN descripcion = '${DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA}' THEN total ELSE 0 END) AS recargo_linea
                 FROM ventas_productos
                 GROUP BY idVenta
             ) prendas
@@ -435,7 +444,7 @@ class VentasRepository{
                     LPAD(IFNULL(v.id,0), 8, '0')
                 ) AS remito,
                 CONCAT(
-                    LPAD(IFNULL(e.puntoVta, 0), 4, '0'),
+                    ${SQL_PUNTO_VENTA_COMPROBANTE},
                     '-',
                     LPAD(
                         IFNULL(
@@ -577,6 +586,151 @@ class VentasRepository{
             const [rows] = await connection.query<RowDataPacket[]>(query);
             return rows.map(r => ({ ...r }));
 
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+    //#endregion
+
+    //#region REPORTE PRE-FACTURACION
+    // Export de la pantalla Pre-Facturación (Presupuesto/Pedido/Nota de Empaque, idProceso 5/6/7).
+    // Mismos filtros que el listado (proceso, N°, fecha, fecha de entrega, cliente) y mismo recorte:
+    // todo lo no dado de baja, SIN filtrar por estado (el estado viaja como columna). A diferencia de
+    // los reportes de facturación, el rango de fechas es opcional.
+    private FiltroPreFacturacion(filtros:any):string {
+        let filtro = ` AND v.idProceso IN (${IdProceso.PRESUPUESTO}, ${IdProceso.PEDIDO}, ${IdProceso.NOTA_EMPAQUE})`;
+
+        const idProceso = Number(filtros?.idProceso) || 0;
+        if(idProceso != 0) filtro += ` AND v.idProceso = ${idProceso}`;
+
+        const nroProceso = Number(filtros?.nroProceso) || 0;
+        if(nroProceso != 0) filtro += ` AND v.nroProceso = ${nroProceso}`;
+
+        const idCliente = Number(filtros?.cliente) || 0;
+        if(idCliente != 0) filtro += ` AND v.idCliente = ${idCliente}`;
+
+        if (filtros?.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
+            const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+            const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
+            filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+        }
+        if (filtros?.fechasEntrega?.length === 2 && filtros.fechasEntrega[0] && filtros.fechasEntrega[1]) {
+            const desde = moment.utc(filtros.fechasEntrega[0]).format('YYYY-MM-DD');
+            const hasta = moment.utc(filtros.fechasEntrega[1]).add(1, 'day').format('YYYY-MM-DD');
+            filtro += ` AND v.fechaEntrega >= '${desde}' AND v.fechaEntrega < '${hasta}'`;
+        }
+        return filtro;
+    }
+
+    // Hoja "Documentos": una fila por Presupuesto/Pedido/Nota de Empaque.
+    async ObtenerReportePreFacturacion(filtros:any){
+        const connection = await db.getConnection();
+        try {
+            const query = `
+            SELECT
+                v.id AS idVenta,
+                pv.descripcion AS proceso,
+                v.nroProceso,
+                v.fecha,
+                v.hora,
+                v.fechaEntrega,
+                c.nombre AS cliente,
+                v.estado,
+                v.tipoRelacionado,
+                v.nroRelacionado,
+                v.total,
+                v.observacion,
+                IFNULL(prendas.cantidad_prendas, 0) AS cantidad_prendas,
+                IFNULL(servicios.cantidad_servicios, 0) AS cantidad_servicios
+            FROM ventas v
+                LEFT JOIN procesos_venta pv ON pv.id = v.idProceso
+                LEFT JOIN clientes c ON c.id = v.idCliente
+                LEFT JOIN (
+                    SELECT idVenta, SUM(cantidad) AS cantidad_prendas
+                    FROM ventas_productos
+                    WHERE tipoItem = '${TipoItemVenta.CATALOGO}'
+                    GROUP BY idVenta
+                ) prendas ON prendas.idVenta = v.id
+                LEFT JOIN (
+                    SELECT idVenta, SUM(cantidad) AS cantidad_servicios
+                    FROM ventas_servicios
+                    GROUP BY idVenta
+                ) servicios ON servicios.idVenta = v.id
+            WHERE v.fechaBaja IS NULL
+                ${this.FiltroPreFacturacion(filtros)}
+            ORDER BY v.fecha DESC, v.hora DESC, v.id DESC;
+            `;
+            const [rows] = await connection.query<RowDataPacket[]>(query);
+            return rows.map(r => ({ ...r }));
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    // Hoja "Detalle": una fila por línea (prenda de catálogo, ítem no catalogado o servicio) de los
+    // mismos documentos. Los talles van en columnas (t1..t10). Excluye la línea real del recargo por
+    // transferencia (no es mercadería) y las líneas con cantidad 0 (mismo criterio que la hoja
+    // Detalle de ventas). Devuelve filas planas; el orden por documento lo resuelve el servicio.
+    async ObtenerDetallePreFacturacion(filtros:any){
+        const connection = await db.getConnection();
+        try {
+            const filtro = this.FiltroPreFacturacion(filtros);
+
+            const queryProductos = `
+            SELECT
+                v.id AS idVenta,
+                vp.id AS idLinea,
+                IF(vp.tipoItem = '${TipoItemVenta.CATALOGO}', 'Prenda', 'No catalogado') AS tipoItem,
+                tp.descripcion AS producto,
+                sp.descripcion AS tipo,
+                g.descripcion AS genero,
+                prod.codigo AS codigo,
+                IF(vp.tipoItem = '${TipoItemVenta.CATALOGO}', prod.nombre, vp.descripcion) AS articulo,
+                m.descripcion AS material,
+                col.descripcion AS color,
+                vp.t1, vp.t2, vp.t3, vp.t4, vp.t5, vp.t6, vp.t7, vp.t8, vp.t9, vp.t10,
+                vp.talles AS tallesLabel,
+                vp.cantidad
+            FROM ventas v
+                INNER JOIN ventas_productos vp ON vp.idVenta = v.id
+                -- JOIN al catálogo condicionado por tipoItem (ver ObtenerReporteDetalles).
+                LEFT JOIN productos prod ON prod.id = vp.idProducto AND vp.tipoItem = '${TipoItemVenta.CATALOGO}'
+                LEFT JOIN tipos_producto tp ON tp.id = prod.idTipo
+                LEFT JOIN subtipos_producto sp ON sp.id = prod.idSubtipo
+                LEFT JOIN materiales m ON m.id = prod.idMaterial
+                LEFT JOIN generos g ON g.id = prod.idGenero
+                LEFT JOIN colores col ON col.id = prod.idColor
+            WHERE v.fechaBaja IS NULL
+                ${filtro}
+                AND IFNULL(vp.cantidad, 0) <> 0
+                AND IFNULL(vp.descripcion, '') <> '${DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA}'
+            ORDER BY v.id, vp.id;
+            `;
+
+            const queryServicios = `
+            SELECT
+                v.id AS idVenta,
+                vs.id AS idLinea,
+                'Servicio' AS tipoItem,
+                s.codigo AS codigo,
+                IFNULL(s.descripcion, CONCAT('(servicio eliminado #', vs.idServicio, ')')) AS articulo,
+                vs.cantidad
+            FROM ventas v
+                INNER JOIN ventas_servicios vs ON vs.idVenta = v.id
+                LEFT JOIN servicios s ON s.id = vs.idServicio
+            WHERE v.fechaBaja IS NULL
+                ${filtro}
+                AND IFNULL(vs.cantidad, 0) <> 0
+            ORDER BY v.id, vs.id;
+            `;
+
+            const [productos] = await connection.query<RowDataPacket[]>(queryProductos);
+            const [servicios] = await connection.query<RowDataPacket[]>(queryServicios);
+            return { productos: productos.map(r => ({ ...r })), servicios: servicios.map(r => ({ ...r })) };
         } catch (error:any) {
             throw error;
         } finally{
