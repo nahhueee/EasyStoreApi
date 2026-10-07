@@ -449,6 +449,34 @@ class FacturacionService{
             throw new AppError(CodigoError.VALIDACION, errorPresupuesto, 400, { modulo: 'FacturacionService', metodo: 'Emitir' });
         }
 
+        // Fix oct-2026 - el contrato de /emitir es que venta.factura llega VACIA: la arma
+        // este metodo con lo que devuelve ARCA (paso 6.A). Si viene precargada,
+        // PersistirVentaNueva/Existente (AgregarBody/ModificarBody) la insertaria tal cual
+        // en ventas_factura ANTES de pedir el CAE. Caso real: notas-venta reutilizaba
+        // nuevaVenta entre una NC y la siguiente y mandaba la factura de la NC anterior
+        // (Duplicate entry en uq_vf_comprobante). Se descarta y se loguea para que el
+        // bug del front quede visible en la pantalla de Errores sin bloquear al operador.
+        if (venta.factura) {
+            logger.error({
+                code: CodigoError.VALIDACION,
+                message: '/ventas/emitir recibio venta.factura precargada; se descarta (la factura la arma el backend con la respuesta de ARCA).',
+                requestId,
+                context: {
+                    modulo: 'FacturacionService',
+                    metodo: 'Emitir',
+                    idEmpresa: objFactura.idEmpresa,
+                    tipoComprobante: objFactura.tipoComprobante,
+                    facturaDescartada: {
+                        tipoComprobante: (venta.factura as any).tipoComprobante,
+                        ptoVenta: (venta.factura as any).ptoVenta,
+                        ticket: (venta.factura as any).ticket,
+                        cae: (venta.factura as any).cae
+                    }
+                }
+            });
+            venta.factura = undefined;
+        }
+
         // 2. Entorno + datos de emision + lock del talonario + reconciliacion +
         // correlatividad + numero explicito. Mismo tramo que usa Facturar().
         const { afip, data, neto, iva, cuit, pto, tipo } = await this.ConstruirDatosEmision(objFactura);
