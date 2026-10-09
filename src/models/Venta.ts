@@ -63,6 +63,13 @@ import { Color, TallesProducto } from "./Producto";
     // forma honesta de reconstruirlo) - ver migración
     // <ts>_add_usuario_alta_ventas y HANDOFF-informes-administracion-R1.md §7.a.
     usuarioAlta?:string;
+    // Auditoría de la Nota de Empaque (oct-2026, solo se completa para NE): quién/cuándo
+    // aprobó la NE (se limpia al modificarla, vuelve a Pendiente) y quién/cuándo la
+    // modificó por última vez. Ver migración 20261009120000_add_auditoria_nota_empaque_ventas.
+    usuarioAprobacion?:string;
+    fechaAprobacion?:Date;
+    usuarioModificacion?:string;
+    fechaModificacion?:Date;
     // Texto libre a nivel de venta (ej. motivo de una Nota de Crédito sin
     // productos: "Adelanto de producción"/"Saldo orden de compra"). Ver
     // migración 20260719120000_add_observacion_ventas.

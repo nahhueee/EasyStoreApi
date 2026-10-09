@@ -18,6 +18,18 @@ router.post('/obtener', async (req:Request, res:Response) => {
     }
 });
 
+// Cantidad de Notas de Empaque pendientes de control (badge del menú y cartel del listado).
+router.get('/notas-empaque-pendientes', async (req:Request, res:Response) => {
+    try{
+        res.json(await VentasRepo.ResumenNotasEmpaquePendientes());
+
+    } catch(error:any){
+        let msg = "Error al obtener las notas de empaque pendientes.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.get('/obtener-una/:idVenta', async (req:Request, res:Response) => {
     try{ 
         
@@ -109,9 +121,9 @@ router.put('/dar-baja', async (req:Request, res:Response) => {
     }
 });
 
-router.put('/aprobar', async (req:Request, res:Response) => {
+router.put('/aprobar', authMiddleware, async (req:Request, res:Response) => {
     try{ 
-        res.json(await VentasRepo.Aprobar(req.body));
+        res.json(await VentasRepo.Aprobar(req.body, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "Error al intentar aprobar la venta.";

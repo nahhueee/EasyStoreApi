@@ -5,8 +5,10 @@ import { FacturaVenta } from '../models/FacturaVenta';
 import { ProductosRepo } from './productosRepository';
 import { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { PoolConnection } from 'mysql2/promise';
+import { AppError } from '../logger/AppError';
+import { CodigoError } from '../logger/CodigosError';
 import { Cliente } from '../models/Cliente';
-import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA } from '../models/ventaEstados';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, puedeEditarseNotaEmpaque, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 import { analizarTalle } from '../services/excelConciliacionService';
 import { FeEmisionesRepo } from './feEmisionesRepository';
@@ -608,6 +610,10 @@ class VentasRepository{
         const nroProceso = Number(filtros?.nroProceso) || 0;
         if(nroProceso != 0) filtro += ` AND v.nroProceso = ${nroProceso}`;
 
+        // Estado: opcional (oct-2026). Sin estado el export sigue sin filtrar por estado, como
+        // siempre; con estado coincide con lo que se ve en el listado filtrado.
+        filtro += FiltroEstadoSql(filtros?.estado);
+
         const idCliente = Number(filtros?.cliente) || 0;
         if(idCliente != 0) filtro += ` AND v.idCliente = ${idCliente}`;
 
@@ -831,6 +837,10 @@ class VentasRepository{
         venta.hora = row['hora'];
         venta.fechaEntrega = row['fechaEntrega'] ? moment(row['fechaEntrega']).toDate() : undefined;
         venta.fechaVencimiento = row['fechaVencimiento'] ? moment(row['fechaVencimiento']).toDate() : undefined;
+        venta.usuarioAprobacion = row['usuarioAprobacion'] ?? undefined;
+        venta.fechaAprobacion = row['fechaAprobacion'] ? moment(row['fechaAprobacion']).toDate() : undefined;
+        venta.usuarioModificacion = row['usuarioModificacion'] ?? undefined;
+        venta.fechaModificacion = row['fechaModificacion'] ? moment(row['fechaModificacion']).toDate() : undefined;
         venta.idListaPrecio = row['idLista'];
         venta.idEmpresa = row['idEmpresa'];
         venta.empresa = row['empresa'];
@@ -1079,7 +1089,9 @@ class VentasRepository{
         // cosmético - cualquiera puede armar el POST a mano. Esta es la validación real.
         // Va ANTES de abrir la transacción, mismo patrón de retorno de string que usa
         // proveedoresRepository.Agregar para los errores de validación.
-        const errorPresupuesto = await ValidarFacturacionDePresupuesto(connection, venta);
+        // Misma idea para una Nota de Empaque (oct-2026): se factura tal cual fue aprobada.
+        const errorPresupuesto = await ValidarFacturacionDePresupuesto(connection, venta)
+            ?? await ValidarFacturacionDeNotaEmpaque(connection, venta);
         if (errorPresupuesto) {
             connection.release();
             return errorPresupuesto;
@@ -1358,8 +1370,47 @@ class VentasRepository{
     // Modificar() sigue siendo el wrapper publico, sin cambio de comportamiento.
     // Mismo `facturando` que AgregarBody, mismo motivo.
     private async ModificarBody(connection: PoolConnection, venta:Venta, usuario: string, facturando: boolean = !!venta.factura, permitirNegativo: boolean = false): Promise<string> {
+        // Nota de Empaque (oct-2026): solo se modifica en Pendiente/Aprobada y sin baja. El
+        // chequeo va acá (backend, con el registro bloqueado dentro de la transacción) y no
+        // solo en el front: UpdateVenta escribe `estado` a ciegas, así que reabrir y guardar
+        // una NE Asociada/Facturada la devolvía a Pendiente y permitía facturarla otra vez.
+        // La fila se lee por id (no por venta.idProceso del payload, que no es confiable).
+        // Cuando una Factura/Cotización cierra la NE, el estado de la NE lo cambia
+        // ActualizarEstadoRelacionado con un UPDATE directo - no pasa por acá.
+        const [filasActuales]: any = await connection.query(
+            "SELECT idProceso, estado, fechaBaja FROM ventas WHERE id = ? FOR UPDATE",
+            [venta.id]
+        );
+        const filaActual = filasActuales?.[0];
+        if (filaActual?.idProceso === IdProceso.NOTA_EMPAQUE) {
+            if (!puedeEditarseNotaEmpaque(filaActual.estado, filaActual.fechaBaja)) {
+                throw new AppError(
+                    CodigoError.VALIDACION,
+                    filaActual.fechaBaja
+                        ? 'La nota de empaque fue dada de baja y no se puede modificar.'
+                        : `La nota de empaque está ${filaActual.estado} y ya no se puede modificar.`,
+                    409,
+                    { modulo: 'VentasRepository', metodo: 'ModificarBody', idVenta: venta.id, estado: filaActual.estado }
+                );
+            }
+            // Modificar una NE (incluso una ya Aprobada) la devuelve a Pendiente: hay que
+            // volver a controlarla. Se fuerza acá aunque el front ya lo mande.
+            venta.estado = EstadoVenta.PENDIENTE;
+        }
+
         //Insertamos la venta
         await UpdateVenta(connection,venta);
+
+        // Auditoría de la NE (oct-2026): quién y cuándo la modificó, y se descarta la
+        // aprobación anterior (la NE vuelve a Pendiente y hay que re-aprobarla). Va después
+        // de UpdateVenta, que no toca estas columnas. Se decide con la fila leída arriba,
+        // no con venta.idProceso del payload.
+        if (filaActual?.idProceso === IdProceso.NOTA_EMPAQUE) {
+            await connection.query(
+                "UPDATE ventas SET usuarioModificacion = ?, fechaModificacion = NOW(), usuarioAprobacion = NULL, fechaAprobacion = NULL WHERE id = ?",
+                [usuario ?? null, venta.id]
+            );
+        }
 
         //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
         await ActualizarEstadoRelacionado(connection, venta);
@@ -1513,8 +1564,12 @@ class VentasRepository{
     // Wrapper publico de ValidarFacturacionDePresupuesto (funcion de modulo, no exportada)
     // para que FacturacionService la corra como primer paso de /ventas/emitir (validacion
     // de negocio, sin ARCA de por medio), igual que ya hace Agregar().
+    // Desde oct-2026 también valida la facturación desde una Nota de Empaque (el nombre del
+    // método se mantiene para no tocar FacturacionService; es el único punto de validación
+    // previo a /ventas/emitir).
     async ValidarPresupuestoParaFacturar(connection: PoolConnection, venta: Venta): Promise<string | null> {
-        return ValidarFacturacionDePresupuesto(connection, venta);
+        return (await ValidarFacturacionDePresupuesto(connection, venta))
+            ?? (await ValidarFacturacionDeNotaEmpaque(connection, venta));
     }
 
     // F4.3 - HANDOFF blindaje facturacion y logs. Persiste la venta de un pendiente
@@ -1541,15 +1596,17 @@ class VentasRepository{
         return venta.id!.toString();
     }
 
-    async Aprobar(data:any){
+    async Aprobar(data:any, usuario: string){
         const connection = await db.getConnection();
         
         try {
             // Solo se aprueba una Nota de Empaque que todavía está Pendiente: evita
             // reaprobar una que ya fue asociada/facturada por error desde el listado.
+            // Se registra quién y cuándo aprobó (auditoría de la NE, oct-2026): no hay roles de
+            // aprobación, así que esto es lo que permite reconstruir el control después.
             await connection.query(
-                `UPDATE ventas SET estado = '${EstadoVenta.APROBADA}' WHERE id = ? AND idProceso = ${IdProceso.NOTA_EMPAQUE} AND estado = '${EstadoVenta.PENDIENTE}'`,
-                [data.idVenta]
+                `UPDATE ventas SET estado = '${EstadoVenta.APROBADA}', usuarioAprobacion = ?, fechaAprobacion = NOW() WHERE id = ? AND idProceso = ${IdProceso.NOTA_EMPAQUE} AND estado = '${EstadoVenta.PENDIENTE}'`,
+                [usuario ?? null, data.idVenta]
             );
             return("OK");
 
@@ -1560,6 +1617,29 @@ class VentasRepository{
         }
     }
     //#endregion
+
+    // Resumen de Notas de Empaque pendientes de control (oct-2026): el cliente exige revisarlas
+    // todas antes de terminar el día, así que el menú muestra cuántas hay y cuántas son de días
+    // anteriores ("atrasadas": fecha < hoy). "Pendiente" = todavía no pasó el control manual
+    // (ver Aprobar). Las dadas de baja no cuentan. `hoy` se arma con moment() igual que el
+    // resto de las fechas de ventas (ver Agregar).
+    async ResumenNotasEmpaquePendientes(): Promise<{ total: number, atrasadas: number }> {
+        const connection = await db.getConnection();
+        try {
+            const hoy = moment().format('YYYY-MM-DD');
+            const [rows]: any = await connection.query(
+                `SELECT COUNT(*) AS total, IFNULL(SUM(fecha < ?), 0) AS atrasadas
+                 FROM ventas
+                 WHERE idProceso = ${IdProceso.NOTA_EMPAQUE}
+                   AND estado = '${EstadoVenta.PENDIENTE}'
+                   AND fechaBaja IS NULL`,
+                [hoy]
+            );
+            return { total: Number(rows[0].total), atrasadas: Number(rows[0].atrasadas) };
+        } finally {
+            connection.release();
+        }
+    }
 
     //#region OTROS
     async ObtenerQRFactura(idVenta:number){
@@ -1612,6 +1692,15 @@ class VentasRepository{
     //#endregion
 }
 
+// Filtro por estado del listado de ventas (oct-2026, acceso rápido a Notas de Empaque
+// Pendientes). El valor llega del body y se concatena al SQL, así que NO se interpola
+// crudo: solo pasa si es exactamente uno de los EstadoVenta conocidos (lista blanca).
+function FiltroEstadoSql(estado: any): string {
+    if (typeof estado !== 'string' || estado === '') return '';
+    const valido = (Object.values(EstadoVenta) as string[]).includes(estado);
+    return valido ? ` AND v.estado = '${estado}'` : '';
+}
+
 async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
     try {
         //#region VARIABLES
@@ -1662,6 +1751,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
         if(filtros.nroProceso && filtros.nroProceso != 0){
             filtro += " AND v.nroProceso = " + filtros.nroProceso;
         }
+        filtro += FiltroEstadoSql(filtros.estado);
 
         if (filtros.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
             const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
@@ -2376,6 +2466,103 @@ async function ValidarFacturacionDePresupuesto(connection, venta:Venta): Promise
         const k = claveProducto(s.idServicio, s.cantidad, s.unitario);
         const restantes = esperadosServicio.get(k);
         if (!restantes) return `Los servicios no coinciden con el presupuesto Nro ${venta.nroRelacionado}. Un presupuesto se factura tal cual fue aprobado.`;
+        esperadosServicio.set(k, restantes - 1);
+    }
+
+    return null;
+}
+
+// Valida que una Factura/Cotización que se genera desde una Nota de Empaque (NE) sea una
+// conversión FIEL de la NE aprobada (oct-2026, la NE es el paso de control previo a
+// facturar). Dos reglas, ambas del lado del backend porque el bloqueo del front es solo UI:
+//  1. La NE tiene que estar Aprobada (controlada). Excepción: re-guardado de una venta que
+//     YA estaba relacionada a esa NE (queda Asociada/Facturada y no es un error).
+//     Esto además corta la doble facturación de una NE ya Facturada.
+//  2. Mismo cliente que la NE, y mismos ítems: producto + cantidad + distribución por talle, y mismos servicios con su
+//     cantidad. NO se compara el precio: la factura recalcula el `unitario` según el tipo de
+//     comprobante (IVA sumado para A/B en mayoristas, ver RecalcularPreciosSegunComprobante en
+//     el front), así que difiere legítimamente del de la NE; y en una Factura el precio no es
+//     editable en pantalla. La línea de recargo por transferencia (se agrega al elegir el
+//     método de pago, no existe en la NE) se excluye de la comparación.
+async function ValidarFacturacionDeNotaEmpaque(connection, venta:Venta): Promise<string | null> {
+    const esFacturaDesdeNota =
+        venta.tipoRelacionado === TipoRelacionado.NOTA_EMPAQUE &&
+        [IdProceso.FACTURA, IdProceso.COTIZACION].includes(venta.idProceso!);
+
+    if (!esFacturaDesdeNota || !venta.nroRelacionado) return null;
+
+    const [notas]: any = await connection.query(
+        `SELECT id, estado, idCliente FROM ventas WHERE idProceso = ${IdProceso.NOTA_EMPAQUE} AND nroProceso = ? AND fechaBaja IS NULL ORDER BY id DESC LIMIT 1`,
+        [venta.nroRelacionado]
+    );
+    if (!Array.isArray(notas) || notas.length === 0)
+        return `No se encontró la nota de empaque Nro ${venta.nroRelacionado} que se quiere facturar.`;
+
+    const nota = notas[0];
+
+    if (nota.estado !== EstadoVenta.APROBADA) {
+        let yaRelacionada = false;
+        if (venta.id) {
+            const [previa]: any = await connection.query(
+                "SELECT id FROM ventas WHERE id = ? AND nroRelacionado = ? AND tipoRelacionado = ?",
+                [venta.id, venta.nroRelacionado, TipoRelacionado.NOTA_EMPAQUE]
+            );
+            yaRelacionada = Array.isArray(previa) && previa.length > 0;
+        }
+        if (!yaRelacionada)
+            return `La nota de empaque Nro ${venta.nroRelacionado} está ${nota.estado}: solo se puede facturar una nota de empaque Aprobada.`;
+    }
+
+    // Mismo cliente que la nota controlada (el front también bloquea el selector).
+    if (Number(nota.idCliente ?? 0) !== Number(venta.cliente?.id ?? 0))
+        return `El cliente no coincide con el de la nota de empaque Nro ${venta.nroRelacionado}. Una nota de empaque se factura al mismo cliente con el que fue cargada y aprobada: si hay que cambiarlo, modifique la nota y vuelva a aprobarla.`;
+
+    const mensajeItems = `Los ítems no coinciden con la nota de empaque Nro ${venta.nroRelacionado}. Una nota de empaque se factura tal cual fue aprobada: si hay que cambiar algo, modifique la nota y vuelva a aprobarla.`;
+
+    const [lineasOrigen]: any = await connection.query(
+        "SELECT idProducto, descripcion, cantidad, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 FROM ventas_productos WHERE idVenta = ?",
+        [nota.id]
+    );
+    const [serviciosOrigen]: any = await connection.query(
+        "SELECT idServicio, cantidad FROM ventas_servicios WHERE idVenta = ?",
+        [nota.id]
+    );
+
+    const esRecargo = (l: any) => (l.descripcion ?? '') === DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA;
+    const origen = (lineasOrigen as any[]).filter(l => !esRecargo(l));
+    const enviados = (venta.productos ?? [] as any[]).filter((p: any) => !esRecargo(p));
+    const serviciosEnviados = venta.servicios ?? [];
+
+    if (enviados.length !== origen.length || serviciosEnviados.length !== (serviciosOrigen as any[]).length)
+        return mensajeItems;
+
+    // Comparación por contenido, no por orden: el front puede reordenar la grilla.
+    const claveProducto = (x: any) => {
+        const talles = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(i => Number(x[`t${i}`] ?? 0)).join(',');
+        return `${x.idProducto ?? 'null'}|${Number(x.cantidad ?? 0)}|${talles}`;
+    };
+    const esperados = new Map<string, number>();
+    for (const l of origen) {
+        const k = claveProducto(l);
+        esperados.set(k, (esperados.get(k) ?? 0) + 1);
+    }
+    for (const p of enviados) {
+        const k = claveProducto(p);
+        const restantes = esperados.get(k);
+        if (!restantes) return mensajeItems;
+        esperados.set(k, restantes - 1);
+    }
+
+    const claveServicio = (x: any) => `${x.idServicio ?? 'null'}|${Number(x.cantidad ?? 0)}`;
+    const esperadosServicio = new Map<string, number>();
+    for (const s of serviciosOrigen as any[]) {
+        const k = claveServicio(s);
+        esperadosServicio.set(k, (esperadosServicio.get(k) ?? 0) + 1);
+    }
+    for (const s of serviciosEnviados) {
+        const k = claveServicio(s);
+        const restantes = esperadosServicio.get(k);
+        if (!restantes) return mensajeItems;
         esperadosServicio.set(k, restantes - 1);
     }
 

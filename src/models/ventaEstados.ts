@@ -155,6 +155,21 @@ export function puedeDarseDeBaja(idProceso?: number, estado?: string): boolean {
 }
 
 /**
+ * Estados en los que una Nota de Empaque todavía se puede MODIFICAR (oct-2026, la NE es el
+ * paso de control previo a facturar - ver nota-empaque-previo-facturacion). Una NE
+ * Asociada (en uso por una factura/cotización en curso) o Facturada (circuito cerrado) no
+ * se toca: reabrirla y guardarla la devolvía a Pendiente (ArmarObjetoVenta pisa el estado),
+ * con lo que podía aprobarse y facturarse de nuevo (doble facturación). Una NE dada de
+ * baja tampoco. Son los mismos estados "abiertos" que habilitan la baja.
+ */
+export const ESTADOS_EDITABLES_NOTA_EMPAQUE: EstadoVenta[] = [EstadoVenta.PENDIENTE, EstadoVenta.APROBADA];
+
+export function puedeEditarseNotaEmpaque(estado?: string, fechaBaja?: unknown): boolean {
+    if (fechaBaja) return false;
+    return ESTADOS_EDITABLES_NOTA_EMPAQUE.includes(estado as EstadoVenta);
+}
+
+/**
  * Fragmento SQL para el nombre visible de un método de pago. Requiere que la
  * query tenga aliasados `mp` (metodos_pago) y `f` (fondos, vía
  * `LEFT JOIN fondos f ON f.id = mp.idFondo`).
