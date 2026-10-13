@@ -178,6 +178,8 @@ import { Color, TallesProducto } from "./Producto";
     topeDescuento?: number;
     cantidad?: number;
     unitario?: number;
+    // Precio de catálogo ancla (persistido como ventas_servicios.precioLista). Ver InsertServicioVenta.
+    precio?: number;
     total?: number;
     // Ver comentario equivalente en ProductosVenta.importeDescuento.
     importeDescuento?: number;
@@ -185,6 +187,7 @@ import { Color, TallesProducto } from "./Producto";
     constructor(data?: any) {
       if (data) {
         this.idServicio = data.idServicio;
+        this.precio = data.precio;
         this.codServicio = data.codServicio;
         this.topeDescuento = data.topeDescuento;
         this.cantidad = data.cantidad;

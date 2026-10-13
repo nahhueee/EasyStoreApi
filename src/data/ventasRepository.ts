@@ -1623,19 +1623,23 @@ class VentasRepository{
     // anteriores ("atrasadas": fecha < hoy). "Pendiente" = todavía no pasó el control manual
     // (ver Aprobar). Las dadas de baja no cuentan. `hoy` se arma con moment() igual que el
     // resto de las fechas de ventas (ver Agregar).
-    async ResumenNotasEmpaquePendientes(): Promise<{ total: number, atrasadas: number }> {
+    async ResumenNotasEmpaquePendientes(): Promise<{ total: number, atrasadas: number, porFacturar: number }> {
         const connection = await db.getConnection();
         try {
             const hoy = moment().format('YYYY-MM-DD');
             const [rows]: any = await connection.query(
-                `SELECT COUNT(*) AS total, IFNULL(SUM(fecha < ?), 0) AS atrasadas
+                // total/atrasadas: NE sin controlar (Pendiente). porFacturar: NE ya controladas
+                // (Aprobada) que todavía no se facturaron.
+                `SELECT IFNULL(SUM(estado = '${EstadoVenta.PENDIENTE}'), 0) AS total,
+                        IFNULL(SUM(estado = '${EstadoVenta.PENDIENTE}' AND fecha < ?), 0) AS atrasadas,
+                        IFNULL(SUM(estado = '${EstadoVenta.APROBADA}'), 0) AS porFacturar
                  FROM ventas
                  WHERE idProceso = ${IdProceso.NOTA_EMPAQUE}
-                   AND estado = '${EstadoVenta.PENDIENTE}'
+                   AND estado IN ('${EstadoVenta.PENDIENTE}', '${EstadoVenta.APROBADA}')
                    AND fechaBaja IS NULL`,
                 [hoy]
             );
-            return { total: Number(rows[0].total), atrasadas: Number(rows[0].atrasadas) };
+            return { total: Number(rows[0].total), atrasadas: Number(rows[0].atrasadas), porFacturar: Number(rows[0].porFacturar) };
         } finally {
             connection.release();
         }
@@ -1898,6 +1902,10 @@ async function ObtenerServiciosVenta(connection, idVenta:number){
                 servicio.nomServicio = row['descripcion'];
                 servicio.cantidad = parseInt(row['cantidad']);
                 servicio.unitario = parseFloat(row['precio']);
+                // Ancla de catálogo (oct-2026). Filas anteriores a la migración tienen NULL: se deja
+                // undefined a propósito (NO caer a `precio`, como hacen los productos) porque en
+                // listas fijas `precio` ya trae el % horneado y usarlo de ancla lo descontaría dos veces.
+                servicio.precio = row['precioLista'] != null ? parseFloat(row['precioLista']) : undefined;
                 servicio.total = parseFloat(row['total']);
                 // Tope vigente HOY en el catálogo, no el que tenía al momento de la venta
                 // original (ese dato no se persiste). Es lo correcto para este uso: el
@@ -2691,10 +2699,13 @@ async function InsertProductoVenta(connection, producto, resolverCosto: boolean)
 
 async function InsertServicioVenta(connection, pago): Promise<void> {
     try {
-        const consulta = " INSERT INTO ventas_servicios(idVenta, idServicio, cantidad, precio, total, importeDescuento) " +
-                         " VALUES(?, ?, ?, ?, ?, ?) ";
+        const consulta = " INSERT INTO ventas_servicios(idVenta, idServicio, cantidad, precio, precioLista, total, importeDescuento) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?) ";
         // importeDescuento: ver comentario equivalente en InsertProductoVenta.
-        const parametros = [pago.idVenta, pago.idServicio, pago.cantidad, pago.unitario, pago.total, pago.importeDescuento ?? 0];
+        // precioLista = pago.precio: precio de catálogo ancla (sin IVA ni % de lista), espejo de
+        // ventas_productos.precioLista. Sin esto, al facturar una NE/Pedido/Presupuesto el servicio
+        // volvía sin ancla y el front no le sumaba el 21% en Factura A/B (oct-2026).
+        const parametros = [pago.idVenta, pago.idServicio, pago.cantidad, pago.unitario, pago.precio ?? null, pago.total, pago.importeDescuento ?? 0];
         await connection.query(consulta, parametros);
     } catch (error) {
         throw error;
