@@ -10,6 +10,8 @@ export enum IdProceso {
     PRESUPUESTO = 5,
     PEDIDO = 6,
     NOTA_EMPAQUE = 7,
+    ENTREGA_SIN_CARGO = 8,
+    DEVOLUCION_ENTREGA = 9,
 }
 
 /**
@@ -245,3 +247,29 @@ export function esListaPrecioNeto(idLista?: number | null): boolean {
 }
 /** Fragmento SQL equivalente a esListaPrecioNeto, para queries con alias `v` = ventas. */
 export const SQL_LISTA_PRECIO_NETO = `v.idLista IN (${IDS_LISTA_PRECIO_NETO.join(', ')})`;
+
+/**
+ * Procesos que generan deuda / venta (lista BLANCA). Toda query que sume `ventas.total` como
+ * plata (saldo de CC, Fondos, extracto, estadísticas) tiene que filtrar con esta lista y no con
+ * una lista negra de procesos: así un proceso nuevo queda AFUERA por defecto. La Entrega sin
+ * cargo (8) y la Devolución de entrega (9) no son deuda ni venta cobrable y no están acá a
+ * propósito. Ver HANDOFF-entrega-sin-cargo.md §3.
+ */
+export const PROCESOS_CON_SALDO = [
+    IdProceso.FACTURA,
+    IdProceso.COTIZACION,
+    IdProceso.NOTA_CREDITO,
+    IdProceso.NOTA_DEBITO,
+] as const;
+/** Fragmento SQL para `idProceso IN (${SQL_PROCESOS_CON_SALDO})`. */
+export const SQL_PROCESOS_CON_SALDO = PROCESOS_CON_SALDO.join(', ');
+
+/**
+ * Motivo de una Entrega sin cargo (columna `ventas.motivoEntrega`). Se persiste en BD, no
+ * cambiar los valores sin migración. Debe coincidir con MOTIVO_ENTREGA_SIN_CARGO en el front.
+ */
+export enum MotivoEntregaSinCargo {
+    EMBAJADOR = "EMBAJADOR",
+    EVENTO = "EVENTO",
+    OTRO = "OTRO",
+}

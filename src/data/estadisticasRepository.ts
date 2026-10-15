@@ -3,6 +3,7 @@ import db from '../db';
 import { DatoVentaCaja } from '../models/DatoVentasCaja';
 import { TotalAcumulado } from '../models/estadisticas/TotalAcumulado';
 import { RowDataPacket } from 'mysql2';
+import { SQL_PROCESOS_CON_SALDO, IdProceso } from '../models/ventaEstados';
 
 class EstadisticasRepository{
     //Totales de venta
@@ -49,6 +50,7 @@ class EstadisticasRepository{
                 WHERE v.idCliente = ?
                 ${filtroFecha}
                 AND v.fechaBaja IS NULL
+                AND v.idProceso IN (${SQL_PROCESOS_CON_SALDO})
                 AND v.idTComprobante NOT IN (3, 8, 13, 100)
             `;
 
@@ -160,6 +162,7 @@ class EstadisticasRepository{
                 WHERE v.idCliente = ?
                 ${filtroFecha}    
                 AND v.fechaBaja IS NULL
+                AND v.idProceso IN (${SQL_PROCESOS_CON_SALDO})
                 GROUP BY tc.id, tc.descripcion
                 ORDER BY tc.descripcion
             `;
@@ -212,6 +215,7 @@ class EstadisticasRepository{
                 WHERE v.idCliente = ?
                 ${filtroFecha}
                 AND v.fechaBaja IS NULL
+                AND v.idProceso NOT IN (${IdProceso.ENTREGA_SIN_CARGO}, ${IdProceso.DEVOLUCION_ENTREGA})
                 GROUP BY v.idProceso, pr.descripcion
                 ORDER BY v.idProceso
             `;

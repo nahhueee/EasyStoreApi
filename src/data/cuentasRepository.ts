@@ -4,6 +4,7 @@ import { ResultSetHeader } from 'mysql2';
 import { CuentaCorriente, VentasClienteCuenta } from '../models/CuentaCorriente';
 import { MovimientoFondo } from '../models/MovimientoFondo';
 import { GetMetodoPago, GetIdFondoValoresAcreditar, GetIdFondoRetenciones, InsertValorAcreditar, InsertCheque, InsertRetencion } from './ventasRepository';
+import { SQL_PROCESOS_CON_SALDO } from '../models/ventaEstados';
 
 // Retención sufrida (Ganancias/IIBB/SUSS) al cobrar. Hoy solo se habilita en la UI
 // para el método CHEQUE, pero vive desacoplada de `cheque` a propósito: es un
@@ -371,7 +372,7 @@ class CuentasRepository{
                             )
                         FROM ventas v
                         WHERE v.fechaBaja IS NULL
-                        AND v.idProceso NOT IN (5, 6, 7)
+                        AND v.idProceso IN (${SQL_PROCESOS_CON_SALDO})
                         AND v.idCliente = c.id
                     ), 0)
 
@@ -1563,7 +1564,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
                     -- Excluye Presupuesto/Pedido/Nota de Empaque (sin idTComprobante
                     -- todavía): no son deuda real hasta que se facturan - mismo
                     -- criterio que ObtenerSaldoCliente().
-                    AND idProceso NOT IN (5,6,7)
+                    AND idProceso IN (${SQL_PROCESOS_CON_SALDO})
                     GROUP BY idCliente
                 ),
 
@@ -1767,7 +1768,7 @@ async function ObtenerQueryParaExcel(filtros:any):Promise<string>{
                     -- Excluye Presupuesto/Pedido/Nota de Empaque (sin idTComprobante
                     -- todavía): no son deuda real hasta que se facturan - mismo
                     -- criterio que ObtenerSaldoCliente().
-                    AND idProceso NOT IN (5,6,7)
+                    AND idProceso IN (${SQL_PROCESOS_CON_SALDO})
                     GROUP BY idCliente
                 ),
 
@@ -2069,6 +2070,8 @@ async function ObtenerQueryVentasCliente(filtros:any,esTotal:boolean,esReporte:b
                         ) p ON p.idVenta = v.id
                         WHERE v.fechaBaja IS NULL
                         AND v.idCliente = ${filtros.cliente}
+                        -- Lista blanca: la Entrega sin cargo (8) usa idTComprobante 99 y entraría como deuda.
+                        AND v.idProceso IN (${SQL_PROCESOS_CON_SALDO})
                         AND v.idTComprobante NOT IN (3, 8, 13, 100)
 
                         UNION ALL

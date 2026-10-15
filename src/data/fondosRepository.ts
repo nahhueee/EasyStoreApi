@@ -1,6 +1,7 @@
 import moment from 'moment';
 import db from '../db';
 import { MovimientoFondo } from '../models/MovimientoFondo';
+import { SQL_PROCESOS_CON_SALDO } from '../models/ventaEstados';
 
 interface FiltrosFondos {
     fechaDesde?: string;
@@ -315,7 +316,7 @@ class FondosRepository{
                                 -- idTComprobante todavía): no son deuda real hasta que
                                 -- se facturan - mismo criterio que
                                 -- cuentasRepository.ObtenerSaldoCliente().
-                                AND v.idProceso NOT IN (5,6,7)
+                                AND v.idProceso IN (${SQL_PROCESOS_CON_SALDO})
                             ), 0)
 
                             - COALESCE((
