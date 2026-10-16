@@ -74,6 +74,10 @@ import { Color, TallesProducto } from "./Producto";
     // productos: "Adelanto de producción"/"Saldo orden de compra"). Ver
     // migración 20260719120000_add_observacion_ventas.
     observacion?:string;
+    // Motivo de una Entrega sin cargo (EMBAJADOR / EVENTO / OTRO, ver MotivoEntregaSinCargo en
+    // ventaEstados.ts). Solo se completa en idProceso = ENTREGA_SIN_CARGO. Migración
+    // 20261013220000_add_entrega_sin_cargo.
+    motivoEntrega?:string;
     estado:string = "";
     impaga:number = 0;
     // Factura backfilleada por regularizacion de correlatividad ARCA (sep-2026, ver

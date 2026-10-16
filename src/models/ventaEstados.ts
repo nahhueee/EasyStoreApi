@@ -115,6 +115,15 @@ export const RELACION_CIERRE: Partial<Record<TipoRelacionado, EstadoVenta>> = {
 export function esProcesoDeCierre(idProceso?: number): boolean {
     return idProceso === IdProceso.FACTURA || idProceso === IdProceso.COTIZACION;
 }
+/**
+ * Procesos que, al guardarse con un relacionado (Nota de Empaque, Pedido, Presupuesto), CIERRAN
+ * ese relacionado (Facturada/Facturado). Es esProcesoDeCierre + la Entrega sin cargo: una ESC
+ * consume la Nota de Empaque igual que una Factura/Cotización, pero NO es un comprobante con
+ * vencimiento (por eso esProcesoDeCierre, que usa ObtenerFechaVencimiento, no la incluye).
+ */
+export function cierraRelacionado(idProceso?: number): boolean {
+    return esProcesoDeCierre(idProceso) || idProceso === IdProceso.ENTREGA_SIN_CARGO;
+}
 
 /**
  * Estado final que debe tomar el relacionado (nroRelacionado/tipoRelacionado)
@@ -126,7 +135,7 @@ export function ResolverEstadoRelacionado(idProcesoVenta?: number, tipoRelaciona
     const relacion = RELACION_PROCESO[tipoRelacionado as TipoRelacionado];
     if (!relacion) return null;
 
-    const estadoCierre = esProcesoDeCierre(idProcesoVenta)
+    const estadoCierre = cierraRelacionado(idProcesoVenta)
         ? RELACION_CIERRE[tipoRelacionado as TipoRelacionado]
         : undefined;
 

@@ -8,7 +8,7 @@ import { PoolConnection } from 'mysql2/promise';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
 import { Cliente } from '../models/Cliente';
-import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, puedeEditarseNotaEmpaque, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA } from '../models/ventaEstados';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, puedeEditarseNotaEmpaque, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA, MotivoEntregaSinCargo } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 import { analizarTalle } from '../services/excelConciliacionService';
 import { FeEmisionesRepo } from './feEmisionesRepository';
@@ -648,6 +648,7 @@ class VentasRepository{
                 v.nroRelacionado,
                 v.total,
                 v.observacion,
+                v.motivoEntrega,
                 IFNULL(prendas.cantidad_prendas, 0) AS cantidad_prendas,
                 IFNULL(servicios.cantidad_servicios, 0) AS cantidad_servicios
             FROM ventas v
@@ -856,6 +857,7 @@ class VentasRepository{
         venta.tipoRelacionado = row['tipoRelacionado'];
         venta.estado = row['estado'];
         venta.observacion = row['observacion'];
+        venta.motivoEntrega = row['motivoEntrega'];
         venta.impaga = row['impaga'];
         // Regularizacion correlatividad ARCA (sep-2026, ver migracion 20260922120000):
         // viaja en el mismo SELECT v.* pero CompletarObjeto() arma el objeto Venta a mano
@@ -937,6 +939,9 @@ class VentasRepository{
     // porque ahi la venta se persiste ANTES de que ARCA apruebe el CAE - venta.factura
     // todavia no existe en ese punto, pero el stock se tiene que descontar igual.
     private async AgregarBody(connection: PoolConnection, venta:Venta, usuario: string, facturando: boolean = !!venta.factura, permitirNegativo: boolean = false): Promise<string> {
+        // Entrega sin cargo: validación estructural y campos forzados acá (y no solo en Agregar)
+        // para cubrir TODOS los caminos que llegan a AgregarBody, incluso un POST armado a mano.
+        if (venta.idProceso === IdProceso.ENTREGA_SIN_CARGO) NormalizarEntregaSinCargo(venta);
         // Obtenemos el proximo nro de venta e insertamos, con reintento si choca
         // contra UNIQUE(idProceso, nroProceso). El FOR UPDATE de abajo debería
         // alcanzar solo para serializar guardados concurrentes, pero en
@@ -946,8 +951,8 @@ class VentasRepository{
         // seguridad real: no importa por qué se calculó mal el número, la base
         // lo rechaza (ER_DUP_ENTRY) y acá se recalcula contra el estado actual
         // en vez de dejar que el duplicado se guarde en silencio.
-        const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega,fechaVencimiento,usuarioAlta) " +
-                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?,?) ";
+        const consulta = " INSERT INTO ventas(idCaja,idProceso,nroProceso,idPunto,fecha,hora,idCliente,idLista,idEmpresa,idTComprobante,idTDescuento,descuento,codPromocion,redondeo,total,nroRelacionado,tipoRelacionado,estado,impaga,ajusteTransf,observacion,fechaEntrega,fechaVencimiento,usuarioAlta,motivoEntrega) " +
+                         " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?,?,?) ";
 
         const fechaVencimiento = await ObtenerFechaVencimiento(connection, venta.idProceso, venta.cliente?.id, venta.fecha);
 
@@ -958,7 +963,7 @@ class VentasRepository{
             // usuarioAlta: quién CREÓ la venta (§7.a del handoff) - toma el mismo
             // `usuario` que ya llega por parámetro para los movimientos de fondos, NO
             // se vuelve a setear en Modificar().
-            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, fechaVencimiento, usuario ?? null];
+            const parametros = [venta.idCaja,venta.idProceso, venta.nroProceso, venta.idPunto, moment(venta.fecha).format('YYYY-MM-DD'), moment().format('HH:mm'), venta.cliente?.id, venta.idListaPrecio, venta.idEmpresa, venta.idTipoComprobante, venta.idTipoDescuento, venta.descuento, venta.codPromocion, venta.redondeo, venta.total, venta.nroRelacionado, venta.tipoRelacionado, venta.estado, venta.impaga, venta.ajuste, venta.observacion ?? null, venta.fechaEntrega ? moment(venta.fechaEntrega).format('YYYY-MM-DD') : null, fechaVencimiento, usuario ?? null, venta.motivoEntrega ?? null];
 
             try {
                 [resultado] = await connection.query<ResultSetHeader>(consulta, parametros);
@@ -1019,6 +1024,8 @@ class VentasRepository{
                 element.idVenta = venta.id;
                 await InsertProductoVenta(connection, element, true); // Agregar: venta nueva, resuelve costo
                 const finalizandoCotizacion = venta.idProceso == IdProceso.COTIZACION && venta.estado == EstadoVenta.FINALIZADA;
+                // La Entrega sin cargo descuenta stock como una Cotización finalizada (mercadería que sale).
+                const entregandoSinCargo = venta.idProceso === IdProceso.ENTREGA_SIN_CARGO;
 
                 // Signo del movimiento de stock atado a idProceso, no a un flag aparte:
                 // una Nota de Crédito SIEMPRE devuelve stock (venga del flujo clásico
@@ -1048,7 +1055,7 @@ class VentasRepository{
                 if(venta.idProceso === IdProceso.NOTA_CREDITO){
                     await ProductosRepo.ActualizarInventario(connection, element, "+");
                 }else{
-                    if(facturando || finalizandoCotizacion)
+                    if(facturando || finalizandoCotizacion || entregandoSinCargo)
                         await ProductosRepo.ActualizarInventario(connection, element, "-", permitirNegativo);
                 }
             }
@@ -1094,7 +1101,9 @@ class VentasRepository{
             ?? await ValidarFacturacionDeNotaEmpaque(connection, venta);
         if (errorPresupuesto) {
             connection.release();
-            return errorPresupuesto;
+            // Se lanza (antes se devolvía el texto con HTTP 200): el front tomaba el string como
+            // un id válido y mostraba "agregado correctamente" sin que se hubiera guardado nada.
+            throw new AppError(CodigoError.VALIDACION, errorPresupuesto, 409, { modulo: 'VentasRepository', metodo: 'Agregar' });
         }
 
         try {
@@ -1382,6 +1391,18 @@ class VentasRepository{
             [venta.id]
         );
         const filaActual = filasActuales?.[0];
+        // Entrega sin cargo / Devolución de entrega: no se modifican (corregir = Devolución de
+        // entrega + ESC nueva, así el stock se mueve por un solo camino y queda auditado). Se
+        // chequea la fila guardada Y el payload, para que tampoco se pueda convertir otra venta.
+        const esEntrega = (id: any) => id === IdProceso.ENTREGA_SIN_CARGO || id === IdProceso.DEVOLUCION_ENTREGA;
+        if (esEntrega(filaActual?.idProceso) || esEntrega(venta.idProceso)) {
+            throw new AppError(
+                CodigoError.VALIDACION,
+                'Una entrega sin cargo o su devolución no se puede modificar. Para corregirla, emití una devolución de entrega y una nueva entrega.',
+                409,
+                { modulo: 'VentasRepository', metodo: 'ModificarBody', idVenta: venta.id, idProceso: filaActual?.idProceso }
+            );
+        }
         if (filaActual?.idProceso === IdProceso.NOTA_EMPAQUE) {
             if (!puedeEditarseNotaEmpaque(filaActual.estado, filaActual.fechaBaja)) {
                 throw new AppError(
@@ -1744,7 +1765,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 
         if (filtros.tipo){
             if (filtros.tipo == 'factura')
-                filtro += " AND v.idProceso IN (1,2,3,4) ";
+                filtro += " AND v.idProceso IN (1,2,3,4," + IdProceso.ENTREGA_SIN_CARGO + ") ";
             if (filtros.tipo == 'pre')
                 filtro += " AND v.idProceso IN (5,6,7) ";
         }
@@ -2480,6 +2501,39 @@ async function ValidarFacturacionDePresupuesto(connection, venta:Venta): Promise
     return null;
 }
 
+// Entrega sin cargo (ESC, oct-2026, ver HANDOFF-entrega-sin-cargo.md): reglas estructurales y
+// campos forzados del lado del backend, porque lo que arma el front es solo UI. Lanza AppError
+// (VALIDACION) si la venta no cumple; si cumple, deja la venta lista para insertar.
+//  - D8: solo se emite desde una Nota de Empaque (la validación de ítems/cliente/estado de la NE
+//    la hace ValidarFacturacionDeNotaEmpaque).
+//  - D3: motivo obligatorio y dentro del enum.
+//  - No genera deuda ni cobro: sin pagos, sin comprobante fiscal, impaga = 0.
+//  - Se valoriza a precio de lista: sin descuento general, redondeo ni recargo por transferencia.
+function NormalizarEntregaSinCargo(venta: Venta): void {
+    const rechazar = (mensaje: string) => {
+        throw new AppError(CodigoError.VALIDACION, mensaje, 400, { modulo: 'VentasRepository', metodo: 'NormalizarEntregaSinCargo' });
+    };
+
+    if (venta.tipoRelacionado !== TipoRelacionado.NOTA_EMPAQUE || !venta.nroRelacionado)
+        rechazar('Una entrega sin cargo solo se puede emitir a partir de una nota de empaque aprobada.');
+
+    if (!Object.values(MotivoEntregaSinCargo).includes(venta.motivoEntrega as MotivoEntregaSinCargo))
+        rechazar('Indicá el motivo de la entrega sin cargo (EMBAJADOR, EVENTO u OTRO).');
+
+    if ((venta.pagos ?? []).length > 0)
+        rechazar('Una entrega sin cargo no admite pagos: no genera deuda ni cobro.');
+
+    if (venta.factura)
+        rechazar('Una entrega sin cargo no lleva comprobante fiscal.');
+
+    venta.idTipoComprobante = TipoComprobante.COTIZACION; // 99 = SIN_COMPROBANTE
+    venta.estado = EstadoVenta.FINALIZADA;
+    venta.impaga = 0;
+    venta.ajuste = 0;
+    venta.descuento = 0;
+    venta.redondeo = 0;
+}
+
 // Valida que una Factura/Cotización que se genera desde una Nota de Empaque (NE) sea una
 // conversión FIEL de la NE aprobada (oct-2026, la NE es el paso de control previo a
 // facturar). Dos reglas, ambas del lado del backend porque el bloqueo del front es solo UI:
@@ -2495,7 +2549,7 @@ async function ValidarFacturacionDePresupuesto(connection, venta:Venta): Promise
 async function ValidarFacturacionDeNotaEmpaque(connection, venta:Venta): Promise<string | null> {
     const esFacturaDesdeNota =
         venta.tipoRelacionado === TipoRelacionado.NOTA_EMPAQUE &&
-        [IdProceso.FACTURA, IdProceso.COTIZACION].includes(venta.idProceso!);
+        [IdProceso.FACTURA, IdProceso.COTIZACION, IdProceso.ENTREGA_SIN_CARGO].includes(venta.idProceso!);
 
     if (!esFacturaDesdeNota || !venta.nroRelacionado) return null;
 
