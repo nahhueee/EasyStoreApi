@@ -277,6 +277,14 @@ export const SQL_PROCESOS_CON_SALDO = PROCESOS_CON_SALDO.join(', ');
  * Motivo de una Entrega sin cargo (columna `ventas.motivoEntrega`). Se persiste en BD, no
  * cambiar los valores sin migración. Debe coincidir con MOTIVO_ENTREGA_SIN_CARGO en el front.
  */
+/**
+ * tipoRelacionado con el que una Devolución de entrega referencia a su Entrega sin cargo (= descripción
+ * del proceso 8, igual que las NC con su comprobante original). NO se agrega a TipoRelacionado a
+ * propósito: RELACION_PROCESO es Record<TipoRelacionado,...> y ActualizarEstadoRelacionado empezaría a
+ * mutar el estado de la ESC; si está abierta o agotada se deriva de las cantidades devueltas.
+ */
+export const TIPO_RELACIONADO_ENTREGA_SIN_CARGO = 'ENTREGA SIN CARGO';
+
 export enum MotivoEntregaSinCargo {
     EMBAJADOR = "EMBAJADOR",
     EVENTO = "EVENTO",

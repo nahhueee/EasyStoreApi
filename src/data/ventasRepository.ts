@@ -8,7 +8,7 @@ import { PoolConnection } from 'mysql2/promise';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
 import { Cliente } from '../models/Cliente';
-import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, puedeEditarseNotaEmpaque, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA, MotivoEntregaSinCargo } from '../models/ventaEstados';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, puedeEditarseNotaEmpaque, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA, MotivoEntregaSinCargo, TIPO_RELACIONADO_ENTREGA_SIN_CARGO } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 import { analizarTalle } from '../services/excelConciliacionService';
 import { FeEmisionesRepo } from './feEmisionesRepository';
@@ -883,9 +883,15 @@ class VentasRepository{
         venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
         venta.productos = await ObtenerProductosVenta(connection, venta.id!, venta.idProceso!);
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
-        venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!, venta.proceso!);
+        // Entrega sin cargo: sus "notas" son las Devoluciones de entrega (proceso 9, comprobante 99).
+        const esEntregaSC = venta.idProceso === IdProceso.ENTREGA_SIN_CARGO;
+        venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!, venta.proceso!, esEntregaSC ? IdProceso.DEVOLUCION_ENTREGA : IdProceso.NOTA_CREDITO);
         venta.cantidadesAcreditadas = await ObtenerCantidadesAcreditadas(connection, venta.nroProceso!, venta.proceso!);
-        venta.cantidadesAcreditadasInterna = await ObtenerCantidadesAcreditadasInterna(connection, venta.nroProceso!, venta.proceso!);
+        // Las devoluciones de una ESC son internas (comprobante 99, sin ARCA): viajan por el bucket
+        // "interno" para que el diálogo de notas del front funcione sin ramas especiales de cálculo.
+        venta.cantidadesAcreditadasInterna = esEntregaSC
+            ? await ObtenerCantidadesAcreditadasPorTipo(connection, venta.nroProceso!, venta.proceso!, [TipoComprobante.COTIZACION], IdProceso.DEVOLUCION_ENTREGA)
+            : await ObtenerCantidadesAcreditadasInterna(connection, venta.nroProceso!, venta.proceso!);
         return venta;
     }
 
@@ -942,6 +948,9 @@ class VentasRepository{
         // Entrega sin cargo: validación estructural y campos forzados acá (y no solo en Agregar)
         // para cubrir TODOS los caminos que llegan a AgregarBody, incluso un POST armado a mano.
         if (venta.idProceso === IdProceso.ENTREGA_SIN_CARGO) NormalizarEntregaSinCargo(venta);
+        // Devolución de entrega: valida contra la ESC (con lock de su fila, dentro de la transacción) y
+        // fuerza los campos; ver ValidarYNormalizarDevolucionEntrega.
+        if (venta.idProceso === IdProceso.DEVOLUCION_ENTREGA) await ValidarYNormalizarDevolucionEntrega(connection, venta);
         // Obtenemos el proximo nro de venta e insertamos, con reintento si choca
         // contra UNIQUE(idProceso, nroProceso). El FOR UPDATE de abajo debería
         // alcanzar solo para serializar guardados concurrentes, pero en
@@ -1052,7 +1061,7 @@ class VentasRepository{
                 // pasar en producción sólo porque nadie facturó un presupuesto todavía.
                 if(element.tipoItem === TipoItemVenta.PRESUPUESTO) continue;
 
-                if(venta.idProceso === IdProceso.NOTA_CREDITO){
+                if(venta.idProceso === IdProceso.NOTA_CREDITO || venta.idProceso === IdProceso.DEVOLUCION_ENTREGA){
                     await ProductosRepo.ActualizarInventario(connection, element, "+");
                 }else{
                     if(facturando || finalizandoCotizacion || entregandoSinCargo)
@@ -1765,7 +1774,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
 
         if (filtros.tipo){
             if (filtros.tipo == 'factura')
-                filtro += " AND v.idProceso IN (1,2,3,4," + IdProceso.ENTREGA_SIN_CARGO + ") ";
+                filtro += " AND v.idProceso IN (1,2,3,4," + IdProceso.ENTREGA_SIN_CARGO + "," + IdProceso.DEVOLUCION_ENTREGA + ") ";
             if (filtros.tipo == 'pre')
                 filtro += " AND v.idProceso IN (5,6,7) ";
         }
@@ -2088,12 +2097,12 @@ async function ObtenerFacturaVenta(connection, idVenta:number){
 // una chocaban con las de la otra cuando coincidía el número (bug real: venta
 // 218, sep-2026). tipoRelacionado se persiste con este mismo string al crear la
 // NC (ver armarObjetoVenta en notas-venta.component.ts, front).
-async function ObtenerNotasVenta(connection, nroProceso:number, tipoOriginal:string){
+async function ObtenerNotasVenta(connection, nroProceso:number, tipoOriginal:string, idProcesoNota:number = IdProceso.NOTA_CREDITO){
     try {
         const consulta = " SELECT id, nroProceso, total, idTComprobante FROM ventas " +
-                         " WHERE nroRelacionado = ? AND idProceso = 3 AND tipoRelacionado = ? "
+                         " WHERE nroRelacionado = ? AND idProceso = ? AND tipoRelacionado = ? "
 
-        const [rows] = await connection.query(consulta, [nroProceso, tipoOriginal]);
+        const [rows] = await connection.query(consulta, [nroProceso, idProcesoNota, tipoOriginal]);
         const notas:NotaCreditoVenta[] = [];
 
         if (Array.isArray(rows)) {
@@ -2126,14 +2135,14 @@ async function ObtenerNotasVenta(connection, nroProceso:number, tipoOriginal:str
 // idsComprobante filtra por tipo: fiscal y interna son buckets independientes (una NC
 // interna/X no resta saldo del comprobante fiscal original, y viceversa - ver
 // ObtenerCantidadesAcreditadas/ObtenerCantidadesAcreditadasInterna más abajo).
-async function ObtenerCantidadesAcreditadasPorTipo(connection, nroProceso:number, tipoOriginal:string, idsComprobante:number[]): Promise<CantidadesAcreditadas> {
+async function ObtenerCantidadesAcreditadasPorTipo(connection, nroProceso:number, tipoOriginal:string, idsComprobante:number[], idProcesoNota:number = IdProceso.NOTA_CREDITO): Promise<CantidadesAcreditadas> {
     try {
         const resultado = new CantidadesAcreditadas();
         const placeholdersComprobante = idsComprobante.map(() => '?').join(',');
 
         const [notas] = await connection.query(
-            `SELECT id, total FROM ventas WHERE nroRelacionado = ? AND idProceso = 3 AND tipoRelacionado = ? AND idTComprobante IN (${placeholdersComprobante})`,
-            [nroProceso, tipoOriginal, ...idsComprobante]
+            `SELECT id, total FROM ventas WHERE nroRelacionado = ? AND idProceso = ? AND tipoRelacionado = ? AND idTComprobante IN (${placeholdersComprobante})`,
+            [nroProceso, idProcesoNota, tipoOriginal, ...idsComprobante]
         );
 
         if (!Array.isArray(notas) || notas.length === 0) {
@@ -2532,6 +2541,90 @@ function NormalizarEntregaSinCargo(venta: Venta): void {
     venta.ajuste = 0;
     venta.descuento = 0;
     venta.redondeo = 0;
+}
+
+// Devolución de entrega (oct-2026, F3): inversa de la ESC, mismo camino que una NC. Reglas del backend:
+//  - Referencia a una ESC existente, Finalizada, del mismo cliente y empresa (la fila de la ESC se
+//    bloquea con FOR UPDATE: dos devoluciones simultáneas no pueden pasar el tope las dos).
+//  - Tope: por producto+tipoItem y por servicio, lo devuelto (acumulado de devoluciones previas
+//    + esta) no puede superar lo entregado. Mismo agrupado que la NC (no por idLineaTalle).
+//  - Sin pagos ni comprobante fiscal; se valoriza como la ESC (el total viene del front, igual que
+//    la NC: acá se valida cantidad, no precio).
+//  - No toca el estado de la NE ni de la ESC (ver TIPO_RELACIONADO_ENTREGA_SIN_CARGO).
+async function ValidarYNormalizarDevolucionEntrega(connection, venta: Venta): Promise<void> {
+    const rechazar = (mensaje: string): never => {
+        throw new AppError(CodigoError.VALIDACION, mensaje, 400, { modulo: 'VentasRepository', metodo: 'ValidarYNormalizarDevolucionEntrega' });
+    };
+
+    if (venta.tipoRelacionado !== TIPO_RELACIONADO_ENTREGA_SIN_CARGO || !venta.nroRelacionado)
+        rechazar('Una devolución de entrega se emite sobre una entrega sin cargo existente.');
+    if ((venta.pagos ?? []).length > 0) rechazar('Una devolución de entrega no admite pagos.');
+    if (venta.factura) rechazar('Una devolución de entrega no lleva comprobante fiscal.');
+
+    const [filas] = await connection.query(
+        "SELECT id, nroProceso, idCliente, idEmpresa, estado, motivoEntrega FROM ventas WHERE nroProceso = ? AND idProceso = ? AND fechaBaja IS NULL FOR UPDATE",
+        [venta.nroRelacionado, IdProceso.ENTREGA_SIN_CARGO]
+    );
+    const esc = Array.isArray(filas) ? filas[0] : undefined;
+    if (!esc) rechazar(`No se encontró la entrega sin cargo Nro ${venta.nroRelacionado}.`);
+    if (esc.estado !== EstadoVenta.FINALIZADA) rechazar(`La entrega sin cargo Nro ${venta.nroRelacionado} está ${esc.estado}: no admite devoluciones.`);
+    if (Number(esc.idCliente) !== Number(venta.cliente?.id))
+        rechazar(`El cliente no coincide con el de la entrega sin cargo Nro ${venta.nroRelacionado}.`);
+    if (Number(esc.idEmpresa) !== Number(venta.idEmpresa))
+        rechazar(`La empresa no coincide con la de la entrega sin cargo Nro ${venta.nroRelacionado}.`);
+
+    const clave = (id: any, tipoItem: any) => `${id}|${tipoItem ?? ''}`;
+    const sumar = (mapa: Map<string, number>, k: string, cant: any) => mapa.set(k, (mapa.get(k) ?? 0) + (Number(cant) || 0));
+
+    const entregado = new Map<string, number>();
+    const [prodsEsc] = await connection.query(
+        "SELECT idProducto, tipoItem, SUM(cantidad) cantidad FROM ventas_productos WHERE idVenta = ? GROUP BY idProducto, tipoItem", [esc.id]);
+    for (const r of prodsEsc as any[]) sumar(entregado, clave(r.idProducto, r.tipoItem), r.cantidad);
+    const entregadoServ = new Map<number, number>();
+    const [servsEsc] = await connection.query(
+        "SELECT idServicio, SUM(cantidad) cantidad FROM ventas_servicios WHERE idVenta = ? GROUP BY idServicio", [esc.id]);
+    for (const r of servsEsc as any[]) entregadoServ.set(Number(r.idServicio), Number(r.cantidad) || 0);
+
+    const previas = await ObtenerCantidadesAcreditadasPorTipo(
+        connection, esc.nroProceso, TIPO_RELACIONADO_ENTREGA_SIN_CARGO, [TipoComprobante.COTIZACION], IdProceso.DEVOLUCION_ENTREGA);
+    const devuelto = new Map<string, number>();
+    for (const p of previas.productos ?? []) sumar(devuelto, clave(p.idProducto, p.tipoItem), p.cantidad);
+    const devueltoServ = new Map<number, number>();
+    for (const s of previas.servicios ?? []) devueltoServ.set(Number(s.idServicio), Number(s.cantidad) || 0);
+
+    const ahora = new Map<string, number>();
+    for (const p of venta.productos ?? []) sumar(ahora, clave(p.idProducto, p.tipoItem), p.cantidad);
+    const ahoraServ = new Map<number, number>();
+    for (const sv of venta.servicios ?? []) ahoraServ.set(Number(sv.idServicio), (ahoraServ.get(Number(sv.idServicio)) ?? 0) + (Number(sv.cantidad) || 0));
+
+    const hayItems = [...ahora.values(), ...ahoraServ.values()].some(c => c > 0);
+    if (!hayItems) rechazar('La devolución de entrega no tiene ítems para devolver.');
+
+    const EPS = 0.0001;
+    for (const [k, cant] of ahora) {
+        if (cant <= 0) continue;
+        const max = entregado.get(k);
+        if (max === undefined) rechazar('La devolución incluye un producto que no figura en la entrega sin cargo.');
+        const disponible = (max as number) - (devuelto.get(k) ?? 0);
+        if (cant > disponible + EPS)
+            rechazar(`La cantidad a devolver supera lo entregado y no devuelto de la entrega sin cargo Nro ${venta.nroRelacionado} (disponible: ${disponible}, a devolver: ${cant}).`);
+    }
+    for (const [id, cant] of ahoraServ) {
+        if (cant <= 0) continue;
+        const max = entregadoServ.get(id);
+        if (max === undefined) rechazar('La devolución incluye un servicio que no figura en la entrega sin cargo.');
+        const disponible = (max as number) - (devueltoServ.get(id) ?? 0);
+        if (cant > disponible + EPS)
+            rechazar(`La cantidad de servicios a devolver supera lo entregado y no devuelto de la entrega sin cargo Nro ${venta.nroRelacionado}.`);
+    }
+
+    venta.idTipoComprobante = TipoComprobante.COTIZACION; // 99
+    venta.estado = EstadoVenta.FINALIZADA;
+    venta.impaga = 0;
+    venta.ajuste = 0;
+    venta.descuento = 0;
+    venta.redondeo = 0;
+    venta.motivoEntrega = esc.motivoEntrega ?? undefined;
 }
 
 // Valida que una Factura/Cotización que se genera desde una Nota de Empaque (NE) sea una
