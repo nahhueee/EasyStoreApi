@@ -1,64 +1,53 @@
 import {ComprasRepo} from '../data/comprasRepository';
-import {Router, Request, Response} from 'express';
-import logger from '../log/loggerGeneral';
+import {Router, Request, Response, NextFunction} from 'express';
 import { authMiddleware } from '../middlewares/authMiddleware';
 const router : Router  = Router();
 
 //#region OBTENER
-router.post('/obtener', async (req:Request, res:Response) => {
+router.post('/obtener', async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasRepo.Obtener(req.body));
 
     } catch(error:any){
-        let msg = "Error al obtener el listado de compras.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
+        next(error);
     }
 });
 
-router.get('/obtener-una/:idCompra', async (req:Request, res:Response) => {
+router.get('/obtener-una/:idCompra', async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasRepo.ObtenerUna(req.params.idCompra));
 
     } catch(error:any){
-        let msg = "Error al obtener la compra.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
+        next(error);
     }
 });
 
-router.get('/metodos-pago/:idEmpresa', async (req:Request, res:Response) => {
+router.get('/metodos-pago/:idEmpresa', async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasRepo.SelectorMetodosPago(req.params.idEmpresa));
 
     } catch(error:any){
-        let msg = "Error al obtener los metodos de pago de la compra.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
+        next(error);
     }
 });
 //#endregion
 
 //#region ABM
-router.post('/agregar', authMiddleware, async (req:Request, res:Response) => {
+router.post('/agregar', authMiddleware, async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasRepo.Agregar(req.body, req.usuario!.usuario));
 
     } catch(error:any){
-        let msg = "Error al intentar agregar la compra.";
-        logger.error(msg + " " + error.message);
-        res.status(500).send(msg);
+        next(error);
     }
 });
 
-router.put('/eliminar', authMiddleware, async (req:Request, res:Response) => {
+router.put('/eliminar', authMiddleware, async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasRepo.Eliminar(req.body, req.usuario!.usuario));
 
     } catch(error:any){
-        let msg = "Error al intentar eliminar la compra.";
-        logger.error(msg + " " + error.message);
-        res.status(error.status || 500).send(error.message || msg);
+        next(error);
     }
 });
 //#endregion

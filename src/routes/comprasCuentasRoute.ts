@@ -1,64 +1,53 @@
 import {ComprasCuentasRepo} from '../data/comprasCuentasRepository';
-import {Router, Request, Response} from 'express';
-import logger from '../log/loggerGeneral';
+import {Router, Request, Response, NextFunction} from 'express';
 import { authMiddleware } from '../middlewares/authMiddleware';
 const router : Router  = Router();
 
 //#region OBTENER
-router.post('/obtener', async (req:Request, res:Response) => {
+router.post('/obtener', async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasCuentasRepo.ObtenerCuentasProveedores(req.body));
 
     } catch(error:any){
-        let msg = "Error al obtener el listado de cuentas corrientes de proveedores.";
-        logger.error(msg + " " + error.message);
-        res.status(error.status || 500).send(error.message || msg);
+        next(error);
     }
 });
 
-router.post('/movimientos-proveedor', async (req:Request, res:Response) => {
+router.post('/movimientos-proveedor', async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasCuentasRepo.ObtenerMovimientosProveedor(req.body));
 
     } catch(error:any){
-        let msg = "Error al obtener el ledger de movimientos del proveedor.";
-        logger.error(msg + " " + error.message);
-        res.status(error.status || 500).send(error.message || msg);
+        next(error);
     }
 });
 
-router.get('/pago/:idPagoProveedor', async (req:Request, res:Response) => {
+router.get('/pago/:idPagoProveedor', async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasCuentasRepo.ObtenerPagoProveedor(req.params.idPagoProveedor));
 
     } catch(error:any){
-        let msg = "Error al obtener el pago nro " + req.params.idPagoProveedor + "";
-        logger.error(msg + " " + error.message);
-        res.status(error.status || 500).send(error.message || msg);
+        next(error);
     }
 });
 //#endregion
 
 //#region ABM
-router.put('/pagar', authMiddleware, async (req:Request, res:Response) => {
+router.put('/pagar', authMiddleware, async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasCuentasRepo.PagarProveedor(req.body, req.usuario!.usuario));
 
     } catch(error:any){
-        let msg = "No se pudo realizar el pago al proveedor.";
-        logger.error(msg + " " + error.message);
-        res.status(error.status || 500).send(error.message || msg);
+        next(error);
     }
 });
 
-router.put('/revertir-pago', authMiddleware, async (req:Request, res:Response) => {
+router.put('/revertir-pago', authMiddleware, async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasCuentasRepo.RevertirPagoProveedor(req.body?.idPagoProveedor, req.usuario!.usuario));
 
     } catch(error:any){
-        let msg = "No se pudo revertir el pago al proveedor.";
-        logger.error(msg + " " + error.message);
-        res.status(error.status || 500).send(error.message || msg);
+        next(error);
     }
 });
 //#endregion
