@@ -17,6 +17,7 @@ function puedeVerCostoInforme(req: Request): boolean {
 
 import { crearExcelVentas } from '../services/excelVentasService';
 import { crearExcelPreFacturacion } from '../services/excelPreFacturacionService';
+import { crearExcelEntregasSinCargo } from '../services/excelEntregasSinCargoService';
 import { crearExcelLibroIvaVentas } from '../services/excelLibroIvaService';
 import { crearExcelConciliacion } from '../services/excelConciliacionService';
 import { crearExcelProductos } from '../services/excelProductosService';
@@ -128,6 +129,26 @@ router.post('/prefacturacion-excel', async (req, res) => {
         res.send(buffer);
     } catch(error:any){
         let msg = "Error al intentar generar el excel de pre-facturación.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
+// Export de Entregas sin cargo (idProceso 8) y sus Devoluciones (9), neteadas. Independiente de
+// /ventas-excel (signo de NC fijo en proceso 3, sin precio/costo por linea). Las columnas de costo
+// solo van para quien puede ver costos.
+router.post('/entregas-sin-cargo-excel', async (req, res) => {
+    try {
+        const lineas = await VentasRepo.ObtenerReporteEntregasSinCargo(req.body);
+
+        const buffer = await crearExcelEntregasSinCargo(lineas, puedeVerCostoInforme(req));
+
+        res.setHeader('Content-Disposition', 'attachment; filename="entregas-sin-cargo.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch(error:any){
+        let msg = "Error al intentar generar el excel de entregas sin cargo.";
         logger.error(msg + " " + error.message);
         res.status(500).send(msg);
     }

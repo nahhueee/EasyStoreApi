@@ -596,6 +596,111 @@ class VentasRepository{
     }
     //#endregion
 
+    //#region REPORTE ENTREGAS SIN CARGO
+    // Export "Entregas sin cargo" (F4.1). Independiente de los reportes de ventas: esos tienen el
+    // signo de la NC fijo en idProceso = 3 y no traen precio/costo por linea. Aca entran las
+    // Entregas sin cargo (8, en positivo) y sus Devoluciones (9, en negativo) para ver el neto.
+    // Filtros: los de la pantalla de Facturacion (fechas + cliente). Sin filtro por motivo.
+    private FiltroEntregasSinCargo(filtros:any):string {
+        let filtro = ` AND v.idProceso IN (${IdProceso.ENTREGA_SIN_CARGO}, ${IdProceso.DEVOLUCION_ENTREGA})`;
+        const idCliente = Number(filtros?.cliente) || 0;
+        if(idCliente != 0) filtro += ` AND v.idCliente = ${idCliente}`;
+        if (filtros?.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
+            const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+            const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
+            filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+        }
+        return filtro;
+    }
+
+    // Una fila por linea (prenda, no catalogado o servicio). cantidad y total ya vienen con signo
+    // (devolucion = negativo). costoUnitario: en la ESC es el guardado en la linea; en la
+    // devolucion es el promedio ponderado de las lineas de SU ESC para el mismo producto (la
+    // devolucion resuelve el costo vigente al emitirse, que puede diferir del de la entrega: asi
+    // ESC - devolucion netea exacto a costo). NULL = sin costo (nunca se informa como 0).
+    async ObtenerReporteEntregasSinCargo(filtros:any){
+        const connection = await db.getConnection();
+        try {
+            const filtro = this.FiltroEntregasSinCargo(filtros);
+            const signo = `IF(v.idProceso = ${IdProceso.DEVOLUCION_ENTREGA}, -1, 1)`;
+
+            const queryProductos = `
+            SELECT
+                v.id AS idVenta,
+                v.idProceso,
+                v.nroProceso,
+                v.nroRelacionado,
+                v.fecha,
+                v.hora,
+                c.nombre AS cliente,
+                v.motivoEntrega,
+                vp.id AS idLinea,
+                IF(vp.tipoItem = '${TipoItemVenta.CATALOGO}', 'Prenda', 'No catalogado') AS tipoItem,
+                prod.codigo AS codigo,
+                IF(vp.tipoItem = '${TipoItemVenta.CATALOGO}', prod.nombre, vp.descripcion) AS articulo,
+                vp.cantidad * ${signo} AS cantidad,
+                vp.precio AS precio,
+                vp.total * ${signo} AS total,
+                IF(v.idProceso = ${IdProceso.DEVOLUCION_ENTREGA},
+                    (SELECT SUM(e.costoUnitario * e.cantidad) / SUM(e.cantidad)
+                       FROM ventas_productos e
+                       INNER JOIN ventas esc ON esc.id = e.idVenta
+                            AND esc.idProceso = ${IdProceso.ENTREGA_SIN_CARGO}
+                            AND esc.nroProceso = v.nroRelacionado
+                            AND esc.fechaBaja IS NULL
+                      WHERE e.idProducto = vp.idProducto AND e.tipoItem = vp.tipoItem
+                        AND e.costoUnitario IS NOT NULL AND e.cantidad > 0),
+                    vp.costoUnitario) AS costoUnitario
+            FROM ventas v
+                INNER JOIN ventas_productos vp ON vp.idVenta = v.id
+                LEFT JOIN clientes c ON c.id = v.idCliente
+                LEFT JOIN productos prod ON prod.id = vp.idProducto AND vp.tipoItem = '${TipoItemVenta.CATALOGO}'
+            WHERE v.fechaBaja IS NULL
+                ${filtro}
+                AND IFNULL(vp.cantidad, 0) <> 0
+            ORDER BY v.fecha, v.hora, v.id, vp.id;
+            `;
+
+            // Los servicios no tienen costo: costoUnitario = NULL (sin costo).
+            const queryServicios = `
+            SELECT
+                v.id AS idVenta,
+                v.idProceso,
+                v.nroProceso,
+                v.nroRelacionado,
+                v.fecha,
+                v.hora,
+                c.nombre AS cliente,
+                v.motivoEntrega,
+                vs.id AS idLinea,
+                'Servicio' AS tipoItem,
+                s.codigo AS codigo,
+                IFNULL(s.descripcion, CONCAT('(servicio eliminado #', vs.idServicio, ')')) AS articulo,
+                vs.cantidad * ${signo} AS cantidad,
+                vs.precio AS precio,
+                vs.total * ${signo} AS total,
+                NULL AS costoUnitario
+            FROM ventas v
+                INNER JOIN ventas_servicios vs ON vs.idVenta = v.id
+                LEFT JOIN clientes c ON c.id = v.idCliente
+                LEFT JOIN servicios s ON s.id = vs.idServicio
+            WHERE v.fechaBaja IS NULL
+                ${filtro}
+                AND IFNULL(vs.cantidad, 0) <> 0
+            ORDER BY v.fecha, v.hora, v.id, vs.id;
+            `;
+
+            const [productos] = await connection.query<RowDataPacket[]>(queryProductos);
+            const [servicios] = await connection.query<RowDataPacket[]>(queryServicios);
+            return [...productos, ...servicios].map(r => ({ ...r }));
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+    //#endregion
+
     //#region REPORTE PRE-FACTURACION
     // Export de la pantalla Pre-Facturación (Presupuesto/Pedido/Nota de Empaque, idProceso 5/6/7).
     // Mismos filtros que el listado (proceso, N°, fecha, fecha de entrega, cliente) y mismo recorte:
