@@ -1,4 +1,6 @@
 import db from '../db';
+import { AppError } from '../logger/AppError';
+import { CodigoError } from '../logger/CodigosError';
 import { Compra, DetalleCompra, CompraIva, CompraPercepcionIibb, PagoCompra } from '../models/Compra';
 import { ResultSetHeader } from 'mysql2';
 import { ObtenerSaldoAFavorProveedor } from './comprasCuentasRepository';
@@ -68,7 +70,7 @@ class ComprasRepository {
 
         try {
             if (!filtros?.fechas || filtros.fechas.length !== 2) {
-                throw { status: 400, message: 'Debe indicar un rango de fechas.' };
+                throw new AppError(CodigoError.VALIDACION, 'Debe indicar un rango de fechas.', 400, { modulo: 'ComprasRepo', metodo: 'Obtener' });
             }
 
             const query = ObtenerQuery({ ...filtros, tamanioPagina: null, incluirBaja: false }, false);
@@ -255,19 +257,21 @@ class ComprasRepository {
             );
             const compraActual = rows[0];
 
-            if (!compraActual) throw { status: 404, message: 'La compra no existe.' };
-            if (compraActual.baja) throw { status: 400, message: 'La compra ya se encuentra dada de baja.' };
+            if (!compraActual) throw new AppError(CodigoError.NOT_FOUND, 'La compra no existe.', 404, { modulo: 'ComprasRepo', metodo: 'Eliminar', idCompra: compra.id });
+            if (compraActual.baja) throw new AppError(CodigoError.VALIDACION, 'La compra ya se encuentra dada de baja.', 400, { modulo: 'ComprasRepo', metodo: 'Eliminar', idCompra: compra.id });
 
             // Si es una compra en Cuenta Corriente con pagos ya aplicados (total o parcial), no se puede dar
             // de baja directamente: el saldo del proveedor quedaría inconsistente (la deuda desaparece pero
             // los pagos que la cancelaron siguen registrados). Hay que revertir esos pagos primero
             // (comprasCuentasRepository.RevertirPagoProveedor).
             const [pagosAplicados]: any = await connection.query(
-                "SELECT 1 FROM compras_pagos_proveedor_detalle WHERE idCompra = ? LIMIT 1",
+                `SELECT 1 FROM compras_pagos_proveedor_detalle d
+                 INNER JOIN compras_pagos_proveedor pp ON pp.id = d.idPagoProveedor AND pp.baja IS NULL
+                 WHERE d.idCompra = ? LIMIT 1`,
                 [compra.id]
             );
             if (pagosAplicados.length) {
-                throw { status: 400, message: 'La compra tiene pagos aplicados. Revertí los pagos antes de darla de baja.' };
+                throw new AppError(CodigoError.VALIDACION, 'La compra tiene pagos aplicados. Revertí los pagos antes de darla de baja.', 400, { modulo: 'ComprasRepo', metodo: 'Eliminar', idCompra: compra.id });
             }
 
             // Reverso por cada método con el que se pagó la compra (multi-método, 24-jun-2026): un

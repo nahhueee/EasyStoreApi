@@ -31,7 +31,13 @@ export function errorMiddleware(err, req, res, next) {
 
   const rawDump = !err.message ? safeStringify(err) : undefined;
 
-  logger.error({
+  // Validaciones de negocio esperadas (4xx con severidad BAJA, ej: VALIDACION): van como warn a app.log
+  // y NO a error.log, para que la pantalla de Errores muestre solo lo accionable (5xx y severidad
+  // MEDIA o superior). error.log solo recibe nivel 'error'; app.log recibe info/warn/error.
+  const nivel = (status >= 400 && status < 500 && severity === 'BAJA') ? 'warn' : 'error';
+
+  logger.log({
+    level: nivel,
     type: isAppError ? 'APP_ERROR' : 'UNHANDLED_ERROR',
     code: err.code || err.constructor?.name || 'INTERNAL_ERROR',
     message: err.message ?? rawDump ?? 'Sin mensaje',

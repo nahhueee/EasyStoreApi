@@ -1,4 +1,6 @@
 import db from '../db';
+import { AppError } from '../logger/AppError';
+import { CodigoError } from '../logger/CodigosError';
 import { ResultSetHeader } from 'mysql2';
 const moment = require('moment');
 
@@ -121,7 +123,7 @@ class ComprasCuentasRepository {
         const connection = await db.getConnection();
 
         try {
-            if (!filtros.idProveedor) throw { status: 400, message: 'Debe indicar un proveedor.' };
+            if (!filtros.idProveedor) throw new AppError(CodigoError.VALIDACION, 'Debe indicar un proveedor.', 400, { modulo: 'ComprasCuentasRepo', metodo: 'ObtenerMovimientosProveedor' });
 
             const queryRegistros = await ObtenerQueryMovimientosProveedor(filtros, false);
             const queryTotal = await ObtenerQueryMovimientosProveedor(filtros, true);
@@ -167,10 +169,10 @@ class ComprasCuentasRepository {
         const connection = await db.getConnection();
 
         try {
-            if (!data.metodos?.length) throw { status: 400, message: 'Debe indicar al menos un método de pago.' };
+            if (!data.metodos?.length) throw new AppError(CodigoError.VALIDACION, 'Debe indicar al menos un método de pago.', 400, { modulo: 'ComprasCuentasRepo', metodo: 'PagarProveedor' });
 
             const montoTotal = data.metodos.reduce((acc, m) => acc + Number(m.monto), 0);
-            if (montoTotal <= 0) throw { status: 400, message: 'El monto del pago debe ser mayor a cero.' };
+            if (montoTotal <= 0) throw new AppError(CodigoError.VALIDACION, 'El monto del pago debe ser mayor a cero.', 400, { modulo: 'ComprasCuentasRepo', metodo: 'PagarProveedor' });
 
             await connection.beginTransaction();
 
@@ -178,7 +180,7 @@ class ComprasCuentasRepository {
                 "SELECT inicial FROM proveedores WHERE id = ? FOR UPDATE",
                 [data.idProveedor]
             );
-            if (!rowsProveedor.length) throw { status: 404, message: 'El proveedor no existe.' };
+            if (!rowsProveedor.length) throw new AppError(CodigoError.NOT_FOUND, 'El proveedor no existe.', 404, { modulo: 'ComprasCuentasRepo', metodo: 'PagarProveedor' });
             const proveedor = rowsProveedor[0];
 
             // Header del pago. Consolida lo que en Clientes son 2 tablas (recibos + ventas_entrega) en
@@ -301,9 +303,9 @@ class ComprasCuentasRepository {
                 "SELECT idEmpresa, idCaja, idProveedor, baja FROM compras_pagos_proveedor WHERE id = ? FOR UPDATE",
                 [idPagoProveedor]
             );
-            if (!rowsPago.length) throw { status: 404, message: 'El pago no existe.' };
+            if (!rowsPago.length) throw new AppError(CodigoError.NOT_FOUND, 'El pago no existe.', 404, { modulo: 'ComprasCuentasRepo', metodo: 'RevertirPagoProveedor', idPagoProveedor });
             const pago = rowsPago[0];
-            if (pago.baja) throw { status: 400, message: 'El pago ya se encuentra revertido.' };
+            if (pago.baja) throw new AppError(CodigoError.VALIDACION, 'El pago ya se encuentra revertido.', 400, { modulo: 'ComprasCuentasRepo', metodo: 'RevertirPagoProveedor', idPagoProveedor });
 
             // Baja lógica primero: así el recálculo de impaga de más abajo, que filtra por
             // "pp.baja IS NULL", ya deja afuera este pago sin necesitar una exclusión especial.
