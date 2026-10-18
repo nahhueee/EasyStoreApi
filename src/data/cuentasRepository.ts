@@ -4,7 +4,7 @@ import { ResultSetHeader } from 'mysql2';
 import { CuentaCorriente, VentasClienteCuenta } from '../models/CuentaCorriente';
 import { MovimientoFondo } from '../models/MovimientoFondo';
 import { GetMetodoPago, GetIdFondoValoresAcreditar, GetIdFondoRetenciones, InsertValorAcreditar, InsertCheque, InsertRetencion } from './ventasRepository';
-import { SQL_PROCESOS_CON_SALDO } from '../models/ventaEstados';
+import { SQL_PROCESOS_CON_SALDO, IdProceso, TIPO_RELACIONADO_ENTREGA_SIN_CARGO } from '../models/ventaEstados';
 
 // Retención sufrida (Ganancias/IIBB/SUSS) al cobrar. Hoy solo se habilita en la UI
 // para el método CHEQUE, pero vive desacoplada de `cheque` a propósito: es un
@@ -164,6 +164,78 @@ class CuentasRepository{
             }
 
             return {total:resultado[0][0].total, registros:ventas};
+
+        } catch (error:any) {
+            throw error;
+        } finally{
+            connection.release();
+        }
+    }
+
+    // Solapa "Entregas sin cargo" de la cuenta corriente (F4.2). Es informativa y va APARTE del
+    // extracto: las entregas sin cargo no tienen Debe/Haber ni mueven el saldo (no figuran en
+    // SQL_PROCESOS_CON_SALDO). Una fila por entrega (idProceso 8) con total, devuelto (suma de sus
+    // devoluciones vigentes, sin importar la fecha de la devolución, igual que F4.3) y neto.
+    // El rango de fechas filtra por fecha de la entrega; los totales del período suman las mismas
+    // filas del filtro (no solo la página).
+    async ObtenerEntregasSinCargoCliente(filtros:any){
+        const connection = await db.getConnection();
+
+        try {
+            const idCliente = Number(filtros?.cliente) || 0;
+            if (!idCliente) return { total: 0, registros: [], totales: { entregado: 0, devuelto: 0, neto: 0 } };
+
+            let filtro = ` AND v.idCliente = ${idCliente}`;
+            if (filtros?.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
+                const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+                const hasta = moment.utc(filtros.fechas[1]).add(1, 'day').format('YYYY-MM-DD');
+                filtro += ` AND v.fecha >= '${desde}' AND v.fecha < '${hasta}'`;
+            }
+
+            const pagina = Math.max(Number(filtros?.pagina) || 1, 1);
+            const tamanio = Math.min(Math.max(Number(filtros?.tamanioPagina) || 10, 1), 200);
+
+            const base = `
+                SELECT
+                    v.id, v.nroProceso, v.fecha, v.motivoEntrega, v.observacion,
+                    IFNULL(v.total, 0) AS total,
+                    IFNULL((
+                        SELECT SUM(d.total) FROM ventas d
+                        WHERE d.idProceso = ${IdProceso.DEVOLUCION_ENTREGA} AND d.fechaBaja IS NULL
+                            AND d.tipoRelacionado = '${TIPO_RELACIONADO_ENTREGA_SIN_CARGO}'
+                            AND d.nroRelacionado = v.nroProceso AND d.idCliente = v.idCliente
+                    ), 0) AS devuelto
+                FROM ventas v
+                WHERE v.idProceso = ${IdProceso.ENTREGA_SIN_CARGO} AND v.fechaBaja IS NULL
+                    ${filtro}`;
+
+            const [rows] = await connection.query<any[]>(
+                `${base} ORDER BY v.fecha DESC, v.id DESC LIMIT ${tamanio} OFFSET ${(pagina - 1) * tamanio}`);
+            const [tot] = await connection.query<any[]>(
+                `SELECT COUNT(*) AS cantidad, IFNULL(SUM(t.total), 0) AS entregado, IFNULL(SUM(t.devuelto), 0) AS devuelto
+                 FROM (${base}) t`);
+
+            const entregado = parseFloat(tot[0].entregado) || 0;
+            const devuelto = parseFloat(tot[0].devuelto) || 0;
+
+            return {
+                total: Number(tot[0].cantidad) || 0,
+                registros: rows.map(r => {
+                    const total = parseFloat(r.total) || 0;
+                    const dev = parseFloat(r.devuelto) || 0;
+                    return {
+                        id: r.id,
+                        nroProceso: r.nroProceso,
+                        fecha: r.fecha,
+                        motivoEntrega: r.motivoEntrega,
+                        observacion: r.observacion,
+                        total,
+                        devuelto: dev,
+                        neto: total - dev,
+                    };
+                }),
+                totales: { entregado, devuelto, neto: entregado - devuelto },
+            };
 
         } catch (error:any) {
             throw error;

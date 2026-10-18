@@ -1840,6 +1840,26 @@ function FiltroEstadoSql(estado: any): string {
     return valido ? ` AND v.estado = '${estado}'` : '';
 }
 
+// Entregas sin cargo con mercadería sin devolver (F4.3): entregado (prendas + servicios de la ESC)
+// mayor que lo devuelto en sus Devoluciones de entrega vigentes. Se compara en total y no por
+// producto porque ValidarYNormalizarDevolucionEntrega ya impide devolver más de lo entregado por
+// ítem. Las devoluciones se cuentan sin importar su fecha (pueden caer fuera del rango filtrado).
+// El estado de la ESC no sirve para esto: queda "Finalizada" aunque se devuelva todo.
+function FiltroConSaldoPorDevolverSql(): string {
+    const devueltoDe = (tabla: string) => `
+        SELECT SUM(dl.cantidad) FROM ventas d
+            INNER JOIN ${tabla} dl ON dl.idVenta = d.id
+        WHERE d.idProceso = ${IdProceso.DEVOLUCION_ENTREGA} AND d.fechaBaja IS NULL
+            AND d.tipoRelacionado = '${TIPO_RELACIONADO_ENTREGA_SIN_CARGO}'
+            AND d.nroRelacionado = v.nroProceso AND d.idCliente = v.idCliente`;
+    return ` AND v.idProceso = ${IdProceso.ENTREGA_SIN_CARGO} AND (
+        IFNULL((SELECT SUM(el.cantidad) FROM ventas_productos el WHERE el.idVenta = v.id), 0)
+        + IFNULL((SELECT SUM(es.cantidad) FROM ventas_servicios es WHERE es.idVenta = v.id), 0)
+        - IFNULL((${devueltoDe('ventas_productos')}), 0)
+        - IFNULL((${devueltoDe('ventas_servicios')}), 0)
+    ) > 0.0001 `;
+}
+
 async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
     try {
         //#region VARIABLES
@@ -1891,6 +1911,7 @@ async function ObtenerQuery(filtros:any,esTotal:boolean):Promise<string>{
             filtro += " AND v.nroProceso = " + filtros.nroProceso;
         }
         filtro += FiltroEstadoSql(filtros.estado);
+        if (filtros.conSaldoPorDevolver) filtro += FiltroConSaldoPorDevolverSql();
 
         if (filtros.fechas?.length === 2 && filtros.fechas[0] && filtros.fechas[1]) {
             const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');

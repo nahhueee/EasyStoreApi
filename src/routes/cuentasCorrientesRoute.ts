@@ -36,6 +36,17 @@ router.post('/ventas-cliente-reporte', async (req:Request, res:Response) => {
     }
 });
 
+router.post('/entregas-sin-cargo', async (req:Request, res:Response) => {
+    try{
+        res.json(await CuentasRepo.ObtenerEntregasSinCargoCliente(req.body));
+
+    } catch(error:any){
+        let msg = "Error al obtener las entregas sin cargo del cliente.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.get('/saldo-cliente/:idCliente', async (req:Request, res:Response) => {
     try{ 
         res.json(await CuentasRepo.ObtenerSaldoCliente(req.params.idCliente));
