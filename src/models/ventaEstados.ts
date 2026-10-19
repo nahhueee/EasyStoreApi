@@ -175,6 +175,19 @@ export function puedeDarseDeBaja(idProceso?: number, estado?: string): boolean {
  */
 export const ESTADOS_EDITABLES_NOTA_EMPAQUE: EstadoVenta[] = [EstadoVenta.PENDIENTE, EstadoVenta.APROBADA];
 
+/**
+ * Documentos que RESERVAN stock y en qué estado (oct-2026, reserva de stock por NE/Pedido).
+ * La reserva es DERIVADA, no se escribe nada en talles_producto: disponible = stock físico -
+ * unidades de los documentos de esta tabla que sigan vigentes (sin fechaBaja). Por eso se libera
+ * sola al facturar (el estado cambia a Facturado/Facturada y el stock real se descuenta en ese
+ * momento), al dar de baja, o al editar una NE Aprobada (vuelve a Pendiente). Una NE Pendiente NO
+ * reserva: recién reserva al aprobarse. Un Pedido nace Aprobado, así que reserva desde que se carga.
+ */
+export const ESTADO_QUE_RESERVA_STOCK: Partial<Record<IdProceso, EstadoVenta>> = {
+    [IdProceso.PEDIDO]:       EstadoVenta.APROBADO,
+    [IdProceso.NOTA_EMPAQUE]: EstadoVenta.APROBADA,
+};
+
 export function puedeEditarseNotaEmpaque(estado?: string, fechaBaja?: unknown): boolean {
     if (fechaBaja) return false;
     return ESTADOS_EDITABLES_NOTA_EMPAQUE.includes(estado as EstadoVenta);

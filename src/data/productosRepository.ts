@@ -5,7 +5,7 @@ import { ProductoPresupuesto } from '../models/ProductoPresupuesto';
 import { MiscRepo } from './miscRepository';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
-import { TipoItemVenta } from '../models/ventaEstados';
+import { ESTADO_QUE_RESERVA_STOCK, TipoItemVenta } from '../models/ventaEstados';
 import { logger } from '../logger/logger';
 
 class ProductosRepository{
@@ -369,57 +369,69 @@ class ProductosRepository{
         }
     }
 
-    async ObtenerStockDisponiblePorProducto(idProducto) {
-        const tallesProducto = await this.ObtenerTallesProducto(idProducto);
+    // Unidades reservadas por talle de un producto: suma de los documentos vigentes que reservan
+    // stock (ver ESTADO_QUE_RESERVA_STOCK: Pedido Aprobado y Nota de Empaque Aprobada, sin
+    // fechaBaja). Fuente ÚNICA del cálculo de reservas - la usan el "disponible" que ve el front y
+    // (próximas fases) la validación al aprobar una NE y al descontar stock. `executor` es una
+    // conexión (idealmente la de la transacción, para que el cálculo corra dentro del mismo lock) o
+    // el pool. `excluirVenta` deja afuera un documento puntual (ej. la NE que se está editando).
+    // Los ítems no catalogados (tipoItem != CATALOGO) no reservan: su idProducto no apunta a
+    // `productos`, y podría coincidir con el id de una prenda real.
+    async ObtenerReservadoPorTalle(
+        executor: { query: (sql: string, params?: any[]) => Promise<any> },
+        idProducto: number | string,
+        talles: string[],
+        excluirVenta?: number
+    ): Promise<Record<string, number>> {
+        const reservado: Record<string, number> = {};
+        talles.forEach(t => reservado[t] = 0);
 
-        // Traer todas las ventas del producto
-        // Solo Pedidos todavía vigentes (estado "Aprobado", sin dar de baja): uno ya
-        // facturado (estado "Facturado", ver RELACION_CIERRE en ventaEstados.ts) ya
-        // descontó stock real vía ActualizarInventario al cerrarse - si se lo sigue
-        // sumando acá esas unidades se restan dos veces (una real, otra "fantasma" del
-        // Pedido que lo originó) y "disponible" da negativo aunque el stock físico esté
-        // bien. Mismo motivo para fechaBaja: un Pedido dado de baja deja de reservar.
-        // Bug real (sep-2026, ver producto 827 / PLL LUCRECIA).
-        const [ventas] = await db.query(
-            `SELECT t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 
-            FROM ventas_productos vp
-            INNER JOIN ventas v ON vp.idVenta = v.id
-            WHERE vp.idProducto = ? AND v.idProceso = 6 AND v.estado = 'Aprobado' AND v.fechaBaja IS NULL`,
-            [idProducto]
+        const reservantes = Object.entries(ESTADO_QUE_RESERVA_STOCK);
+        const condicionesProceso = reservantes.map(() => '(v.idProceso = ? AND v.estado = ?)').join(' OR ');
+        const params: any[] = [idProducto, TipoItemVenta.CATALOGO];
+        reservantes.forEach(([idProceso, estado]) => params.push(Number(idProceso), estado));
+        if (excluirVenta) params.push(excluirVenta);
+
+        const [ventas]: any = await executor.query(
+            `SELECT vp.t1, vp.t2, vp.t3, vp.t4, vp.t5, vp.t6, vp.t7, vp.t8, vp.t9, vp.t10
+             FROM ventas_productos vp
+             INNER JOIN ventas v ON vp.idVenta = v.id
+             WHERE vp.idProducto = ? AND vp.tipoItem = ? AND v.fechaBaja IS NULL
+               AND (${condicionesProceso})
+               ${excluirVenta ? 'AND v.id <> ?' : ''}`,
+            params
         );
 
-        const lineaTalle = await MiscRepo.ObtenerLineaDeTalle(tallesProducto[0].idLineaTalle);
-        
-        const vendido: Record<string, number> = {};
-        // Inicializar todos los talles de la línea en 0
-        lineaTalle.talles.forEach((t: string) => vendido[t] = 0);
-
-        // Recorrer cada venta (t1..t10)
-        if (Array.isArray(ventas)) {
-            for (const v of ventas) {
-                for (let i = 0; i < lineaTalle.talles.length; i++) {
-                    const talleReal = lineaTalle.talles[i];
-                    const col = `t${i + 1}`;
-                    const valor = Number(v[col] ?? 0);
-                    vendido[talleReal] += valor;
-                }
+        // tN = posición N dentro de la línea de talle (ver ActualizarInventario)
+        for (const v of ventas) {
+            for (let i = 0; i < talles.length; i++) {
+                reservado[talles[i]] += Number(v[`t${i + 1}`] ?? 0);
             }
         }
+        return reservado;
+    }
 
-        // Actualizar los tallesProducto usando lo vendido
-        const salida = tallesProducto.map(tp => {
-            const talle = tp.talle;
-            const cantVendida = vendido[talle] ?? 0;
-            const disponible = tp.cantidad - cantVendida;
+    // Stock físico y disponible por talle. disponible = cantidad - reservado, y se muestra en 0 si
+    // las reservas superan el stock (los Pedidos pueden reservar de más: son venta a futuro). Antes
+    // solo descontaba Pedidos Aprobados; ahora descuenta todo lo que reserva (ver
+    // ObtenerReservadoPorTalle). Un Pedido ya facturado (estado Facturado) o dado de baja deja de
+    // reservar: el filtro de estado/fechaBaja evita contar dos veces unidades que ya descontaron
+    // stock real (bug sep-2026, producto 827 / PLL LUCRECIA).
+    async ObtenerStockDisponiblePorProducto(idProducto, excluirVenta?: number) {
+        const tallesProducto = await this.ObtenerTallesProducto(idProducto);
+        const lineaTalle = await MiscRepo.ObtenerLineaDeTalle(tallesProducto[0].idLineaTalle);
 
+        const reservado = await this.ObtenerReservadoPorTalle(db, idProducto, lineaTalle.talles, excluirVenta);
+
+        return tallesProducto.map(tp => {
+            const cantReservada = reservado[tp.talle] ?? 0;
             return {
                 ...tp,
-                vendido: cantVendida,
-                disponible: disponible
+                vendido: cantReservada, // nombre histórico, lo que usa el front hoy
+                reservado: cantReservada,
+                disponible: Math.max(0, tp.cantidad - cantReservada)
             };
         });
-
-        return salida;
     }
 
     async ObtenerTallesProducto(idProducto:number):Promise<any>{

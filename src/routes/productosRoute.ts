@@ -94,7 +94,9 @@ router.get('/buscar-prod-presupuesto/:filtro', async (req:Request, res:Response)
 
 router.get('/obtener-stock-disponible/:id', async (req:Request, res:Response) => {
     try{ 
-        res.json(await ProductosRepo.ObtenerStockDisponiblePorProducto(req.params.id));
+        // ?excluirVenta=<id>: deja afuera la reserva de ese documento (ej. la NE que se está editando)
+        const excluirVenta = Number(req.query.excluirVenta) || undefined;
+        res.json(await ProductosRepo.ObtenerStockDisponiblePorProducto(req.params.id, excluirVenta));
 
     } catch(error:any){
         let msg = "Error intentando obtener el stock disponible del producto.";
