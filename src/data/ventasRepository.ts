@@ -1735,17 +1735,52 @@ class VentasRepository{
         const connection = await db.getConnection();
         
         try {
-            // Solo se aprueba una Nota de Empaque que todavía está Pendiente: evita
-            // reaprobar una que ya fue asociada/facturada por error desde el listado.
-            // Se registra quién y cuándo aprobó (auditoría de la NE, oct-2026): no hay roles de
-            // aprobación, así que esto es lo que permite reconstruir el control después.
-            await connection.query(
-                `UPDATE ventas SET estado = '${EstadoVenta.APROBADA}', usuarioAprobacion = ?, fechaAprobacion = NOW() WHERE id = ? AND idProceso = ${IdProceso.NOTA_EMPAQUE} AND estado = '${EstadoVenta.PENDIENTE}'`,
-                [usuario ?? null, data.idVenta]
+            await connection.beginTransaction();
+
+            // Aprobar RESERVA stock (oct-2026): se valida que haya disponible (stock físico menos lo
+            // reservado por Pedidos y otras NE Aprobadas) antes de pasar a Aprobada. Va en
+            // transacción y con locks (fila de la NE, sus ítems y el stock de los talles) para que
+            // dos aprobaciones simultáneas de la misma prenda no pasen las dos. La primera lectura
+            // tiene que ser con lock (ver ValidarDisponibleReservas).
+            const [filas]: any = await connection.query(
+                "SELECT idProceso, estado, fechaBaja FROM ventas WHERE id = ? FOR UPDATE",
+                [data.idVenta]
             );
+            const fila = filas?.[0];
+
+            // Solo se aprueba una Nota de Empaque que todavía está Pendiente: evita
+            // reaprobar una que ya fue asociada/facturada por error desde el listado (en ese caso
+            // no hace nada, como antes). Una NE dada de baja no se aprueba.
+            if (fila && fila.idProceso === IdProceso.NOTA_EMPAQUE && fila.estado === EstadoVenta.PENDIENTE) {
+                if (fila.fechaBaja) {
+                    throw new AppError(
+                        CodigoError.VALIDACION,
+                        'La nota de empaque fue dada de baja y no se puede aprobar.',
+                        409,
+                        { modulo: 'VentasRepository', metodo: 'Aprobar', idVenta: data.idVenta }
+                    );
+                }
+
+                const [items]: any = await connection.query(
+                    `SELECT idProducto, idLineaTalle, tipoItem, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10
+                     FROM ventas_productos WHERE idVenta = ? FOR UPDATE`,
+                    [data.idVenta]
+                );
+                await ProductosRepo.ValidarDisponibleReservas(connection, items, data.idVenta);
+
+                // Se registra quién y cuándo aprobó (auditoría de la NE, oct-2026): no hay roles de
+                // aprobación, así que esto es lo que permite reconstruir el control después.
+                await connection.query(
+                    `UPDATE ventas SET estado = '${EstadoVenta.APROBADA}', usuarioAprobacion = ?, fechaAprobacion = NOW() WHERE id = ? AND idProceso = ${IdProceso.NOTA_EMPAQUE} AND estado = '${EstadoVenta.PENDIENTE}'`,
+                    [usuario ?? null, data.idVenta]
+                );
+            }
+
+            await connection.commit();
             return("OK");
 
         } catch (error:any) {
+            await connection.rollback();
             throw error;
         } finally{
             connection.release();

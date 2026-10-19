@@ -4,6 +4,7 @@ import {FacturacionServ} from '../services/facturacionService';
 import {Router, Request, Response} from 'express';
 import logger from '../log/loggerGeneral';
 import { authMiddleware } from '../middlewares/authMiddleware';
+import { AppError } from '../logger/AppError';
 const router : Router  = Router();
 
 //#region OBTENER
@@ -121,13 +122,17 @@ router.put('/dar-baja', async (req:Request, res:Response) => {
     }
 });
 
-router.put('/aprobar', authMiddleware, async (req:Request, res:Response) => {
+router.put('/aprobar', authMiddleware, async (req:Request, res:Response, next) => {
     try{ 
         res.json(await VentasRepo.Aprobar(req.body, req.usuario!.usuario));
 
     } catch(error:any){
         let msg = "Error al intentar aprobar la venta.";
         logger.error(msg + " " + error.message);
+        // Errores de negocio (AppError: sin stock disponible, NE dada de baja) por el errorMiddleware,
+        // que responde {code, message}: el front (http-error-handler) muestra ese mensaje en vez de un
+        // 500 genérico.
+        if (error instanceof AppError) return next(error);
         res.status(500).send(msg);
     }
 });

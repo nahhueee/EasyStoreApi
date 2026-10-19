@@ -411,6 +411,77 @@ class ProductosRepository{
         return reservado;
     }
 
+    // Valida que haya DISPONIBLE (stock físico - reservado por otros documentos) para los ítems de
+    // un documento que va a reservar o consumir stock. Hoy lo usa VentasRepo.Aprobar (la NE
+    // reserva al aprobarse); la validación al descontar stock reutiliza esta misma función.
+    //
+    // Debe llamarse DENTRO de una transacción abierta (`connection`): bloquea con FOR UPDATE las
+    // filas de talles_producto involucradas, en orden fijo (producto, talle) para evitar
+    // deadlocks, y recién DESPUÉS calcula las reservas. Ese orden importa: con REPEATABLE READ el
+    // snapshot se fija en la primera lectura sin lock, así que si se leyeran las reservas antes de
+    // tomar los locks, dos aprobaciones simultáneas del mismo talle no se verían entre sí. La
+    // llamada anterior en la transacción tiene que ser también una lectura con lock.
+    // `excluirVenta`: el propio documento, para que no se descuente a sí mismo.
+    // Los ítems no catalogados (tipoItem PRESUPUESTO) no reservan ni se validan.
+    async ValidarDisponibleReservas(connection: any, detalles: any[], excluirVenta?: number): Promise<void> {
+        // 1) requerido por (producto, talle)
+        const requerido = new Map<string, { idProducto: number, talle: string, cant: number }>();
+        for (const d of detalles) {
+            if (d.tipoItem === TipoItemVenta.PRESUPUESTO || !d.idLineaTalle) continue;
+            const linea = await MiscRepo.ObtenerLineaDeTalle(d.idLineaTalle);
+            if (!linea) continue;
+            linea.talles.forEach((talle: string, i: number) => {
+                const cant = Number(d[`t${i + 1}`]) || 0;
+                if (cant <= 0) return;
+                const clave = `${d.idProducto}|${talle}`;
+                const previo = requerido.get(clave);
+                if (previo) previo.cant += cant;
+                else requerido.set(clave, { idProducto: Number(d.idProducto), talle, cant });
+            });
+        }
+        if (requerido.size === 0) return;
+
+        // 2) locks de stock en orden fijo, y lectura del stock físico bajo lock
+        const claves = [...requerido.values()].sort((a, b) =>
+            a.idProducto - b.idProducto || (a.talle < b.talle ? -1 : a.talle > b.talle ? 1 : 0));
+        const stock = new Map<string, number>();
+        for (const r of claves) {
+            const [rows]: any = await connection.query(
+                'SELECT cantidad FROM talles_producto WHERE idProducto = ? AND talle = ? FOR UPDATE',
+                [r.idProducto, r.talle]
+            );
+            stock.set(`${r.idProducto}|${r.talle}`, Number(rows[0]?.cantidad ?? 0));
+        }
+
+        // 3) reservas de otros documentos (una consulta por producto, después de los locks)
+        const reservadoPorProducto = new Map<number, Record<string, number>>();
+        const faltantes: string[] = [];
+        for (const r of claves) {
+            if (!reservadoPorProducto.has(r.idProducto)) {
+                const [[lt]]: any = await connection.query(
+                    'SELECT idLineaTalle FROM talles_producto WHERE idProducto = ? LIMIT 1', [r.idProducto]);
+                const linea = await MiscRepo.ObtenerLineaDeTalle(lt.idLineaTalle);
+                reservadoPorProducto.set(r.idProducto,
+                    await this.ObtenerReservadoPorTalle(connection, r.idProducto, linea.talles, excluirVenta));
+            }
+            const reservado = reservadoPorProducto.get(r.idProducto)![r.talle] ?? 0;
+            const disponible = (stock.get(`${r.idProducto}|${r.talle}`) ?? 0) - reservado;
+            if (disponible < r.cant) {
+                const [[prod]]: any = await connection.query('SELECT nombre FROM productos WHERE id = ?', [r.idProducto]);
+                faltantes.push(`${prod?.nombre ?? 'Producto ' + r.idProducto} talle ${r.talle}: disponible ${Math.max(0, disponible)}, solicitado ${r.cant}`);
+            }
+        }
+
+        if (faltantes.length > 0) {
+            throw new AppError(
+                CodigoError.STOCK_INSUFICIENTE,
+                `No hay stock disponible (descontadas las reservas de otras notas de empaque y pedidos): ${faltantes.join('; ')}.`,
+                409,
+                { modulo: 'ProductosRepository', metodo: 'ValidarDisponibleReservas', excluirVenta, faltantes }
+            );
+        }
+    }
+
     // Stock físico y disponible por talle. disponible = cantidad - reservado, y se muestra en 0 si
     // las reservas superan el stock (los Pedidos pueden reservar de más: son venta a futuro). Antes
     // solo descontaba Pedidos Aprobados; ahora descuenta todo lo que reserva (ver
