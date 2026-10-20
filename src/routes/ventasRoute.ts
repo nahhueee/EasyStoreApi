@@ -154,7 +154,7 @@ router.get('/obtenerQR/:id', async (req:Request, res:Response, next) => {
 // carrera); esto corta el caso comun ANTES del punto de no retorno fiscal.
 router.post('/validar-stock', async (req:Request, res:Response, next) => {
     try{
-        await ProductosRepo.ValidarStockVenta(req.body.productos);
+        await ProductosRepo.ValidarStockVenta(req.body.productos, { nroRelacionado: req.body.nroRelacionado, tipoRelacionado: req.body.tipoRelacionado });
         res.json({ ok: true });
     } catch(error){
         next(error);

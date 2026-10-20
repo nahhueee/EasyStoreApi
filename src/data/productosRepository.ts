@@ -5,7 +5,7 @@ import { ProductoPresupuesto } from '../models/ProductoPresupuesto';
 import { MiscRepo } from './miscRepository';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
-import { ESTADO_QUE_RESERVA_STOCK, TipoItemVenta } from '../models/ventaEstados';
+import { ESTADO_QUE_RESERVA_STOCK, RELACION_PROCESO, TipoItemVenta, TipoRelacionado } from '../models/ventaEstados';
 import { logger } from '../logger/logger';
 
 class ProductosRepository{
@@ -374,14 +374,16 @@ class ProductosRepository{
     // fechaBaja). Fuente ÚNICA del cálculo de reservas - la usan el "disponible" que ve el front y
     // (próximas fases) la validación al aprobar una NE y al descontar stock. `executor` es una
     // conexión (idealmente la de la transacción, para que el cálculo corra dentro del mismo lock) o
-    // el pool. `excluirVenta` deja afuera un documento puntual (ej. la NE que se está editando).
+    // el pool. `excluirVenta` deja afuera un documento puntual (ej. la NE que se está editando);
+    // `soloVenta` hace lo contrario: cuenta únicamente lo que reserva ese documento.
     // Los ítems no catalogados (tipoItem != CATALOGO) no reservan: su idProducto no apunta a
     // `productos`, y podría coincidir con el id de una prenda real.
     async ObtenerReservadoPorTalle(
         executor: { query: (sql: string, params?: any[]) => Promise<any> },
         idProducto: number | string,
         talles: string[],
-        excluirVenta?: number
+        excluirVenta?: number,
+        soloVenta?: number
     ): Promise<Record<string, number>> {
         const reservado: Record<string, number> = {};
         talles.forEach(t => reservado[t] = 0);
@@ -391,6 +393,7 @@ class ProductosRepository{
         const params: any[] = [idProducto, TipoItemVenta.CATALOGO];
         reservantes.forEach(([idProceso, estado]) => params.push(Number(idProceso), estado));
         if (excluirVenta) params.push(excluirVenta);
+        if (soloVenta) params.push(soloVenta);
 
         const [ventas]: any = await executor.query(
             `SELECT vp.t1, vp.t2, vp.t3, vp.t4, vp.t5, vp.t6, vp.t7, vp.t8, vp.t9, vp.t10
@@ -398,7 +401,8 @@ class ProductosRepository{
              INNER JOIN ventas v ON vp.idVenta = v.id
              WHERE vp.idProducto = ? AND vp.tipoItem = ? AND v.fechaBaja IS NULL
                AND (${condicionesProceso})
-               ${excluirVenta ? 'AND v.id <> ?' : ''}`,
+               ${excluirVenta ? 'AND v.id <> ?' : ''}
+               ${soloVenta ? 'AND v.id = ?' : ''}`,
             params
         );
 
@@ -411,19 +415,51 @@ class ProductosRepository{
         return reservado;
     }
 
+    // Id del Pedido / Nota de Empaque desde el que sale una venta (nroRelacionado + tipoRelacionado),
+    // solo si ese tipo de documento reserva stock. Un Presupuesto o una venta sin relación devuelven
+    // undefined. Se resuelve por (idProceso, nroProceso), igual que ActualizarEstadoRelacionado.
+    async ObtenerIdOrigenReserva(executor: { query: (sql: string, params?: any[]) => Promise<any> },
+                                 nroRelacionado?: number, tipoRelacionado?: string): Promise<number | undefined> {
+        if (!nroRelacionado) return undefined;
+        const relacion = RELACION_PROCESO[tipoRelacionado as TipoRelacionado];
+        if (!relacion || !ESTADO_QUE_RESERVA_STOCK[relacion.idProceso]) return undefined;
+        const [rows]: any = await executor.query(
+            'SELECT id FROM ventas WHERE nroProceso = ? AND idProceso = ?',
+            [nroRelacionado, relacion.idProceso]
+        );
+        return rows?.[0]?.id;
+    }
+
     // Valida que haya DISPONIBLE (stock físico - reservado por otros documentos) para los ítems de
-    // un documento que va a reservar o consumir stock. Hoy lo usa VentasRepo.Aprobar (la NE
-    // reserva al aprobarse); la validación al descontar stock reutiliza esta misma función.
+    // un documento que va a reservar o consumir stock. Lo usan VentasRepo.Aprobar (la NE reserva al
+    // aprobarse), AgregarBody/ModificarBody (antes de descontar stock en Factura, Cotización
+    // finalizada y Entrega sin cargo) y el chequeo preventivo ValidarStockVenta.
     //
-    // Debe llamarse DENTRO de una transacción abierta (`connection`): bloquea con FOR UPDATE las
-    // filas de talles_producto involucradas, en orden fijo (producto, talle) para evitar
-    // deadlocks, y recién DESPUÉS calcula las reservas. Ese orden importa: con REPEATABLE READ el
-    // snapshot se fija en la primera lectura sin lock, así que si se leyeran las reservas antes de
-    // tomar los locks, dos aprobaciones simultáneas del mismo talle no se verían entre sí. La
-    // llamada anterior en la transacción tiene que ser también una lectura con lock.
-    // `excluirVenta`: el propio documento, para que no se descuente a sí mismo.
+    // Opciones:
+    //  - excluirVenta: el propio documento, para que no se descuente a sí mismo.
+    //  - origenReserva: id del Pedido/NE desde el que se factura. Lo que ese documento YA reservó
+    //    para el mismo talle no se vuelve a exigir contra el disponible (quedó garantizado cuando
+    //    se aprobó; si no, un Pedido sobre-comprometido nunca se podría facturar). Solo se valida
+    //    el excedente: unidades que se facturan por encima de lo que reservaba el origen. Lo que sí
+    //    sigue exigiendo siempre el stock FÍSICO es ActualizarInventario.
+    //  - bloquear (default true): toma FOR UPDATE sobre talles_producto; en false es de solo
+    //    lectura (chequeo preventivo del front).
+    //
+    // Con bloquear=true debe llamarse DENTRO de una transacción abierta (`connection`). Se bloquean
+    // las filas de stock en orden fijo (producto, talle) para evitar deadlocks, y las reservas se
+    // leen por el POOL (otra conexión, lectura fresca de lo ya confirmado) DESPUÉS de tomar los
+    // locks: con REPEATABLE READ una lectura por `connection` podía usar un snapshot anterior al
+    // lock y no ver una aprobación de NE confirmada mientras esperábamos. Es seguro porque aprobar
+    // una NE y descontar stock toman el mismo lock de talle: o ya confirmó (se ve) o espera a que
+    // terminemos. ObtenerLineaDeTalle ya toma una conexión extra del pool dentro de transacciones.
     // Los ítems no catalogados (tipoItem PRESUPUESTO) no reservan ni se validan.
-    async ValidarDisponibleReservas(connection: any, detalles: any[], excluirVenta?: number): Promise<void> {
+    async ValidarDisponibleReservas(
+        connection: any,
+        detalles: any[],
+        opts: { excluirVenta?: number, origenReserva?: number, bloquear?: boolean } = {}
+    ): Promise<void> {
+        const { excluirVenta, origenReserva, bloquear = true } = opts;
+
         // 1) requerido por (producto, talle)
         const requerido = new Map<string, { idProducto: number, talle: string, cant: number }>();
         for (const d of detalles) {
@@ -441,43 +477,52 @@ class ProductosRepository{
         }
         if (requerido.size === 0) return;
 
-        // 2) locks de stock en orden fijo, y lectura del stock físico bajo lock
+        // 2) locks de stock en orden fijo, y lectura del stock físico
         const claves = [...requerido.values()].sort((a, b) =>
             a.idProducto - b.idProducto || (a.talle < b.talle ? -1 : a.talle > b.talle ? 1 : 0));
         const stock = new Map<string, number>();
         for (const r of claves) {
             const [rows]: any = await connection.query(
-                'SELECT cantidad FROM talles_producto WHERE idProducto = ? AND talle = ? FOR UPDATE',
+                `SELECT cantidad FROM talles_producto WHERE idProducto = ? AND talle = ?${bloquear ? ' FOR UPDATE' : ''}`,
                 [r.idProducto, r.talle]
             );
             stock.set(`${r.idProducto}|${r.talle}`, Number(rows[0]?.cantidad ?? 0));
         }
 
-        // 3) reservas de otros documentos (una consulta por producto, después de los locks)
-        const reservadoPorProducto = new Map<number, Record<string, number>>();
+        // 3) reservas (de todos los documentos vigentes salvo `excluirVenta`) y lo que cubre el origen
+        const reservas = new Map<number, { total: Record<string, number>, origen: Record<string, number> }>();
         const faltantes: string[] = [];
         for (const r of claves) {
-            if (!reservadoPorProducto.has(r.idProducto)) {
+            if (!reservas.has(r.idProducto)) {
                 const [[lt]]: any = await connection.query(
                     'SELECT idLineaTalle FROM talles_producto WHERE idProducto = ? LIMIT 1', [r.idProducto]);
                 const linea = await MiscRepo.ObtenerLineaDeTalle(lt.idLineaTalle);
-                reservadoPorProducto.set(r.idProducto,
-                    await this.ObtenerReservadoPorTalle(connection, r.idProducto, linea.talles, excluirVenta));
+                reservas.set(r.idProducto, {
+                    total: await this.ObtenerReservadoPorTalle(db, r.idProducto, linea.talles, excluirVenta),
+                    origen: origenReserva
+                        ? await this.ObtenerReservadoPorTalle(db, r.idProducto, linea.talles, undefined, origenReserva)
+                        : {}
+                });
             }
-            const reservado = reservadoPorProducto.get(r.idProducto)![r.talle] ?? 0;
-            const disponible = (stock.get(`${r.idProducto}|${r.talle}`) ?? 0) - reservado;
-            if (disponible < r.cant) {
+            const { total, origen } = reservas.get(r.idProducto)!;
+            const cubierto = origen[r.talle] ?? 0;
+            const aCubrir = r.cant - cubierto;
+            if (aCubrir <= 0) continue; // todo lo cubre la reserva del documento de origen
+
+            const disponible = (stock.get(`${r.idProducto}|${r.talle}`) ?? 0) - (total[r.talle] ?? 0);
+            if (disponible < aCubrir) {
                 const [[prod]]: any = await connection.query('SELECT nombre FROM productos WHERE id = ?', [r.idProducto]);
-                faltantes.push(`${prod?.nombre ?? 'Producto ' + r.idProducto} talle ${r.talle}: disponible ${Math.max(0, disponible)}, solicitado ${r.cant}`);
+                faltantes.push(`${prod?.nombre ?? 'Producto ' + r.idProducto} talle ${r.talle}: disponible ${Math.max(0, disponible)}, solicitado ${aCubrir}` +
+                    (cubierto > 0 ? ` (además de ${cubierto} ya reservadas por el documento de origen)` : ''));
             }
         }
 
         if (faltantes.length > 0) {
             throw new AppError(
                 CodigoError.STOCK_INSUFICIENTE,
-                `No hay stock disponible (descontadas las reservas de otras notas de empaque y pedidos): ${faltantes.join('; ')}.`,
+                `No hay stock disponible (descontadas las reservas de notas de empaque y pedidos): ${faltantes.join('; ')}.`,
                 409,
-                { modulo: 'ProductosRepository', metodo: 'ValidarDisponibleReservas', excluirVenta, faltantes }
+                { modulo: 'ProductosRepository', metodo: 'ValidarDisponibleReservas', excluirVenta, origenReserva, faltantes }
             );
         }
     }
@@ -991,7 +1036,7 @@ class ProductosRepository{
     // DESPUES de haber pedido el CAE a AFIP - accion irreversible. Caso real que motivo
     // esto: Factura A PtoVenta 12 Nro 80 (sep-2026), CAE emitido en ARCA y venta nunca
     // persistida porque el talle no alcanzaba.
-    async ValidarStockVenta(productos: any[]): Promise<void> {
+    async ValidarStockVenta(productos: any[], relacion?: { nroRelacionado?: number, tipoRelacionado?: string }): Promise<void> {
         if (!Array.isArray(productos) || productos.length === 0) return;
 
         const connection = await db.getConnection();
@@ -1027,6 +1072,12 @@ class ProductosRepository{
                     }
                 }
             }
+
+            // Reservas de NE/Pedidos Aprobados (misma regla que al guardar, de solo lectura): el stock
+            // físico alcanza pero puede estar reservado para otro documento. Si la venta sale de un
+            // Pedido/NE, lo que ese documento ya reservó no se vuelve a exigir.
+            const origen = await this.ObtenerIdOrigenReserva(connection, relacion?.nroRelacionado, relacion?.tipoRelacionado);
+            await this.ValidarDisponibleReservas(connection, productos, { origenReserva: origen, bloquear: false });
         } finally {
             connection.release();
         }

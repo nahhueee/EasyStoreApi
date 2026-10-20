@@ -1132,6 +1132,20 @@ class VentasRepository{
         }
 
 
+        // Reservas de stock (oct-2026): antes de descontar, se valida que el stock no esté reservado
+        // por una NE/Pedido Aprobado de otro cliente. Mismas condiciones que el descuento de abajo; no
+        // corre en Regularizar (permitirNegativo): un CAE ya emitido manda sobre el stock. Si la venta
+        // sale de un Pedido/NE, solo se exige disponible por el excedente sobre lo que ese documento
+        // ya tenía reservado (ver ValidarDisponibleReservas).
+        const descuentaStockAhora = facturando
+            || (venta.idProceso == IdProceso.COTIZACION && venta.estado == EstadoVenta.FINALIZADA)
+            || venta.idProceso === IdProceso.ENTREGA_SIN_CARGO;
+        const esMovimientoDeEntrada = venta.idProceso === IdProceso.NOTA_CREDITO || venta.idProceso === IdProceso.DEVOLUCION_ENTREGA;
+        if (!permitirNegativo && descuentaStockAhora && !esMovimientoDeEntrada && venta.productos?.length) {
+            const origenReserva = await ProductosRepo.ObtenerIdOrigenReserva(connection, venta.nroRelacionado, venta.tipoRelacionado);
+            await ProductosRepo.ValidarDisponibleReservas(connection, venta.productos, { excluirVenta: venta.id, origenReserva });
+        }
+
         //insertamos los productos de la venta
         if(venta.productos){
             for (const element of venta.productos) {
@@ -1601,6 +1615,12 @@ class VentasRepository{
             }
         }
 
+        // Reservas de stock (oct-2026): misma validación que en AgregarBody antes de descontar.
+        if (facturando && !permitirNegativo && venta.productos?.length) {
+            const origenReserva = await ProductosRepo.ObtenerIdOrigenReserva(connection, venta.nroRelacionado, venta.tipoRelacionado);
+            await ProductosRepo.ValidarDisponibleReservas(connection, venta.productos, { excluirVenta: venta.id, origenReserva });
+        }
+
         await connection.query("DELETE FROM ventas_productos WHERE idVenta = ?", [venta.id]);
         //insertamos los productos de la venta
         if(venta.productos){
@@ -1766,7 +1786,7 @@ class VentasRepository{
                      FROM ventas_productos WHERE idVenta = ? FOR UPDATE`,
                     [data.idVenta]
                 );
-                await ProductosRepo.ValidarDisponibleReservas(connection, items, data.idVenta);
+                await ProductosRepo.ValidarDisponibleReservas(connection, items, { excluirVenta: data.idVenta });
 
                 // Se registra quién y cuándo aprobó (auditoría de la NE, oct-2026): no hay roles de
                 // aprobación, así que esto es lo que permite reconstruir el control después.
