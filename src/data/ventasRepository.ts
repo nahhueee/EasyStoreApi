@@ -8,8 +8,8 @@ import { PoolConnection } from 'mysql2/promise';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
 import { Cliente } from '../models/Cliente';
-import { AdelantosDisponibles, AdelantosDeNE, GuardarAdelantosNE } from './ventasAdelantos';
-import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, puedeEditarseNotaEmpaque, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA, MotivoEntregaSinCargo, TIPO_RELACIONADO_ENTREGA_SIN_CARGO } from '../models/ventaEstados';
+import { AdelantosDisponibles, AdelantosDeNE, AdelantosDeNEPorNro, GuardarAdelantosNE, ValidarNotaCreditoSobreAdelanto } from './ventasAdelantos';
+import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, puedeEditarseNotaEmpaque, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_ADELANTO, MotivoEntregaSinCargo, TIPO_RELACIONADO_ENTREGA_SIN_CARGO } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 import { analizarTalle } from '../services/excelConciliacionService';
 import { FeEmisionesRepo } from './feEmisionesRepository';
@@ -1001,6 +1001,11 @@ class VentasRepository{
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
         // Nota de Empaque: facturas de adelanto vinculadas (oct-2026, ver ventasAdelantos.ts).
         if (venta.idProceso === IdProceso.NOTA_EMPAQUE) venta.adelantos = await AdelantosDeNE(connection, venta.id!);
+        // Factura final de una NE con adelantos (F3): los trae para mostrar "Adelanto s/ Fact. ..." en el resumen.
+        else if (venta.idProceso === IdProceso.FACTURA && venta.tipoRelacionado === TipoRelacionado.NOTA_EMPAQUE && venta.nroRelacionado) {
+            const adelantosFinal = await AdelantosDeNEPorNro(connection, venta.nroRelacionado);
+            if (adelantosFinal.length > 0) venta.adelantos = adelantosFinal;
+        }
         // Entrega sin cargo: sus "notas" son las Devoluciones de entrega (proceso 9, comprobante 99).
         const esEntregaSC = venta.idProceso === IdProceso.ENTREGA_SIN_CARGO;
         venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!, venta.proceso!, esEntregaSC ? IdProceso.DEVOLUCION_ENTREGA : IdProceso.NOTA_CREDITO);
@@ -1242,7 +1247,8 @@ class VentasRepository{
         // proveedoresRepository.Agregar para los errores de validación.
         // Misma idea para una Nota de Empaque (oct-2026): se factura tal cual fue aprobada.
         const errorPresupuesto = await ValidarFacturacionDePresupuesto(connection, venta)
-            ?? await ValidarFacturacionDeNotaEmpaque(connection, venta);
+            ?? await ValidarFacturacionDeNotaEmpaque(connection, venta)
+            ?? await ValidarNotaCreditoSobreAdelanto(connection, venta);
         if (errorPresupuesto) {
             connection.release();
             // Se lanza (antes se devolvía el texto con HTTP 200): el front tomaba el string como
@@ -1753,7 +1759,8 @@ class VentasRepository{
     // previo a /ventas/emitir).
     async ValidarPresupuestoParaFacturar(connection: PoolConnection, venta: Venta): Promise<string | null> {
         return (await ValidarFacturacionDePresupuesto(connection, venta))
-            ?? (await ValidarFacturacionDeNotaEmpaque(connection, venta));
+            ?? (await ValidarFacturacionDeNotaEmpaque(connection, venta))
+            ?? (await ValidarNotaCreditoSobreAdelanto(connection, venta));
     }
 
     // F4.3 - HANDOFF blindaje facturacion y logs. Persiste la venta de un pendiente
@@ -2865,13 +2872,12 @@ async function ValidarFacturacionDeNotaEmpaque(connection, venta:Venta): Promise
 
     const nota = notas[0];
 
-    // F2 de adelantos (oct-2026): una NE con adelantos vinculados se factura por SALDO (F3). Mientras
-    // esa fase no esté, se bloquea la facturación completa para no cobrar dos veces el adelanto.
-    if (venta.idProceso !== IdProceso.ENTREGA_SIN_CARGO) {
-        const [adelantos]: any = await connection.query("SELECT COUNT(*) AS n FROM ventas_adelantos WHERE idNE = ?", [nota.id]);
-        if (Number(adelantos?.[0]?.n ?? 0) > 0)
-            return `La nota de empaque Nro ${venta.nroRelacionado} tiene adelantos vinculados: la facturación por saldo todavía no está habilitada. Desvinculá los adelantos o esperá a la próxima versión.`;
-    }
+    // Adelantos (oct-2026, F3): una NE con adelantos vinculados solo se factura con una Factura fiscal
+    // (A/B/C) por el SALDO. Cotización y Entrega sin cargo no cobran el adelanto: se bloquean (para
+    // usarlas hay que desvincular los adelantos de la nota).
+    const adelantosNE = await AdelantosDeNE(connection, nota.id);
+    if (adelantosNE.length > 0 && venta.idProceso !== IdProceso.FACTURA)
+        return `La nota de empaque Nro ${venta.nroRelacionado} tiene adelantos facturados vinculados: solo se puede facturar con comprobante fiscal (Factura A/B/C). Para cotizarla o hacer una entrega sin cargo, desvinculá primero los adelantos en la nota.`;
 
     if (nota.estado !== EstadoVenta.APROBADA) {
         let yaRelacionada = false;
@@ -2901,7 +2907,9 @@ async function ValidarFacturacionDeNotaEmpaque(connection, venta:Venta): Promise
         [nota.id]
     );
 
-    const esRecargo = (l: any) => (l.descripcion ?? '') === DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA;
+    // Líneas derivadas (no existen en la NE): recargo por transferencia y adelanto aplicado.
+    const esRecargo = (l: any) => (l.descripcion ?? '') === DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA
+        || (l.descripcion ?? '') === DESCRIPCION_ITEM_ADELANTO;
     const origen = (lineasOrigen as any[]).filter(l => !esRecargo(l));
     const enviados = (venta.productos ?? [] as any[]).filter((p: any) => !esRecargo(p));
     const serviciosEnviados = venta.servicios ?? [];
@@ -2938,6 +2946,36 @@ async function ValidarFacturacionDeNotaEmpaque(connection, venta:Venta): Promise
         if (!restantes) return mensajeItems;
         esperadosServicio.set(k, restantes - 1);
     }
+
+    // Adelantos: la línea negativa tiene que existir (una sola) si y solo si la NE tiene adelantos, y
+    // restar EXACTAMENTE lo adelantado (el snapshot de ventas_adelantos manda, no lo que diga el front).
+    // El resto del total sigue el criterio de siempre (los precios de la factura no se recomparan).
+    const redondear2 = (n: number) => Math.round(n * 100) / 100;
+    const lineasAdelanto = (venta.productos ?? [] as any[]).filter((p: any) => (p.descripcion ?? '') === DESCRIPCION_ITEM_ADELANTO);
+
+    if (adelantosNE.length === 0) {
+        return lineasAdelanto.length > 0
+            ? `La nota de empaque Nro ${venta.nroRelacionado} no tiene adelantos vinculados: la factura no puede llevar una línea de adelanto aplicado.`
+            : null;
+    }
+
+    for (const a of adelantosNE) {
+        if (Number(a.idEmpresa) !== Number(venta.idEmpresa))
+            return `El adelanto Nro ${a.nroProceso} se facturó con otra empresa (${a.empresa ?? a.idEmpresa}): el saldo tiene que facturarse con la misma empresa que el adelanto.`;
+        if (Number(a.tipoFactura) !== Number(venta.idTipoComprobante))
+            return `El adelanto Nro ${a.nroProceso} se facturó con otro tipo de comprobante: el saldo tiene que facturarse con el mismo comprobante que el adelanto.`;
+    }
+
+    const totalAdelantos = redondear2(adelantosNE.reduce((acc, a) => acc + Number(a.total ?? 0), 0));
+    if (lineasAdelanto.length !== 1)
+        return `La factura del saldo tiene que llevar una sola línea de adelanto aplicado por $${totalAdelantos}.`;
+
+    const montoLinea = redondear2(Number(lineasAdelanto[0].total ?? 0));
+    if (Math.abs(montoLinea + totalAdelantos) > 0.01)
+        return `El adelanto aplicado ($${montoLinea}) no coincide con lo adelantado ($${totalAdelantos}): el saldo tiene que descontar exactamente los adelantos vinculados a la nota.`;
+
+    if (redondear2(Number(venta.total ?? 0)) < 0.01)
+        return `Los adelantos cubren el total de la nota de empaque Nro ${venta.nroRelacionado}: no queda saldo para facturar.`;
 
     return null;
 }

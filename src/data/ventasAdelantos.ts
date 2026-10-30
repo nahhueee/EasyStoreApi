@@ -87,6 +87,37 @@ export async function AdelantosDeNE(connection: PoolConnection, idNE: number): P
     return (rows as any[]).map(mapear);
 }
 
+// Adelantos de la NE a la que se relaciona una Factura (por nro de proceso de la NE). Los usa la
+// Factura final para mostrar "Adelanto s/ Fact. ..." en el resumen del comprobante.
+export async function AdelantosDeNEPorNro(connection: PoolConnection, nroNE: number): Promise<AdelantoVenta[]> {
+    const [notas]: any = await connection.query(
+        `SELECT id FROM ventas WHERE idProceso = ${IdProceso.NOTA_EMPAQUE} AND nroProceso = ? AND fechaBaja IS NULL ORDER BY id DESC LIMIT 1`,
+        [nroNE]
+    );
+    if (!Array.isArray(notas) || notas.length === 0) return [];
+    return AdelantosDeNE(connection, notas[0].id);
+}
+
+// Una NC (fiscal o X) sobre una factura de adelanto vinculada a una NE se bloquea: el adelanto
+// está aplicado a esa NE y anularlo dejaría la NE y la factura final inconsistentes. Para
+// anularlo hay que desvincularlo antes de la NE (solo posible mientras la NE no está facturada).
+export async function ValidarNotaCreditoSobreAdelanto(connection: PoolConnection, venta: Venta): Promise<string | null> {
+    if (venta.idProceso !== IdProceso.NOTA_CREDITO || !venta.nroRelacionado) return null;
+    const [rows]: any = await connection.query(
+        `SELECT ne.nroProceso AS nroNE
+         FROM ventas v
+         INNER JOIN ventas_adelantos a ON a.idFactura = v.id
+         INNER JOIN ventas ne ON ne.id = a.idNE
+         WHERE v.idProceso = ${IdProceso.FACTURA}
+           AND v.nroProceso = ?
+           AND (SELECT pv.descripcion FROM procesos_venta pv WHERE pv.id = v.idProceso) = ?
+         LIMIT 1`,
+        [venta.nroRelacionado, venta.tipoRelacionado ?? '']
+    );
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    return `La factura Nro ${venta.nroRelacionado} es un adelanto vinculado a la nota de empaque Nro ${rows[0].nroNE}: no se le puede emitir una nota de crédito. Primero desvinculala de la nota de empaque.`;
+}
+
 function error(mensaje: string, idNE?: number): AppError {
     return new AppError(CodigoError.VALIDACION, mensaje, 409, { modulo: 'VentasAdelantos', metodo: 'GuardarAdelantosNE', idNE });
 }

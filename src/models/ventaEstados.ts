@@ -233,6 +233,15 @@ export const SQL_METODO_PAGO_CASE = `
 export const DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA = 'Recargo transferencia 10%';
 
 /**
+ * Línea NEGATIVA que la Factura final de una Nota de Empaque lleva por los adelantos facturados
+ * vinculados (oct-2026, F3). Se persiste como una línea más de ventas_productos (tipoItem
+ * PRESUPUESTO, sin stock) para que el total siga siendo la suma de sus líneas. Espejo de
+ * DESCRIPCION_ITEM_ADELANTO en ChazaGolfApp venta.constants.ts. Es un derivado: el front la arma
+ * al guardar y no es un ítem editable.
+ */
+export const DESCRIPCION_ITEM_ADELANTO = 'Adelanto aplicado';
+
+/**
  * Punto de venta del COMPROBANTE (B4-219, oct-2026): el que se le informó a ARCA
  * (ventas_factura.ptoVenta), nunca empresas.puntoVta ni puntos_venta. Un comprobante no
  * fiscal (Cotización, NC/ND X) no tiene fila en ventas_factura -> '9999'. Alias requerido:
