@@ -31,6 +31,20 @@ router.get('/notas-empaque-pendientes', async (req:Request, res:Response) => {
     }
 });
 
+// Facturas de adelanto ("sin productos") que se pueden vincular a una NE del cliente. `idNE` (opcional)
+// incluye también las ya vinculadas a esa NE, para mostrarlas tildadas al editar.
+router.get('/adelantos-disponibles/:idCliente', async (req:Request, res:Response) => {
+    try{
+        const idNE = req.query.idNE ? Number(req.query.idNE) : undefined;
+        res.json(await VentasRepo.ObtenerAdelantosDisponibles(Number(req.params.idCliente), idNE));
+
+    } catch(error:any){
+        let msg = "Error al obtener los adelantos disponibles.";
+        logger.error(msg + " " + error.message);
+        res.status(500).send(msg);
+    }
+});
+
 router.get('/obtener-una/:idVenta', async (req:Request, res:Response) => {
     try{ 
         

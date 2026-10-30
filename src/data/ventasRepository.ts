@@ -8,6 +8,7 @@ import { PoolConnection } from 'mysql2/promise';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
 import { Cliente } from '../models/Cliente';
+import { AdelantosDisponibles, AdelantosDeNE, GuardarAdelantosNE } from './ventasAdelantos';
 import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, puedeEditarseNotaEmpaque, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA, MotivoEntregaSinCargo, TIPO_RELACIONADO_ENTREGA_SIN_CARGO } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 import { analizarTalle } from '../services/excelConciliacionService';
@@ -930,6 +931,16 @@ class VentasRepository{
         }
     }
 
+    // Facturas de adelanto que se pueden vincular a una NE de este cliente (ver ventasAdelantos.ts).
+    async ObtenerAdelantosDisponibles(idCliente: number, idNE?: number){
+        const connection = await db.getConnection();
+        try {
+            return await AdelantosDisponibles(connection, idCliente, idNE);
+        } finally {
+            connection.release();
+        }
+    }
+
     async CompletarObjeto(connection, row){
         let venta:Venta = new Venta();
         venta.id = row['id'];
@@ -988,6 +999,8 @@ class VentasRepository{
         venta.servicios = await ObtenerServiciosVenta(connection, venta.id!);
         venta.productos = await ObtenerProductosVenta(connection, venta.id!, venta.idProceso!);
         venta.factura = await ObtenerFacturaVenta(connection, venta.id!);
+        // Nota de Empaque: facturas de adelanto vinculadas (oct-2026, ver ventasAdelantos.ts).
+        if (venta.idProceso === IdProceso.NOTA_EMPAQUE) venta.adelantos = await AdelantosDeNE(connection, venta.id!);
         // Entrega sin cargo: sus "notas" son las Devoluciones de entrega (proceso 9, comprobante 99).
         const esEntregaSC = venta.idProceso === IdProceso.ENTREGA_SIN_CARGO;
         venta.notas = await ObtenerNotasVenta(connection, venta.nroProceso!, venta.proceso!, esEntregaSC ? IdProceso.DEVOLUCION_ENTREGA : IdProceso.NOTA_CREDITO);
@@ -1097,6 +1110,9 @@ class VentasRepository{
 
         //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
         await ActualizarEstadoRelacionado(connection, venta);
+
+        // Adelantos facturados vinculados a la Nota de Empaque (oct-2026, ver ventasAdelantos.ts)
+        if (venta.idProceso === IdProceso.NOTA_EMPAQUE) await GuardarAdelantosNE(connection, venta, usuario);
 
         //insertamos los datos del pago de la venta
         const usuarioActivo = usuario;
@@ -1493,10 +1509,21 @@ class VentasRepository{
                 throw { status: 400, message: `No se puede dar de baja: el estado actual ("${venta.estado}") ya no es abierto (fue usado o cerrado por otro documento).` };
             }
 
-            await connection.query(
-                "UPDATE ventas SET fechaBaja = NOW(), observacion = ? WHERE id = ?",
-                [motivoLimpio, idVenta]
-            );
+            // Baja + liberación de los adelantos vinculados (NE) en la misma transacción: una NE dada
+            // de baja ya no consume sus adelantos, quedan disponibles para otra NE.
+            await connection.beginTransaction();
+            try {
+                await connection.query(
+                    "UPDATE ventas SET fechaBaja = NOW(), observacion = ? WHERE id = ?",
+                    [motivoLimpio, idVenta]
+                );
+                if (venta.idProceso === IdProceso.NOTA_EMPAQUE)
+                    await connection.query("DELETE FROM ventas_adelantos WHERE idNE = ?", [idVenta]);
+                await connection.commit();
+            } catch (e) {
+                await connection.rollback();
+                throw e;
+            }
         } finally {
             connection.release();
         }
@@ -1559,6 +1586,8 @@ class VentasRepository{
                 "UPDATE ventas SET usuarioModificacion = ?, fechaModificacion = NOW(), usuarioAprobacion = NULL, fechaAprobacion = NULL WHERE id = ?",
                 [usuario ?? null, venta.id]
             );
+            // Adelantos facturados vinculados a la NE (oct-2026): se reemplazan en la misma transacción.
+            await GuardarAdelantosNE(connection, venta, usuario);
         }
 
         //Actualizamos el estado del relacionado (Presupuesto/Pedido/Nota de Empaque)
@@ -2835,6 +2864,14 @@ async function ValidarFacturacionDeNotaEmpaque(connection, venta:Venta): Promise
         return `No se encontró la nota de empaque Nro ${venta.nroRelacionado} que se quiere facturar.`;
 
     const nota = notas[0];
+
+    // F2 de adelantos (oct-2026): una NE con adelantos vinculados se factura por SALDO (F3). Mientras
+    // esa fase no esté, se bloquea la facturación completa para no cobrar dos veces el adelanto.
+    if (venta.idProceso !== IdProceso.ENTREGA_SIN_CARGO) {
+        const [adelantos]: any = await connection.query("SELECT COUNT(*) AS n FROM ventas_adelantos WHERE idNE = ?", [nota.id]);
+        if (Number(adelantos?.[0]?.n ?? 0) > 0)
+            return `La nota de empaque Nro ${venta.nroRelacionado} tiene adelantos vinculados: la facturación por saldo todavía no está habilitada. Desvinculá los adelantos o esperá a la próxima versión.`;
+    }
 
     if (nota.estado !== EstadoVenta.APROBADA) {
         let yaRelacionada = false;

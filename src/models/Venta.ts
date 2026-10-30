@@ -46,6 +46,10 @@ import { Color, TallesProducto } from "./Producto";
     pagos?:PagosVenta[];
     factura?:FacturaVenta;
     notas?:NotaCreditoVenta[];
+    // Solo Nota de Empaque (oct-2026): facturas de adelanto vinculadas (ver ventasAdelantos.ts).
+    // En el payload de Agregar/Modificar de una NE alcanza con `idFactura` por elemento; si
+    // el campo no viene (cliente viejo) los vínculos existentes no se tocan.
+    adelantos?:AdelantoVenta[];
     // Cantidades ya acreditadas por NC FISCALES previas sobre esta venta (sep-2026,
     // devoluciones parciales sucesivas) - ver ObtenerCantidadesAcreditadas.
     cantidadesAcreditadas?: CantidadesAcreditadas;
@@ -271,6 +275,23 @@ import { Color, TallesProducto } from "./Producto";
     servicios:CantidadAcreditadaServicio[] = [];
   }
 
+
+  // Factura fiscal "sin productos" (adelanto) vinculada, o candidata a vincularse, a una Nota de Empaque.
+  export class AdelantoVenta{
+    idFactura:number = 0;
+    nroProceso?:number;
+    fecha?:Date;
+    motivo?:string;
+    total:number = 0;
+    neto:number = 0;
+    iva:number = 0;
+    idEmpresa?:number;
+    empresa?:string;
+    // Tipo de comprobante AFIP de la factura (1 = A, 6 = B, 11 = C).
+    tipoFactura?:number;
+    ptoVenta?:number;
+    ticket?:number;
+  }
 
   export class NotaCreditoVenta{
     idNotaVenta:number = 0;
