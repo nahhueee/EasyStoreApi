@@ -1,6 +1,6 @@
 import db from '../db';
 import { RowDataPacket } from 'mysql2';
-import { IdProceso, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO } from '../models/ventaEstados';
+import { IdProceso, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, DESCRIPCION_ITEM_ADELANTO } from '../models/ventaEstados';
 const moment = require('moment');
 
 /**
@@ -189,16 +189,19 @@ class ConciliacionRepository {
                     IF(v.ajusteTransf = 1,
                         IF(v.idProceso = ${IdProceso.NOTA_CREDITO},
                             ROUND((
-                                (IFNULL(prendas.total_prendas, 0) - IFNULL(prendas.descuento_prendas, 0))
+                                (IFNULL(prendas.total_prendas, 0) + IFNULL(prendas.adelanto_linea, 0) - IFNULL(prendas.descuento_prendas, 0))
                                 + (IFNULL(servicios.total_servicios_venta, 0) - IFNULL(servicios.descuento_servicios, 0))
                             ) * 0.10, 2) * -1,
                             ROUND((
-                                (IFNULL(prendas.total_prendas, 0) - IFNULL(prendas.descuento_prendas, 0))
+                                (IFNULL(prendas.total_prendas, 0) + IFNULL(prendas.adelanto_linea, 0) - IFNULL(prendas.descuento_prendas, 0))
                                 + (IFNULL(servicios.total_servicios_venta, 0) - IFNULL(servicios.descuento_servicios, 0))
                             ) * 0.10, 2)
                         ),
                         0
                     ) AS ajusteTransferencia,
+                    -- Adelanto de producción aplicado (factura final por saldo): línea derivada negativa.
+                    -- Cierra: venta + servicio - descuento + ajuste + adelanto + redondeo = total.
+                    IF(v.idProceso = ${IdProceso.NOTA_CREDITO}, IFNULL(prendas.adelanto_linea, 0) * -1, IFNULL(prendas.adelanto_linea, 0)) AS adelanto,
                     IFNULL(v.redondeo, 0)                           AS redondeo,
 
                     -- Neto/IVA: confirmados por ARCA (vf) si es fiscal, derivados de v.total si no.
@@ -303,8 +306,9 @@ class ConciliacionRepository {
                     SELECT
                         idVenta,
                         SUM(CASE WHEN tipoItem = 'CATALOGO' THEN cantidad ELSE 0 END) AS cantidad_prendas,
-                        SUM(total) AS total_prendas,
-                        SUM(importeDescuento) AS descuento_prendas
+                        SUM(CASE WHEN IFNULL(descripcion, '') <> '${DESCRIPCION_ITEM_ADELANTO}' THEN total ELSE 0 END) AS total_prendas,
+                        SUM(importeDescuento) AS descuento_prendas,
+                        SUM(CASE WHEN descripcion = '${DESCRIPCION_ITEM_ADELANTO}' THEN total ELSE 0 END) AS adelanto_linea
                     FROM ventas_productos
                     GROUP BY idVenta
                 ) prendas ON prendas.idVenta = v.id
@@ -496,7 +500,7 @@ class ConciliacionRepository {
                 SELECT
                     vp.idVenta,
                     vp.id                                   AS idLinea,
-                    'No catalogado'                          AS tipoItem,
+                    IF(vp.descripcion = '${DESCRIPCION_ITEM_ADELANTO}', 'Adelanto', 'No catalogado') AS tipoItem,
                     vp.cantidad,
                     vp.precioLista,
                     vp.total,

@@ -304,6 +304,7 @@ export async function crearExcelConciliacion(
         { header: 'Descuento $', key: 'descuentoMonto', width: 14 },
         { header: 'Descuento (%)', key: 'descuentoPorcentaje', width: 12 },
         { header: 'Ajuste transferencia $', key: 'ajusteTransferencia', width: 16 },
+        { header: 'Adelanto aplicado $', key: 'adelanto', width: 16 },
         { header: 'Redondeo $', key: 'redondeo', width: 12 },
 
         // Apertura de IVA por alícuota (HANDOFF-apertura-iva-R1.md, B4-203; reubicado
@@ -344,7 +345,7 @@ export async function crearExcelConciliacion(
     aplicarEstiloEncabezado(sheetVentas.getRow(1));
 
     const COLUMNAS_MONEDA = [
-        'venta', 'servicio', 'descuentoMonto', 'ajusteTransferencia', 'redondeo', 'totalComprobante',
+        'venta', 'servicio', 'descuentoMonto', 'ajusteTransferencia', 'adelanto', 'redondeo', 'totalComprobante',
         'totalPagado',
     ];
 
@@ -455,6 +456,7 @@ export async function crearExcelConciliacion(
             // viniendo de SQL como fracción 0..1 (sin tocar esa query) - se multiplica acá.
             descuentoPorcentaje: round2((Number(r.descuentoPorcentaje) || 0) * 100),
             ajusteTransferencia: Number(r.ajusteTransferencia) || 0,
+            adelanto: Number(r.adelanto) || 0,
             redondeo: Number(r.redondeo) || 0,
             totalComprobante: Number(r.totalComprobante) || 0,
 
@@ -1703,7 +1705,9 @@ function valorizarComprobante(cabecera: any, lineasCrudas: any[], formatoLargo: 
                 sku,
                 talle: textoTalle(infoTalle, formatoLargo),
                 talleDesglosado,
-                cantidad,
+                // 'Adelanto' (línea derivada de la factura final por saldo): el importe se
+                // valoriza con cantidad 1 (arriba) pero se informa cantidad 0 - no es mercadería.
+                cantidad: l.tipoItem === 'Adelanto' ? 0 : cantidad,
             });
             return;
         }

@@ -246,6 +246,9 @@ class VentasRepository{
                     IF(v.idProceso = 3, (${SQL_RECARGO_TRANSFERENCIA}) * -1, (${SQL_RECARGO_TRANSFERENCIA})),
                     0
                 ) AS ajuste,
+                -- Adelanto de producción aplicado (factura final por saldo): línea derivada
+                -- negativa. Cierra: venta + servicio - des + ajuste + adelanto = cobrado.
+                IF(v.idProceso = 3, IFNULL(prendas.adelanto_linea, 0) * -1, IFNULL(prendas.adelanto_linea, 0)) AS adelanto,
                 -- IVA discriminado según lo confirmado por AFIP en ventas_factura (mismo
                 -- valor que usa factura.service.ts para imprimir "IVA Total" - no se
                 -- recalcula acá para no reabrir la discusión neto/bruto por lista de
@@ -366,9 +369,13 @@ class VentasRepository{
                     -- total_prendas EXCLUYE la línea real del recargo por transferencia (se
                     -- informa aparte en recargo_linea): si no, inflaba la columna "Venta", el
                     -- Descuento % y la base sobre la que se recalculaba el recargo (cobrado 2 veces).
-                    SUM(CASE WHEN IFNULL(descripcion, '') <> '${DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA}' THEN total ELSE 0 END) AS total_prendas,
+                    -- Idem la línea derivada "Adelanto aplicado" (factura final por saldo): va en su
+                    -- propia columna (adelanto_linea, negativa) para que "Venta" siga siendo el
+                    -- total de la NE y no se mezcle con el descuento comercial.
+                    SUM(CASE WHEN IFNULL(descripcion, '') NOT IN ('${DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA}', '${DESCRIPCION_ITEM_ADELANTO}') THEN total ELSE 0 END) AS total_prendas,
                     SUM(importeDescuento) AS descuento_prendas,
-                    SUM(CASE WHEN descripcion = '${DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA}' THEN total ELSE 0 END) AS recargo_linea
+                    SUM(CASE WHEN descripcion = '${DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA}' THEN total ELSE 0 END) AS recargo_linea,
+                    SUM(CASE WHEN descripcion = '${DESCRIPCION_ITEM_ADELANTO}' THEN total ELSE 0 END) AS adelanto_linea
                 FROM ventas_productos
                 GROUP BY idVenta
             ) prendas

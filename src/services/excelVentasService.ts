@@ -63,6 +63,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[], re
     { header: 'Servicio', key: 'servicio', width: 15 },
     { header: 'Descuento $', key: 'des', width: 15 },
     { header: 'Ajuste $', key: 'ajuste', width: 15 },
+    { header: 'Adelanto aplicado $', key: 'adelanto', width: 18 },
     { header: 'Cobrado', key: 'cobrado', width: 15 },
     { header: 'IVA 21%', key: 'iva21', width: 15 },
     { header: 'Cobrado Neto', key: 'cobradoNeto', width: 15 },
@@ -87,6 +88,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[], re
       servicio: Number(r.servicio),
       des: Number(r.des),
       ajuste: Number(r.ajuste),
+      adelanto: Number(r.adelanto ?? 0),
       iva21,
       cobradoNeto: cobrado - iva21,
       montos: formatearMontosPago(r.montos, Number(r.idProceso) === 3),
@@ -97,12 +99,12 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[], re
     });
   });
 
-  // 20 columnas (A..T) desde que se agregó "Cant. servicios". Si se suma otra columna
+  // 21 columnas (A..U) desde que se agregó "Adelanto aplicado $" (antes 20, A..T). Si se suma otra columna
   // arriba hay que correr este rango: ExcelJS no valida que coincida con sheet2.columns,
   // simplemente deja la columna nueva afuera del filtro sin tirar error.
   sheet2.autoFilter = {
     from: 'A1',
-    to: 'T1'
+    to: 'U1'
   };
 
 
@@ -259,6 +261,7 @@ export async function crearExcelVentas(res1: any[], res2: any[], res3: any[], re
   sheet2.getColumn('servicio').numFmt = '$ #,##0.00';
   sheet2.getColumn('des').numFmt = '$ #,##0.00';
   sheet2.getColumn('ajuste').numFmt = '$ #,##0.00';
+  sheet2.getColumn('adelanto').numFmt = '$ #,##0.00';
   sheet2.getColumn('iva21').numFmt = '$ #,##0.00';
   sheet2.getColumn('cobrado').numFmt = '$ #,##0.00';
   sheet2.getColumn('cobradoNeto').numFmt = '$ #,##0.00';
