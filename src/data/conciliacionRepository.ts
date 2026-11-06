@@ -710,9 +710,12 @@ class ConciliacionRepository {
             CASE
                 WHEN mp.tipo IN ('CHEQUE', 'CREDITO') AND valor.estadoValor = 'ACREDITADO' THEN 'Ingresó'
                 WHEN mp.tipo IN ('CHEQUE', 'CREDITO') AND valor.estadoValor = 'RECHAZADO' THEN 'Rechazado'
+                -- Cheque de terceros entregado a un proveedor como pago (endoso): se cobró, pero la plata nunca
+                -- pasó por un fondo real, así que NO es 'Ingresó' (no cruza contra Fondos) ni sigue pendiente.
+                WHEN mp.tipo IN ('CHEQUE', 'CREDITO') AND valor.estadoValor = 'ENDOSADO' THEN 'Endosado'
                 WHEN mp.tipo IN ('CHEQUE', 'CREDITO') THEN 'Pendiente de acreditación'
                 WHEN f.tipo IN ('EFECTIVO', 'BANCARIO', 'DIGITAL') THEN 'Ingresó'
-                WHEN f.tipo IN ('CUENTA_CLIENTE', 'VALOR_PENDIENTE', 'RETENCIONES_SUFRIDAS', 'CC_PROVEEDORES', 'SALDO_FAVOR_PROVEEDORES') THEN 'No es ingreso'
+                WHEN f.tipo IN ('CUENTA_CLIENTE', 'VALOR_PENDIENTE', 'RETENCIONES_SUFRIDAS', 'CC_PROVEEDORES', 'SALDO_FAVOR_PROVEEDORES', 'CHEQUE_EMITIDO') THEN 'No es ingreso'
                 ELSE 'Revisar (fondo sin clasificar)'
             END                                                AS estadoIngreso
         `;

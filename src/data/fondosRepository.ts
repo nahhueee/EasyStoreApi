@@ -52,7 +52,7 @@ class FondosRepository{
                 ), 0) AS saldo
                 FROM cajas c
             JOIN caja_fondos cf ON cf.idCaja = c.id AND cf.activo = 1
-            JOIN fondos f       ON f.id = cf.idFondo AND f.activo = 1 AND f.mostrar = 1 AND f.id <> 10
+            JOIN fondos f       ON f.id = cf.idFondo AND f.activo = 1 AND f.mostrar = 1 AND f.id <> 10 AND f.tipo <> 'CHEQUE_EMITIDO'
             LEFT JOIN movimientos_fondos mf ON mf.idCaja = c.id AND mf.idFondo = f.id
             WHERE c.activa = 1
             GROUP BY c.id, c.nombre, f.id, f.nombre, f.tipo, f.icono
@@ -221,6 +221,12 @@ class FondosRepository{
                 paramsSaldo.push(filtros.usuario);
             }
 
+            // El fondo puente "Cheques emitidos a debitar" (CHEQUE_EMITIDO) NO entra en el saldo total ni en
+            // ingresos/egresos del período: emitir un cheque propio no mueve plata real (el banco recién se
+            // mueve al Debitar). Su saldo se ve en la card del propio fondo puente.
+            const SQL_FONDO_PUENTE = "idFondo IN (SELECT id FROM fondos WHERE tipo = 'CHEQUE_EMITIDO')";
+            whereSaldo.push(`NOT (${SQL_FONDO_PUENTE})`);
+
             const whereSaldoFinal = whereSaldo.length
                 ? `WHERE ${whereSaldo.join(' AND ')}`
                 : '';
@@ -261,7 +267,7 @@ class FondosRepository{
                     ),0) as egresosDia
 
                 FROM movimientos_fondos
-                ${where}
+                ${where ? `${where} AND` : 'WHERE'} NOT (${SQL_FONDO_PUENTE})
             `;
             //#endregion
 
@@ -280,7 +286,6 @@ class FondosRepository{
 
             const saldoData = saldoRows[0];
             const periodoData = periodoRows[0];
-
 
             const queryClientes = `
                 SELECT
@@ -588,6 +593,9 @@ class FondosRepository{
             LEFT JOIN metodos_pago mp  ON mp.id = vp.idMetodo AND mp.idFondo = mf.idFondo
             LEFT JOIN valores_acreditar va ON va.idVentaPago = vp.id
             ${whereFondo}
+            -- Se excluye solo PENDIENTE (el valor sigue en Valores a Acreditar, sin egreso). ACREDITADO, RECHAZADO y
+            -- ENDOSADO tienen un egreso de ese fondo en "otros movimientos" (acreditación / rechazo / pago al proveedor):
+            -- el ingreso de venta tiene que estar acá para que los dos lados se compensen y el neto del fondo cierre.
             ${whereFondo ? 'AND' : 'WHERE'} (va.id IS NULL OR va.estado != 'PENDIENTE')
             GROUP BY f.id, f.nombre, f.tipo, f.icono
             ORDER BY f.tipo, total_general DESC
@@ -1065,7 +1073,8 @@ async function ObtenerQueryMovimientos(
                     cli_entrega.nombre,
                     cli_valor.nombre,
                     prov_compra.razonSocial,
-                    prov_pago.razonSocial
+                    prov_pago.razonSocial,
+                    prov_cheque.razonSocial
                 ) AS clienteProveedor
 
             FROM movimientos_fondos mf
@@ -1119,6 +1128,11 @@ async function ObtenerQueryMovimientos(
                 ON cpp_prov.id = mf.idReferencia
                 AND mf.origen IN ('PAGO_CC_PROVEEDOR', 'AJUSTE') AND mf.tipoReferencia = 'COMPRA_PAGO_PROVEEDOR'
             LEFT JOIN proveedores prov_pago ON prov_pago.id = cpp_prov.idProveedor
+
+            -- Proveedor vía débito de cheque propio (DEBITO_CHEQUE_PROPIO, idReferencia = cheques_emitidos.id).
+            LEFT JOIN cheques_emitidos ce_prov
+                ON ce_prov.id = mf.idReferencia AND mf.origen = 'DEBITO_CHEQUE_PROPIO'
+            LEFT JOIN proveedores prov_cheque ON prov_cheque.id = ce_prov.idProveedor
 
             ${where}
             ORDER BY mf.fecha DESC

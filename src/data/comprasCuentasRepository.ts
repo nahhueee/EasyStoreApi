@@ -2,6 +2,8 @@ import db from '../db';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
 import { ResultSetHeader } from 'mysql2';
+import { ValidarPiernasCheque, EmitirChequePropio, EndosarValor, RevertirPiernaCheque } from './chequesRepository';
+import { ChequePropioDTO } from '../models/ChequePropio';
 const moment = require('moment');
 
 // Cuenta Corriente de Proveedores (Compras F2, ver ROADMAP-modulo-compras.md sección 9).
@@ -15,6 +17,8 @@ const moment = require('moment');
 class PagoMetodoDTO {
     idMetodo: number = 0;
     monto: number = 0;
+    cheque?: ChequePropioDTO;   // solo con método CHEQUE_PROPIO (importe = monto)
+    idValorAcreditar?: number;  // solo con método CHEQUE: cheque de terceros PENDIENTE a endosar (monto = su importe)
 }
 
 class PagarProveedorDTO {
@@ -79,9 +83,17 @@ class ComprasCuentasRepository {
             const header = rowsHeader[0];
 
             const [metodos]: any = await connection.query(
-                `SELECT m.idMetodo, m.monto, mp.nombre AS metodoPago
+                `SELECT m.idMetodo, m.monto, mp.nombre AS metodoPago, mp.tipo AS tipoMetodo,
+                        m.idChequeEmitido, ce.tipo AS chequeTipo, ce.numero AS chequeNumero,
+                        ce.fechaEmision AS chequeFechaEmision, ce.fechaPago AS chequeFechaPago,
+                        ce.estado AS chequeEstado, fb.nombre AS chequeBanco,
+                        m.idValorAcreditar, ch.numero AS endosoNumero, ch.banco AS endosoBanco,
+                        ch.libradorNombre AS endosoLibrador, ch.fechaCobro AS endosoFechaCobro
                  FROM compras_pagos_proveedor_metodos m
                  LEFT JOIN metodos_pago mp ON mp.id = m.idMetodo
+                 LEFT JOIN cheques_emitidos ce ON ce.id = m.idChequeEmitido
+                 LEFT JOIN fondos fb ON fb.id = ce.idFondoBanco
+                 LEFT JOIN cheques ch ON ch.idValor = m.idValorAcreditar
                  WHERE m.idPagoProveedor = ?`,
                 [idPagoProveedor]
             );
@@ -174,6 +186,10 @@ class ComprasCuentasRepository {
             const montoTotal = data.metodos.reduce((acc, m) => acc + Number(m.monto), 0);
             if (montoTotal <= 0) throw new AppError(CodigoError.VALIDACION, 'El monto del pago debe ser mayor a cero.', 400, { modulo: 'ComprasCuentasRepo', metodo: 'PagarProveedor' });
 
+            // Cheque propio / endoso: datos completos, cuenta de la empresa, sin duplicados (ver chequesRepository).
+            const errorCheque = await ValidarPiernasCheque(connection, data.metodos, data.idEmpresa);
+            if (errorCheque) throw new AppError(CodigoError.VALIDACION, errorCheque, 400, { modulo: 'ComprasCuentasRepo', metodo: 'PagarProveedor' });
+
             await connection.beginTransaction();
 
             const [rowsProveedor]: any = await connection.query(
@@ -200,12 +216,26 @@ class ComprasCuentasRepository {
             // hechos independientes (de dónde salió la plata vs. a qué deuda se aplicó). Cruzarlos
             // obligaría a partir cada leg en fracciones por cada compra - complejidad que ningún reporte
             // de Fondos necesita hoy.
+            const ctxCheque = { idEmpresa: data.idEmpresa, idProveedor: data.idProveedor, usuario };
             for (const m of data.metodos) {
                 const metodoPago = await GetMetodoPago(connection, m.idMetodo);
 
+                // El egreso del fondo (puente para CHEQUE_PROPIO, Valores a Acreditar para CHEQUE) lo hace el
+                // movimiento de más abajo; acá solo se crea/marca el instrumento y se deja el vínculo en la pierna.
+                // Un cheque de más valor que la deuda no necesita nada especial: el excedente cae solo en el
+                // Paso 3 (saldo a favor del proveedor).
+                let idChequeEmitido: number | null = null;
+                let idValorAcreditar: number | null = null;
+                if (metodoPago.tipo === 'CHEQUE_PROPIO') {
+                    idChequeEmitido = await EmitirChequePropio(connection, m, ctxCheque);
+                } else if (metodoPago.tipo === 'CHEQUE') {
+                    idValorAcreditar = Number(m.idValorAcreditar);
+                    await EndosarValor(connection, idValorAcreditar, Number(m.monto), ctxCheque);
+                }
+
                 await connection.query(
-                    "INSERT INTO compras_pagos_proveedor_metodos (idPagoProveedor, idMetodo, monto) VALUES (?, ?, ?)",
-                    [idPagoProveedor, m.idMetodo, m.monto]
+                    "INSERT INTO compras_pagos_proveedor_metodos (idPagoProveedor, idMetodo, monto, idChequeEmitido, idValorAcreditar) VALUES (?, ?, ?, ?, ?)",
+                    [idPagoProveedor, m.idMetodo, m.monto, idChequeEmitido, idValorAcreditar]
                 );
                 await InsertMovimientoFondo(connection, {
                     idCaja: data.idCaja, idFondo: metodoPago.idFondo, idEmpresa: data.idEmpresa,
@@ -307,6 +337,20 @@ class ComprasCuentasRepository {
             const pago = rowsPago[0];
             if (pago.baja) throw new AppError(CodigoError.VALIDACION, 'El pago ya se encuentra revertido.', 400, { modulo: 'ComprasCuentasRepo', metodo: 'RevertirPagoProveedor', idPagoProveedor });
 
+            // Instrumentos de cheque primero, antes de la baja lógica y de cualquier contra-asiento: un cheque
+            // propio ya debitado, o un pago con cheque anterior al circuito nuevo (sin vínculo), frena todo el
+            // reverso. Si algo tira, la transacción entera hace rollback.
+            const [metodos]: any = await connection.query(
+                "SELECT idMetodo, monto, idChequeEmitido, idValorAcreditar FROM compras_pagos_proveedor_metodos WHERE idPagoProveedor = ?",
+                [idPagoProveedor]
+            );
+            for (const m of metodos) {
+                const metodoPago = await GetMetodoPago(connection, m.idMetodo);
+                await RevertirPiernaCheque(connection, {
+                    tipoMetodo: metodoPago.tipo, idChequeEmitido: m.idChequeEmitido, idValorAcreditar: m.idValorAcreditar
+                });
+            }
+
             // Baja lógica primero: así el recálculo de impaga de más abajo, que filtra por
             // "pp.baja IS NULL", ya deja afuera este pago sin necesitar una exclusión especial.
             await connection.query(
@@ -318,10 +362,6 @@ class ComprasCuentasRepository {
             const idFondoSaldoFavor = await GetFondoVirtual(connection, 'SALDO_FAVOR_PROVEEDORES');
 
             // Contra-asiento por cada método: recupera el fondo real de donde había salido la plata.
-            const [metodos]: any = await connection.query(
-                "SELECT idMetodo, monto FROM compras_pagos_proveedor_metodos WHERE idPagoProveedor = ?",
-                [idPagoProveedor]
-            );
             for (const m of metodos) {
                 const metodoPago = await GetMetodoPago(connection, m.idMetodo);
                 await InsertMovimientoFondo(connection, {

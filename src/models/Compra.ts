@@ -1,3 +1,5 @@
+import { ChequePropioDTO } from './ChequePropio';
+
 export class Compra {
     id?:number;
     idEmpresa?:number;
@@ -31,6 +33,9 @@ export class PagoCompra {
     idMetodo?:number;
     metodo?:string; // solo en lectura (ObtenerUna); no se usa al guardar
     monto?:number;
+    cheque?:ChequePropioDTO; // solo con método CHEQUE_PROPIO: datos del cheque a emitir (importe = monto)
+    idValorAcreditar?:number; // solo con método CHEQUE: cheque de terceros PENDIENTE a endosar (monto = su importe)
+    detalleCheque?:string | null; // solo en lectura (ObtenerUna): descripción del cheque propio emitido / endosado
 }
 
 export class DetalleCompra {

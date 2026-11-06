@@ -1002,6 +1002,16 @@ class CuentasRepository{
                 };
             }
 
+            // Bloqueo duro 1b: Cheque ya ENDOSADO a un proveedor. Borrar el valor dejaría ese pago de compra
+            // apuntando a un cheque inexistente y sacaría de Fondos plata que ya salió por el endoso.
+            const valorEndosado = valoresRecibo.find((v: any) => v.estado === 'ENDOSADO');
+            if (valorEndosado) {
+                throw {
+                    status: 400,
+                    message: `No se puede dar de baja: el cheque (valor #${valorEndosado.id}) ya fue endosado a un proveedor. Anulá primero ese pago.`
+                };
+            }
+
             // Bloqueo duro 2: saldo a favor generado por esta Entrega ya consumido
             // (parcial o totalmente). Criterio acordado: pool neteado por cliente (el
             // esquema no trackea "consumo" por lote) - se permite la baja si el crédito

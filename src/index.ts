@@ -118,6 +118,7 @@ import valoresRuta from './routes/valoresRoute';
 import proveedoresRuta from './routes/proveedoresRoute';
 import comprasRuta from './routes/comprasRoute';
 import comprasCuentasRuta from './routes/comprasCuentasRoute';
+import chequesRuta from './routes/chequesRoute';
 import stockRuta from './routes/stockRoute';
 import feEmisionesRuta from './routes/feEmisionesRoute';
 
@@ -145,6 +146,7 @@ app.use(`${base}/valores`, valoresRuta);
 app.use(`${base}/proveedores`, proveedoresRuta);
 app.use(`${base}/compras`, comprasRuta);
 app.use(`${base}/compras-cuentas`, comprasCuentasRuta);
+app.use(`${base}/cheques-emitidos`, chequesRuta);
 app.use(`${base}/stock`, stockRuta);
 app.use(`${base}/fe-emisiones`, feEmisionesRuta);
 
