@@ -890,6 +890,8 @@ export async function crearExcelConciliacion(
     const totalMovimientosHoja = round2(filasCobranzasCalculadas.reduce((acc, f) => acc + (Number(f.importeCobrado) || 0), 0));
     sheetCobranzas.addRow([]);
     escribirFilaResumenCobranzas('Ingresó (cruzar contra caja/banco)', sumarPorEstadoIngreso('Ingresó'));
+    // Cheques de terceros entregados a proveedores: cobrados, pero no pasaron por caja/banco (no cruzan contra Fondos).
+    escribirFilaResumenCobranzas('Endosado (entregado a proveedor)', sumarPorEstadoIngreso('Endosado'));
     escribirFilaResumenCobranzas('Pendiente de acreditación', sumarPorEstadoIngreso('Pendiente de acreditación'));
     escribirFilaResumenCobranzas('Rechazado', sumarPorEstadoIngreso('Rechazado'), true);
     // 5° valor (ver ArmarBaseCobranzas): con los datos de hoy este bucket

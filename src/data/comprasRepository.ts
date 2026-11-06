@@ -4,6 +4,7 @@ import { CodigoError } from '../logger/CodigosError';
 import { Compra, DetalleCompra, CompraIva, CompraPercepcionIibb, PagoCompra } from '../models/Compra';
 import { ResultSetHeader } from 'mysql2';
 import { ObtenerSaldoAFavorProveedor } from './comprasCuentasRepository';
+import { ValidarPiernasCheque, EmitirChequePropio, EndosarValor, RevertirPiernaCheque, PiernaPago } from './chequesRepository';
 const moment = require('moment');
 
 // Tipo de comprobante "Cotización" (tipos_comprobantes.id = 99, reutilizado de Ventas).
@@ -95,12 +96,17 @@ class ComprasRepository {
         try {
             // Compras admite todos los métodos de pago de la empresa salvo Débito/Crédito/Saldo a favor/Cuenta Corriente
             // (esos son mecanismos de cobro a clientes, no de pago a proveedores en F1).
-            // RIESGO conocido: esto deja pasar CHEQUE, que en F1 generaría egreso inmediato como si fuera efectivo
-            // (no hay todavía lógica de cheque propio diferido, eso es Fase 3). No se resuelve ahora, queda anotado.
+            // CHEQUE y CHEQUE_PROPIO quedan disponibles con circuitos distintos (ver chequesRepository.ts):
+            //  - CHEQUE_PROPIO: cheque de chequera propia / eCheq; egresa del fondo puente "Cheques emitidos a
+            //    debitar" y recién sale del banco al debitarse.
+            //  - CHEQUE: ahora significa endosar un cheque de terceros PENDIENTE en Valores a Acreditar.
+            // idFondo/fondo: el front arma el combo de cuentas del cheque propio con los métodos TRANSFERENCIA
+            // de la empresa (su idFondo es el banco).
             const query = `
-                SELECT mp.id, mp.tipo,
+                SELECT mp.id, mp.tipo, mp.idFondo, f.nombre AS fondo,
                     CASE
                         WHEN mp.tipo = 'TRANSFERENCIA' THEN CONCAT(f.nombre, ' - Transferencia')
+                        WHEN mp.tipo = 'CHEQUE' THEN 'Cheque de terceros'
                         ELSE mp.nombre
                     END AS descripcion
                 FROM metodos_pago mp
@@ -134,13 +140,16 @@ class ComprasRepository {
 
             const totales = CalcularTotales(compra);
 
-            const pagosResueltos: { idMetodo: number; tipo: string; idFondo: number; monto: number }[] = [];
+            const pagosResueltos: { idMetodo: number; tipo: string; idFondo: number; monto: number; pierna: PiernaPago }[] = [];
             for (const pago of compra.pagos) {
                 if (!pago.idMetodo || !pago.monto || Number(pago.monto) <= 0) {
                     return "Cada pago debe tener un método y un monto mayor a cero.";
                 }
                 const metodoPago = await GetMetodoPago(connection, pago.idMetodo);
-                pagosResueltos.push({ idMetodo: pago.idMetodo, tipo: metodoPago.tipo, idFondo: metodoPago.idFondo, monto: Number(pago.monto) });
+                pagosResueltos.push({
+                    idMetodo: pago.idMetodo, tipo: metodoPago.tipo, idFondo: metodoPago.idFondo, monto: Number(pago.monto),
+                    pierna: { idMetodo: pago.idMetodo, monto: Number(pago.monto), cheque: pago.cheque, idValorAcreditar: pago.idValorAcreditar }
+                });
             }
 
             // A diferencia de Ventas (que autocompleta el remanente en Cuenta Corriente), en Compras un
@@ -148,8 +157,18 @@ class ComprasRepository {
             // exacto (decisión del cliente, 24-jun-2026).
             const sumaPagos = pagosResueltos.reduce((acc, p) => acc + p.monto, 0);
             if (Math.abs(sumaPagos - totales.total) > 0.01) {
+                // Un cheque de terceros endosado entra por su importe completo: si se pasa del total no hay forma
+                // de dejar el vuelto acá (la compra al contado cierra exacta). El excedente va a saldo a favor
+                // del proveedor, y eso lo hace Pagar a Proveedor.
+                if (sumaPagos > totales.total && pagosResueltos.some(p => p.tipo === 'CHEQUE')) {
+                    return "El cheque supera el total de la compra. Usá Pagar a Proveedor para dejar el excedente a favor.";
+                }
                 return "La suma de los pagos no coincide con el total de la compra.";
             }
+
+            // Cheque propio / endoso: datos completos, cuenta de la empresa, sin duplicados (ver chequesRepository).
+            const errorCheque = await ValidarPiernasCheque(connection, pagosResueltos.map(p => p.pierna), compra.idEmpresa!);
+            if (errorCheque) return errorCheque;
 
             // Cap server-side: no se puede pagar con más saldo a favor del que el proveedor tiene
             // disponible (más estricto que el patrón existente de Ventas/Entrega, decisión del cliente,
@@ -212,10 +231,22 @@ class ComprasRepository {
             // movimiento es INGRESO en vez de EGRESO. Saldo a Favor (Proveedor) SÍ es EGRESO: consumirlo
             // reduce el crédito disponible igual que si fuera plata real (ver ObtenerSaldoAFavorProveedor /
             // saldo_favor_usado en comprasCuentasRepository).
+            const ctxCheque = { idEmpresa: compra.idEmpresa!, idProveedor: compra.idProveedor!, usuario };
             for (const pago of pagosResueltos) {
+                // El egreso del fondo (puente para CHEQUE_PROPIO, Valores a Acreditar para CHEQUE) lo hace el
+                // movimiento de más abajo; acá solo se crea/marca el instrumento y se deja el vínculo en la pierna.
+                let idChequeEmitido: number | null = null;
+                let idValorAcreditar: number | null = null;
+                if (pago.tipo === 'CHEQUE_PROPIO') {
+                    idChequeEmitido = await EmitirChequePropio(connection, pago.pierna, ctxCheque);
+                } else if (pago.tipo === 'CHEQUE') {
+                    idValorAcreditar = Number(pago.pierna.idValorAcreditar);
+                    await EndosarValor(connection, idValorAcreditar, pago.monto, ctxCheque);
+                }
+
                 await connection.query(
-                    "INSERT INTO compras_metodos_pago (idCompra, idMetodoPago, monto) VALUES (?, ?, ?)",
-                    [compra.id, pago.idMetodo, pago.monto]
+                    "INSERT INTO compras_metodos_pago (idCompra, idMetodoPago, monto, idChequeEmitido, idValorAcreditar) VALUES (?, ?, ?, ?, ?)",
+                    [compra.id, pago.idMetodo, pago.monto, idChequeEmitido, idValorAcreditar]
                 );
 
                 await InsertMovimientoFondo(connection, {
@@ -282,9 +313,20 @@ class ComprasRepository {
             // original era deuda, no plata real; Saldo a Favor (Proveedor) se revierte como INGRESO
             // porque el egreso original consumía saldo a favor disponible.
             const [pagos]: any = await connection.query(
-                "SELECT idMetodoPago, monto FROM compras_metodos_pago WHERE idCompra = ?",
+                "SELECT idMetodoPago, monto, idChequeEmitido, idValorAcreditar FROM compras_metodos_pago WHERE idCompra = ?",
                 [compra.id]
             );
+
+            // Cheques primero, antes de cualquier contra-asiento: un cheque propio ya debitado, o un pago con
+            // cheque anterior al circuito nuevo (sin vínculo), frena toda la baja. Si algo tira, la transacción
+            // entera hace rollback.
+            for (const pago of pagos) {
+                const metodoPago = await GetMetodoPago(connection, pago.idMetodoPago);
+                await RevertirPiernaCheque(connection, {
+                    tipoMetodo: metodoPago.tipo, idChequeEmitido: pago.idChequeEmitido, idValorAcreditar: pago.idValorAcreditar
+                });
+            }
+
             for (const pago of pagos) {
                 const metodoPago = await GetMetodoPago(connection, pago.idMetodoPago);
                 const esCuentaCorriente = metodoPago.tipo === 'CUENTA_CORRIENTE_PROVEEDOR';
@@ -478,14 +520,39 @@ async function ObtenerPercepcionesIibb(connection, idCompra: number): Promise<Co
 // Desglose de pagos de la compra (multi-método, 24-jun-2026), para trazabilidad/auditoría en el
 // detalle (ObtenerUna). El listado usa el resumen GROUP_CONCAT de ObtenerQuery; esto es la versión
 // desagregada, fila por fila, con el mismo criterio de descripción (transferencia -> "Fondo - Transferencia").
+// Texto de trazabilidad del cheque de un pago (null si el pago no es con cheque).
+//  - Cheque propio: "Santander · eCheq #123 · cobro 03/12/2026 · Emitido"
+//  - Endoso:        "Cheque de terceros endosado: Galicia #456 · librador Pérez SA · cobro 03/12/2026"
+function DescribirChequePago(row: any): string | null {
+    const fecha = (valor: any) => valor ? moment(valor).format('DD/MM/YYYY') : null;
+    if (row.idChequeEmitido) {
+        const estado = ({ EMITIDO: 'Emitido', DEBITADO: 'Debitado', ANULADO: 'Anulado' } as any)[row.chequeEstado] ?? row.chequeEstado;
+        return [row.chequeBanco, `${row.chequeTipo === 'ECHEQ' ? 'eCheq' : 'Físico'} #${row.chequeNumero}`,
+            row.chequeFechaPago ? `cobro ${fecha(row.chequeFechaPago)}` : null, estado].filter(Boolean).join(' · ');
+    }
+    if (row.idValorAcreditar) {
+        return 'Cheque de terceros endosado: ' + [row.endosoBanco, `#${row.endosoNumero}`,
+            row.endosoLibrador ? `librador ${row.endosoLibrador}` : null,
+            row.endosoFechaCobro ? `cobro ${fecha(row.endosoFechaCobro)}` : null].filter(Boolean).join(' · ');
+    }
+    return null;
+}
+
 async function ObtenerPagosCompra(connection, idCompra: number): Promise<PagoCompra[]> {
     const consulta = `
         SELECT cmp.idMetodoPago,
             CASE WHEN mp.tipo = 'TRANSFERENCIA' THEN CONCAT(f.nombre, ' - Transferencia') ELSE mp.nombre END AS metodo,
-            cmp.monto
+            cmp.monto,
+            cmp.idChequeEmitido, ce.tipo AS chequeTipo, ce.numero AS chequeNumero, ce.fechaPago AS chequeFechaPago,
+            ce.estado AS chequeEstado, fb.nombre AS chequeBanco,
+            cmp.idValorAcreditar, ch.numero AS endosoNumero, ch.banco AS endosoBanco,
+            ch.libradorNombre AS endosoLibrador, ch.fechaCobro AS endosoFechaCobro
         FROM compras_metodos_pago cmp
         INNER JOIN metodos_pago mp ON mp.id = cmp.idMetodoPago
         INNER JOIN fondos f ON f.id = mp.idFondo
+        LEFT JOIN cheques_emitidos ce ON ce.id = cmp.idChequeEmitido
+        LEFT JOIN fondos fb ON fb.id = ce.idFondoBanco
+        LEFT JOIN cheques ch ON ch.idValor = cmp.idValorAcreditar
         WHERE cmp.idCompra = ?
         ORDER BY cmp.id ASC
     `;
@@ -498,6 +565,7 @@ async function ObtenerPagosCompra(connection, idCompra: number): Promise<PagoCom
             pago.idMetodo = row['idMetodoPago'];
             pago.metodo = row['metodo'];
             pago.monto = parseFloat(row['monto']);
+            pago.detalleCheque = DescribirChequePago(row);
             pagos.push(pago);
         }
     }

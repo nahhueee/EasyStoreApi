@@ -1,18 +1,36 @@
 import db from '../db';
 
+// ENDOSADO: el cheque se entregó a un proveedor como pago. Para recuperarlo hay que anular ese pago
+// (vuelve a PENDIENTE); acreditarlo o rechazarlo desde acá dejaría el pago al proveedor sin respaldo.
+function MensajeValorNoPendiente(estado: string): string {
+    if (estado === 'ENDOSADO') {
+        return 'El cheque ya fue endosado a un proveedor. Para recuperarlo, anulá el pago de la compra o de Pagar a Proveedor.';
+    }
+    return `El valor ya fue ${estado.toLowerCase()}.`;
+}
+
 class ValoresRepository {
 
     /**
      * Devuelve los valores_acreditar PENDIENTES de una empresa,
      * con datos de venta, cliente, cheque (si aplica) y fondo destino.
      * Incluye totales por tipo al final del resultado.
+     * Filtros opcionales (los usa el selector de cheques a endosar en Compras / Pagar a Proveedor):
+     *   tipo (ej. 'CHEQUE'), idEmpresa. Sin filtros devuelve todos los PENDIENTES, igual que antes.
+     * Los ENDOSADO no aparecen: ya salieron de Valores a Acreditar (los egresó el pago al proveedor).
      */
-    async ObtenerValoresPendientes(): Promise<any> {
+    async ObtenerValoresPendientes(filtros?: { tipo?: string; idEmpresa?: number }): Promise<any> {
         const connection = await db.getConnection();
         try {
+            const condiciones: string[] = [`va.estado = 'PENDIENTE'`];
+            const params: any[] = [];
+            if (filtros?.tipo) { condiciones.push('va.tipo = ?'); params.push(filtros.tipo); }
+            if (filtros?.idEmpresa) { condiciones.push('va.idEmpresa = ?'); params.push(Number(filtros.idEmpresa)); }
+
             const [rows]: any = await connection.query(`
                 SELECT
                     va.id,
+                    va.idEmpresa,
                     va.tipo,
                     va.monto,
                     va.estado,
@@ -43,9 +61,9 @@ class ValoresRepository {
                 LEFT  JOIN clientes cr      ON cr.id  = r.idCliente
                 LEFT  JOIN fondos f         ON f.id   = va.idFondoDestino
                 LEFT  JOIN cheques ch       ON ch.idValor = va.id
-                WHERE va.estado = 'PENDIENTE'
+                WHERE ${condiciones.join(' AND ')}
                 ORDER BY va.fechaAlta DESC
-            `);
+            `, params);
 
             // Totales por tipo para mostrar en el resumen
             const totales = rows.reduce((acc: any, row: any) => {
@@ -58,6 +76,62 @@ class ValoresRepository {
 
         } catch (error) {
             throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    /**
+     * Cheques de terceros (valores_acreditar tipo CHEQUE) en CUALQUIER estado, para la pantalla informativa de
+     * Cheques (Administración). Solo lectura. Filtros opcionales: estado, idEmpresa, fechaCobroDesde/Hasta, limite.
+     * Dónde terminó cada uno: PENDIENTE (sigue en Valores a Acreditar), ENDOSADO (proveedor + fecha),
+     * ACREDITADO (fondo + fecha), RECHAZADO (observaciones).
+     */
+    async ObtenerCheques(filtros?: any): Promise<any[]> {
+        const connection = await db.getConnection();
+        try {
+            const condiciones: string[] = [`va.tipo = 'CHEQUE'`];
+            const params: any[] = [];
+            if (filtros?.estado) { condiciones.push('va.estado = ?'); params.push(filtros.estado); }
+            if (filtros?.idEmpresa) { condiciones.push('va.idEmpresa = ?'); params.push(Number(filtros.idEmpresa)); }
+            if (filtros?.fechaCobroDesde) { condiciones.push('ch.fechaCobro >= ?'); params.push(String(filtros.fechaCobroDesde).substring(0, 10)); }
+            if (filtros?.fechaCobroHasta) { condiciones.push('ch.fechaCobro <= ?'); params.push(String(filtros.fechaCobroHasta).substring(0, 10)); }
+
+            const limite = Math.floor(Number(filtros?.limite));
+            const limit = Number.isFinite(limite) && limite > 0 ? ` LIMIT ${Math.min(limite, 2000)}` : '';
+
+            const [rows]: any = await connection.query(`
+                SELECT
+                    va.id, va.idEmpresa, va.estado, va.monto, va.fechaAlta,
+                    va.fechaAcreditacion, va.usuarioAcredita, va.observaciones,
+                    va.fechaEndoso, va.usuarioEndoso, va.idProveedorEndoso,
+                    pe.razonSocial                  AS proveedorEndoso,
+                    f.nombre                        AS fondoDestino,
+                    COALESCE(c.nombre, cr.nombre)   AS cliente,
+                    ch.numero                       AS chequeNumero,
+                    ch.banco                        AS chequeBanco,
+                    ch.libradorNombre               AS chequeLibradorNombre,
+                    ch.fechaCobro                   AS chequeFechaCobro,
+                    DATEDIFF(ch.fechaCobro, CURDATE()) AS diasParaCobro
+                FROM valores_acreditar va
+                LEFT JOIN ventas_pagos vp ON vp.id = va.idVentaPago
+                LEFT JOIN ventas v        ON v.id  = vp.idVenta
+                LEFT JOIN clientes c      ON c.id  = v.idCliente
+                LEFT JOIN recibos r       ON r.id  = vp.idRecibo
+                LEFT JOIN clientes cr     ON cr.id = r.idCliente
+                LEFT JOIN fondos f        ON f.id  = va.idFondoDestino
+                LEFT JOIN proveedores pe  ON pe.id = va.idProveedorEndoso
+                LEFT JOIN cheques ch      ON ch.idValor = va.id
+                WHERE ${condiciones.join(' AND ')}
+                ORDER BY ch.fechaCobro ASC, va.id ASC${limit}
+            `, params);
+
+            for (const row of rows) {
+                row.monto = parseFloat(row.monto);
+                row.diasParaCobro = row.diasParaCobro === null ? null : Number(row.diasParaCobro);
+            }
+            return rows;
+
         } finally {
             connection.release();
         }
@@ -100,7 +174,7 @@ class ValoresRepository {
 
             if (!valor) throw { status: 404, message: 'Valor no encontrado.' };
             if (valor.estado !== 'PENDIENTE') {
-                throw { status: 400, message: `El valor ya fue ${valor.estado.toLowerCase()}.` };
+                throw { status: 400, message: MensajeValorNoPendiente(valor.estado) };
             }
 
             // Resolver fondo destino: prioridad → body, luego tabla
@@ -204,7 +278,7 @@ export async function RechazarValorConn(connection, params: {
 
     if (!valor) throw { status: 404, message: 'Valor no encontrado.' };
     if (valor.estado !== 'PENDIENTE') {
-        throw { status: 400, message: `El valor ya fue ${valor.estado.toLowerCase()}.` };
+        throw { status: 400, message: MensajeValorNoPendiente(valor.estado) };
     }
 
     // Fondo "Valores a Acreditar"

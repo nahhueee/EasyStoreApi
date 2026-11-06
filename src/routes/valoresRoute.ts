@@ -10,9 +10,25 @@ const router: Router = Router();
  */
 router.post('/pendientes', async (req: Request, res: Response) => {
     try {
-        res.json(await ValoresRepo.ObtenerValoresPendientes());
+        const { tipo, idEmpresa } = req.body ?? {};
+        res.json(await ValoresRepo.ObtenerValoresPendientes({ tipo, idEmpresa }));
     } catch (error: any) {
         const msg = 'Error al obtener valores pendientes.';
+        logger.error(msg + ' ' + error.message);
+        res.status(error.status || 500).send(error.message || msg);
+    }
+});
+
+/**
+ * POST /valores/cheques
+ * Body (todo opcional): { estado, idEmpresa, fechaCobroDesde, fechaCobroHasta, limite }
+ * Cheques de terceros en cualquier estado (pantalla informativa Administración > Cheques). Solo lectura.
+ */
+router.post('/cheques', async (req: Request, res: Response) => {
+    try {
+        res.json(await ValoresRepo.ObtenerCheques(req.body));
+    } catch (error: any) {
+        const msg = 'Error al obtener cheques de terceros.';
         logger.error(msg + ' ' + error.message);
         res.status(error.status || 500).send(error.message || msg);
     }
