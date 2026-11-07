@@ -151,6 +151,8 @@ class ComprasCuentasRepository {
                     row.debe = parseFloat(row.debe);
                     row.haber = parseFloat(row.haber);
                     row.saldo = parseFloat(row.saldo);
+                    row.movimiento = parseFloat(row.movimiento);
+                    row.pagado = parseFloat(row.pagado);
 
                     // El excedente que un pago generó como saldo a favor se resuelve aquí (no con CASE
                     // anidados en SQL): es justo el dato que el usuario no podía ver antes ("le pago una
@@ -552,20 +554,14 @@ async function ObtenerQueryCuentasProveedores(filtros: any, esTotal: boolean): P
 // - montoExcedente viaja como columna propia (0 en INICIAL/COMPRAS) en vez de resolverse con CASE
 //   anidados dentro de la rama PAGOS: se combina con "referencia" en JS (ver ObtenerMovimientosProveedor).
 async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean): Promise<string> {
-    let paginado = "";
-    let count = "";
-    let endCount = "";
-
-    if (esTotal) {
-        count = "SELECT COUNT(*) AS total FROM ( ";
-        endCount = " ) AS subquery";
-    } else {
-        if (filtros.tamanioPagina != null)
-            paginado = " LIMIT " + filtros.tamanioPagina + " OFFSET " + ((filtros.pagina - 1) * filtros.tamanioPagina);
-    }
-
-    return count + `
-        SELECT * FROM (
+    // Mismo modelo que cuentasRepository.ObtenerQueryVentasCliente: cada rama expone "movimiento" (con
+    // signo, lo que realmente mueve el saldo de la CC del proveedor) y la capa intermedia calcula el
+    // saldo acumulado en orden cronológico. El acumulado se calcula ANTES del LIMIT, así la página 2
+    // continúa el saldo de la 1. Requiere MySQL 8 (window functions).
+    //  - movimiento de COMPRA = montoCC + montoSaldoFavor (misma base que el saldo de ObtenerCuentasProveedores).
+    //  - debe/haber de COMPRA son informativos: debe = total de la compra, haber = lo pagado "al contado".
+    //  - Compras y pagos ANULADOS se listan (trazabilidad) pero con movimiento 0.
+    const ramas = `
             -- ================= SALDO INICIAL =================
             SELECT
                 0 AS id,
@@ -574,47 +570,53 @@ async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean):
                 'SALDO INICIAL' AS comprobante,
                 CASE WHEN p.inicialHistorico > 0 THEN p.inicialHistorico ELSE 0 END AS debe,
                 CASE WHEN p.inicialHistorico < 0 THEN ABS(p.inicialHistorico) ELSE 0 END AS haber,
-                p.inicialHistorico AS saldo,
+                p.inicialHistorico AS movimiento,
                 'INICIAL' AS estado,
                 '' AS referencia,
                 '' AS observaciones,
                 0 AS montoExcedente,
+                0 AS pagado,
                 0 AS orden_tipo
             FROM proveedores p
             WHERE p.id = ?
 
             UNION ALL
 
-            -- ================= COMPRAS (DEBE) =================
-            -- debe = montoCC (porción CC de la compra), no c.total: una compra puede combinar
-            -- CC con otros métodos de pago (multi-método, 24-jun-2026).
+            -- ================= COMPRAS =================
+            -- Se listan TODAS (también las de baja y las pagadas al contado). Multi-método (24-jun-2026):
+            -- montoCC y montoSF mueven el saldo; "contado" (efectivo, transferencia, CHEQUE_PROPIO,
+            -- CHEQUE endosado) es pago real en el momento y no lo mueve.
             SELECT
                 c.id,
                 'COMPRA' AS proceso,
                 CONCAT(c.fecha, ' 00:00:00') AS fecha,
                 CONCAT(tc.descripcion, ' ', c.nroComprobante) AS comprobante,
-                IFNULL(cc.montoCC, 0) AS debe,
-                0 AS haber,
-                IFNULL(cc.montoCC, 0) AS saldo,
+                c.total AS debe,
+                IFNULL(mt.contado, 0) AS haber,
+                CASE WHEN c.baja IS NOT NULL THEN 0 ELSE IFNULL(mt.montoCC, 0) + IFNULL(mt.montoSF, 0) END AS movimiento,
                 CASE
                     WHEN c.baja IS NOT NULL THEN 'ANULADA'
-                    WHEN IFNULL(pg.pagado, 0) >= IFNULL(cc.montoCC, 0) THEN 'PAGADA'
+                    WHEN IFNULL(mt.montoCC, 0) + IFNULL(mt.montoSF, 0) = 0 THEN 'CONTADO'
+                    WHEN IFNULL(pg.pagado, 0) >= IFNULL(mt.montoCC, 0) THEN 'PAGADA'
                     WHEN IFNULL(pg.pagado, 0) > 0 THEN 'PARCIAL'
                     ELSE 'IMPAGA'
                 END AS estado,
                 '' AS referencia,
-                '' AS observaciones,
+                IFNULL(c.observacionBaja, '') AS observaciones,
                 0 AS montoExcedente,
+                IFNULL(pg.pagado, 0) AS pagado,
                 1 AS orden_tipo
             FROM compras c
             LEFT JOIN tipos_comprobantes tc ON tc.id = c.idTipoComprobante
             LEFT JOIN (
-                SELECT cmp.idCompra, SUM(cmp.monto) AS montoCC
+                SELECT cmp.idCompra,
+                       SUM(CASE WHEN mp.tipo = 'CUENTA_CORRIENTE_PROVEEDOR' THEN cmp.monto ELSE 0 END) AS montoCC,
+                       SUM(CASE WHEN mp.tipo = 'SALDO_FAVOR_PROVEEDOR' THEN cmp.monto ELSE 0 END) AS montoSF,
+                       SUM(CASE WHEN mp.tipo NOT IN ('CUENTA_CORRIENTE_PROVEEDOR', 'SALDO_FAVOR_PROVEEDOR') THEN cmp.monto ELSE 0 END) AS contado
                 FROM compras_metodos_pago cmp
                 INNER JOIN metodos_pago mp ON mp.id = cmp.idMetodoPago
-                WHERE mp.tipo = 'CUENTA_CORRIENTE_PROVEEDOR'
                 GROUP BY cmp.idCompra
-            ) cc ON cc.idCompra = c.id
+            ) mt ON mt.idCompra = c.id
             LEFT JOIN (
                 SELECT dpd.idCompra, SUM(dpd.montoAplicado) AS pagado
                 FROM compras_pagos_proveedor_detalle dpd
@@ -636,7 +638,7 @@ async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean):
                 CONCAT('PAGO # ', LPAD(pp.id, 8, '0')) AS comprobante,
                 0 AS debe,
                 pp.total AS haber,
-                -pp.total AS saldo,
+                CASE WHEN pp.baja IS NOT NULL THEN 0 ELSE -pp.total END AS movimiento,
                 CASE WHEN pp.baja IS NOT NULL THEN 'ANULADO' ELSE '' END AS estado,
                 CASE
                     WHEN COUNT(DISTINCT d.idCompra) = 1 THEN
@@ -649,6 +651,7 @@ async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean):
                 END AS referencia,
                 pp.observaciones AS observaciones,
                 SUM(CASE WHEN d.tipoAplicacion = 'SALDO_A_FAVOR' THEN d.montoAplicado ELSE 0 END) AS montoExcedente,
+                0 AS pagado,
                 2 AS orden_tipo
             FROM compras_pagos_proveedor pp
             LEFT JOIN compras_pagos_proveedor_detalle d ON d.idPagoProveedor = pp.id
@@ -656,10 +659,29 @@ async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean):
             LEFT JOIN tipos_comprobantes tc2 ON tc2.id = c2.idTipoComprobante
             WHERE pp.idProveedor = ?
             GROUP BY pp.id
+    `;
 
+    // El conteo no necesita el acumulado: se evita la window function.
+    if (esTotal)
+        return `SELECT COUNT(*) AS total FROM ( ${ramas} ) AS subquery`;
+
+    let paginado = "";
+    if (filtros.tamanioPagina != null)
+        paginado = " LIMIT " + filtros.tamanioPagina + " OFFSET " + ((filtros.pagina - 1) * filtros.tamanioPagina);
+
+    // id ASC como desempate: varias compras del mismo día comparten fecha 00:00:00; sin desempate el
+    // acumulado podía cambiar entre recargas/páginas.
+    return `
+        SELECT * FROM (
+            SELECT m.*,
+                   SUM(m.movimiento) OVER (
+                       ORDER BY m.fecha ASC, m.orden_tipo ASC, m.id ASC
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                   ) AS saldo
+            FROM ( ${ramas} ) m
         ) movimientos
-        ORDER BY fecha DESC, orden_tipo DESC
-    ` + paginado + endCount;
+        ORDER BY fecha DESC, orden_tipo DESC, id DESC
+    ` + paginado;
 }
 
 // Devuelve "total" = la porción de cada compra pagada con Cuenta Corriente (Proveedor), NO

@@ -274,6 +274,11 @@ class ComprasRepository {
     }
 
     async Eliminar(compra: any, usuario: string): Promise<string> {
+        // Motivo obligatorio (nov-2026): se valida antes de abrir conexión/transacción.
+        const motivo = String(compra?.motivo ?? '').trim();
+        if (!motivo) throw new AppError(CodigoError.VALIDACION, 'Indicá el motivo de la baja.', 400, { modulo: 'ComprasRepo', metodo: 'Eliminar', idCompra: compra?.id });
+        if (motivo.length > 300) throw new AppError(CodigoError.VALIDACION, 'El motivo de la baja no puede superar los 300 caracteres.', 400, { modulo: 'ComprasRepo', metodo: 'Eliminar', idCompra: compra?.id });
+
         const connection = await db.getConnection();
 
         try {
@@ -344,7 +349,7 @@ class ComprasRepository {
                 });
             }
 
-            await connection.query("UPDATE compras SET baja = ? WHERE id = ?", [moment().format('YYYY-MM-DD HH:mm'), compra.id]);
+            await connection.query("UPDATE compras SET baja = ?, observacionBaja = ?, usuarioBaja = ? WHERE id = ?", [moment().format('YYYY-MM-DD HH:mm'), motivo, usuario, compra.id]);
 
             await connection.commit();
             return "OK";
