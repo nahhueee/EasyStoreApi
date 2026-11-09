@@ -22,6 +22,15 @@ router.post('/movimientos-proveedor', async (req:Request, res:Response, next:Nex
     }
 });
 
+router.post('/movimientos-proveedor-reporte', async (req:Request, res:Response, next:NextFunction) => {
+    try{
+        res.json(await ComprasCuentasRepo.ObtenerMovimientosProveedorReporte(req.body));
+
+    } catch(error:any){
+        next(error);
+    }
+});
+
 router.get('/pago/:idPagoProveedor', async (req:Request, res:Response, next:NextFunction) => {
     try{
         res.json(await ComprasCuentasRepo.ObtenerPagoProveedor(req.params.idPagoProveedor));
@@ -44,7 +53,7 @@ router.put('/pagar', authMiddleware, async (req:Request, res:Response, next:Next
 
 router.put('/revertir-pago', authMiddleware, async (req:Request, res:Response, next:NextFunction) => {
     try{
-        res.json(await ComprasCuentasRepo.RevertirPagoProveedor(req.body?.idPagoProveedor, req.usuario!.usuario));
+        res.json(await ComprasCuentasRepo.RevertirPagoProveedor(req.body?.idPagoProveedor, req.body?.motivo, req.usuario!.usuario));
 
     } catch(error:any){
         next(error);

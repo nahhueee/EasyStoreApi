@@ -34,6 +34,7 @@ export class Compra {
 export class PagoCompra {
     idMetodo?:number;
     metodo?:string; // solo en lectura (ObtenerUna); no se usa al guardar
+    tipoMetodo?:string; // solo en lectura (metodos_pago.tipo): permite separar pago real (contado) de CUENTA_CORRIENTE_PROVEEDOR / SALDO_FAVOR_PROVEEDOR
     monto?:number;
     cheque?:ChequePropioDTO; // solo con método CHEQUE_PROPIO: datos del cheque a emitir (importe = monto)
     idValorAcreditar?:number; // solo con método CHEQUE: cheque de terceros PENDIENTE a endosar (monto = su importe)

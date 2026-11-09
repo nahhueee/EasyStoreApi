@@ -51,6 +51,7 @@ class ComprasRepository {
             compra.iva = await ObtenerIvaCompra(connection, compra.id);
             compra.percepcionesIibb = await ObtenerPercepcionesIibb(connection, compra.id);
             compra.pagos = await ObtenerPagosCompra(connection, compra.id);
+            await AgregarDatosComprobante(connection, compra);
 
             return compra;
 
@@ -543,10 +544,55 @@ function DescribirChequePago(row: any): string | null {
     return null;
 }
 
+// Datos extra para imprimir la Orden de Pago de una compra al contado (nov-2026): empresa que paga y datos
+// fiscales del proveedor. Se resuelven acá (y no en ObtenerQuery) para no tocar el listado ni el export a Excel.
+// El domicilio sale de UNA fila de direcciones_proveedor (misma expresión que ComprasCuentasRepo.ObtenerPagoProveedor).
+async function AgregarDatosComprobante(connection, compra: any): Promise<void> {
+    compra.empresa = null;
+    compra.proveedorDocumento = null;
+    compra.proveedorDomicilio = null;
+
+    if (compra.idEmpresa) {
+        const [rowsEmp]: any = await connection.query(
+            "SELECT razonSocial, cuil, condicion, direccion, IIBB, inicioAct FROM empresas WHERE id = ?",
+            [compra.idEmpresa]
+        );
+        if (rowsEmp.length) {
+            const e = rowsEmp[0];
+            compra.empresa = {
+                razonSocial: e.razonSocial,
+                cuit: e.cuil != null ? String(e.cuil) : null,
+                condicion: e.condicion,
+                direccion: e.direccion,
+                iibb: e.IIBB,
+                inicioAct: e.inicioAct
+            };
+        }
+    }
+
+    if (compra.idProveedor) {
+        const [rowsProv]: any = await connection.query(
+            `SELECT p.documento,
+                    (SELECT COALESCE(NULLIF(TRIM(d.resumen), ''),
+                                     NULLIF(TRIM(CONCAT_WS(' ', d.calle, d.numero, CONCAT_WS(', ', d.localidad, d.provincia))), ''))
+                     FROM direcciones_proveedor d
+                     WHERE d.idProveedor = p.id
+                     ORDER BY d.id ASC LIMIT 1) AS domicilio
+             FROM proveedores p WHERE p.id = ?`,
+            [compra.idProveedor]
+        );
+        if (rowsProv.length) {
+            compra.proveedorDocumento = rowsProv[0].documento ?? null;
+            compra.proveedorDomicilio = rowsProv[0].domicilio ?? null;
+        }
+    }
+}
+
 async function ObtenerPagosCompra(connection, idCompra: number): Promise<PagoCompra[]> {
     const consulta = `
         SELECT cmp.idMetodoPago,
             CASE WHEN mp.tipo = 'TRANSFERENCIA' THEN CONCAT(f.nombre, ' - Transferencia') ELSE mp.nombre END AS metodo,
+            mp.tipo AS tipoMetodo,
             cmp.monto,
             cmp.idChequeEmitido, ce.tipo AS chequeTipo, ce.numero AS chequeNumero, ce.fechaPago AS chequeFechaPago,
             ce.estado AS chequeEstado, fb.nombre AS chequeBanco,
@@ -569,6 +615,7 @@ async function ObtenerPagosCompra(connection, idCompra: number): Promise<PagoCom
             const pago = new PagoCompra();
             pago.idMetodo = row['idMetodoPago'];
             pago.metodo = row['metodo'];
+            pago.tipoMetodo = row['tipoMetodo'];
             pago.monto = parseFloat(row['monto']);
             pago.detalleCheque = DescribirChequePago(row);
             pagos.push(pago);

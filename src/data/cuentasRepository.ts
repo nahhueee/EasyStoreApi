@@ -1,6 +1,8 @@
 import moment from 'moment';
 import db from '../db';
 import { ResultSetHeader } from 'mysql2';
+import { AppError } from '../logger/AppError';
+import { CodigoError } from '../logger/CodigosError';
 import { CuentaCorriente, VentasClienteCuenta } from '../models/CuentaCorriente';
 import { MovimientoFondo } from '../models/MovimientoFondo';
 import { GetMetodoPago, GetIdFondoValoresAcreditar, GetIdFondoRetenciones, InsertValorAcreditar, InsertCheque, InsertRetencion } from './ventasRepository';
@@ -320,10 +322,23 @@ class CuentasRepository{
                     v.nroProceso,
                     pv.descripcion AS proceso,
 
-                    r.total
+                    r.total,
+
+                    -- A4 (7-nov-2026): recibos no tiene idEmpresa. Se resuelve por la entrega (ventas_entrega.idEmpresa,
+                    -- NULL en entregas viejas) y si no por la venta. Si ninguna la tiene, empresa queda en null.
+                    c.documento AS clienteDocumento,
+                    ci.descripcion AS clienteCondicionIva,
+                    emp.id AS empId,
+                    emp.razonSocial AS empRazonSocial,
+                    emp.cuil AS empCuit,
+                    emp.condicion AS empCondicion,
+                    emp.direccion AS empDireccion,
+                    emp.IIBB AS empIibb,
+                    emp.inicioAct AS empInicioAct
 
                 FROM recibos r
                 JOIN clientes c ON c.id = r.idCliente
+                LEFT JOIN condiciones_iva ci ON ci.id = c.idCondIva
 
                 LEFT JOIN ventas_entrega_detalle ved 
                     ON ved.idRecibo = r.id
@@ -342,11 +357,33 @@ class CuentasRepository{
                 LEFT JOIN procesos_venta pv 
                     ON pv.id = v.idProceso
 
+                LEFT JOIN ventas_entrega ve
+                    ON ve.id = ved.idEntrega
+
+                LEFT JOIN empresas emp
+                    ON emp.id = COALESCE(ve.idEmpresa, v.idEmpresa)
+
                 WHERE r.id = ?
             `;
             
             const [rows]: any = await connection.query(consulta, [idRecibo]);
+            if (!rows.length) throw new AppError(CodigoError.NOT_FOUND, 'El recibo no existe o no tiene medios de pago asociados.', 404, { modulo: 'CuentasRepo', metodo: 'ObtenerRecibo', idRecibo });
+
+            // Todas las filas de un recibo comparten empresa salvo recibos con ventas de distintas empresas
+            // (no debería pasar: una entrega es de una sola empresa). Se toma la primera resuelta.
+            const filaEmp = rows.find((x: any) => x.empId != null);
             const recibo = {
+                clienteDocumento: rows[0].clienteDocumento ?? null,
+                clienteCondicionIva: rows[0].clienteCondicionIva ?? null,
+                empresa: filaEmp ? {
+                    id: filaEmp.empId,
+                    razonSocial: filaEmp.empRazonSocial,
+                    cuit: filaEmp.empCuit != null ? String(filaEmp.empCuit) : null,
+                    condicion: filaEmp.empCondicion,
+                    direccion: filaEmp.empDireccion,
+                    iibb: filaEmp.empIibb,
+                    inicioAct: filaEmp.empInicioAct
+                } : null,
                 id: rows[0].id,
                 cliente: rows[0].cliente,
                 fecha: rows[0].fecha,

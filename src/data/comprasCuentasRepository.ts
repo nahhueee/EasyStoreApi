@@ -73,9 +73,23 @@ class ComprasCuentasRepository {
 
         try {
             const [rowsHeader]: any = await connection.query(
-                `SELECT pp.*, p.razonSocial AS proveedor
+                // Ampliado 7-nov-2026 para la Orden de Pago A4: datos de empresa y proveedor. El domicilio sale
+                // de UNA sola fila de direcciones_proveedor (subquery con LIMIT 1: un JOIN directo duplicaría
+                // el header si el proveedor tiene varias). Se prioriza "resumen" si viene cargado; si no, se
+                // arma con calle/número/localidad/provincia. Menor id = la primera que se cargó.
+                `SELECT pp.*, p.razonSocial AS proveedor,
+                        p.documento AS proveedorDocumento, ci.descripcion AS proveedorCondicionIva,
+                        (SELECT COALESCE(NULLIF(TRIM(d.resumen), ''),
+                                         NULLIF(TRIM(CONCAT_WS(' ', d.calle, d.numero, CONCAT_WS(', ', d.localidad, d.provincia))), ''))
+                         FROM direcciones_proveedor d
+                         WHERE d.idProveedor = pp.idProveedor
+                         ORDER BY d.id ASC LIMIT 1) AS proveedorDomicilio,
+                        e.razonSocial AS empresaRazonSocial, e.cuil AS empresaCuit, e.condicion AS empresaCondicion,
+                        e.direccion AS empresaDireccion, e.IIBB AS empresaIibb, e.inicioAct AS empresaInicioAct
                  FROM compras_pagos_proveedor pp
                  LEFT JOIN proveedores p ON p.id = pp.idProveedor
+                 LEFT JOIN condiciones_iva ci ON ci.id = p.idCondIva
+                 LEFT JOIN empresas e ON e.id = pp.idEmpresa
                  WHERE pp.id = ?`,
                 [idPagoProveedor]
             );
@@ -141,34 +155,39 @@ class ComprasCuentasRepository {
             const queryTotal = await ObtenerQueryMovimientosProveedor(filtros, true);
 
             // idProveedor se repite 3 veces (una por rama del UNION ALL) - mismo idProveedor, no son
-            // filtros distintos.
-            const params = [filtros.idProveedor, filtros.idProveedor, filtros.idProveedor];
+            // filtros distintos. Los filtros del extracto (proceso/fechas) van después, en el mismo orden
+            // en que aparecen los ? en la capa externa de la query.
+            const params = [filtros.idProveedor, filtros.idProveedor, filtros.idProveedor, ...ArmarFiltroMovimientos(filtros).params];
             const [rows] = await connection.query(queryRegistros, params);
             const resultado = await connection.query(queryTotal, params);
 
-            if (Array.isArray(rows)) {
-                for (const row of rows as any[]) {
-                    row.debe = parseFloat(row.debe);
-                    row.haber = parseFloat(row.haber);
-                    row.saldo = parseFloat(row.saldo);
-                    row.movimiento = parseFloat(row.movimiento);
-                    row.pagado = parseFloat(row.pagado);
-
-                    // El excedente que un pago generó como saldo a favor se resuelve aquí (no con CASE
-                    // anidados en SQL): es justo el dato que el usuario no podía ver antes ("le pago una
-                    // reserva... como se yo que tiene saldo a favor mio por eso?"). El monto exacto del
-                    // excedente queda disponible en el diálogo "Ver Detalle" (ObtenerPagoProveedor).
-                    const montoExcedente = parseFloat(row.montoExcedente);
-                    if (montoExcedente > 0) {
-                        row.referencia = row.referencia
-                            ? `${row.referencia} + EXCEDENTE A FAVOR`
-                            : 'EXCEDENTE A FAVOR';
-                    }
-                    delete row.montoExcedente;
-                }
-            }
+            if (Array.isArray(rows)) (rows as any[]).forEach(ParsearMovimientoProveedor);
 
             return { total: (resultado[0] as any)[0].total, registros: rows };
+
+        } catch (error: any) {
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    // Extracto completo para "Imprimir Reporte" (espejo de cuentasRepository.ObtenerVentasClienteReporte): mismos
+    // filtros que la grilla pero SIN paginado y en orden cronológico ascendente. El saldo de cada fila es el real
+    // acumulado, aunque se filtre la vista.
+    async ObtenerMovimientosProveedorReporte(filtros: any) {
+        const connection = await db.getConnection();
+
+        try {
+            if (!filtros.idProveedor) throw new AppError(CodigoError.VALIDACION, 'Debe indicar un proveedor.', 400, { modulo: 'ComprasCuentasRepo', metodo: 'ObtenerMovimientosProveedorReporte' });
+
+            const query = await ObtenerQueryMovimientosProveedor(filtros, false, true);
+            const params = [filtros.idProveedor, filtros.idProveedor, filtros.idProveedor, ...ArmarFiltroMovimientos(filtros).params];
+            const [rows] = await connection.query(query, params);
+
+            if (Array.isArray(rows)) (rows as any[]).forEach(ParsearMovimientoProveedor);
+
+            return rows;
 
         } catch (error: any) {
             throw error;
@@ -325,7 +344,12 @@ class ComprasCuentasRepository {
     // Baja lógica + contra-asientos (NUNCA delete, NUNCA editar el movimiento original) - mejora
     // deliberada sobre el patrón de Clientes (RevertirEntrega borra registros sin revertir fondos,
     // ver comentario al inicio del archivo). Decisión validada con el usuario el 23-jun-2026.
-    async RevertirPagoProveedor(idPagoProveedor: any, usuario: string): Promise<string> {
+    async RevertirPagoProveedor(idPagoProveedor: any, motivo: any, usuario: string): Promise<string> {
+        // Motivo obligatorio (7-nov-2026), mismo patrón que la baja de compra. Se valida antes de abrir
+        // conexión/transacción para no bloquear filas por un request inválido.
+        const motivoLimpio = String(motivo ?? '').trim();
+        if (!motivoLimpio) throw new AppError(CodigoError.VALIDACION, 'Indicá el motivo de la anulación.', 400, { modulo: 'ComprasCuentasRepo', metodo: 'RevertirPagoProveedor', idPagoProveedor });
+
         const connection = await db.getConnection();
 
         try {
@@ -356,8 +380,8 @@ class ComprasCuentasRepository {
             // Baja lógica primero: así el recálculo de impaga de más abajo, que filtra por
             // "pp.baja IS NULL", ya deja afuera este pago sin necesitar una exclusión especial.
             await connection.query(
-                "UPDATE compras_pagos_proveedor SET baja = ? WHERE id = ?",
-                [moment().format('YYYY-MM-DD HH:mm'), idPagoProveedor]
+                "UPDATE compras_pagos_proveedor SET baja = ?, observacionBaja = ?, usuarioBaja = ? WHERE id = ?",
+                [moment().format('YYYY-MM-DD HH:mm'), motivoLimpio.substring(0, 300), usuario, idPagoProveedor]
             );
 
             const idFondoCC = await GetFondoVirtual(connection, 'CC_PROVEEDORES');
@@ -553,13 +577,16 @@ async function ObtenerQueryCuentasProveedores(filtros: any, esTotal: boolean): P
 //   anulado queda en el ledger tageado 'ANULADO': RevertirPagoProveedor usa baja lógica, nunca DELETE.
 // - montoExcedente viaja como columna propia (0 en INICIAL/COMPRAS) en vez de resolverse con CASE
 //   anidados dentro de la rama PAGOS: se combina con "referencia" en JS (ver ObtenerMovimientosProveedor).
-async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean): Promise<string> {
+async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean, esReporte: boolean = false): Promise<string> {
     // Mismo modelo que cuentasRepository.ObtenerQueryVentasCliente: cada rama expone "movimiento" (con
     // signo, lo que realmente mueve el saldo de la CC del proveedor) y la capa intermedia calcula el
     // saldo acumulado en orden cronológico. El acumulado se calcula ANTES del LIMIT, así la página 2
     // continúa el saldo de la 1. Requiere MySQL 8 (window functions).
     //  - movimiento de COMPRA = montoCC + montoSaldoFavor (misma base que el saldo de ObtenerCuentasProveedores).
-    //  - debe/haber de COMPRA son informativos: debe = total de la compra, haber = lo pagado "al contado".
+    //  - Convención contable del proveedor (pedido del cliente, 9-nov-2026): es una cuenta de PASIVO, o sea
+    //    "al revés" que la de clientes. Las compras van al HABER (aumentan lo que se le debe) y los pagos al DEBE
+    //    (lo reducen). El signo de "movimiento" y el saldo (positivo = se le debe) no cambian: solo las columnas.
+    //  - debe/haber de COMPRA son informativos: haber = total de la compra, debe = lo pagado "al contado".
     //  - Compras y pagos ANULADOS se listan (trazabilidad) pero con movimiento 0.
     const ramas = `
             -- ================= SALDO INICIAL =================
@@ -568,8 +595,8 @@ async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean):
                 'INICIAL' AS proceso,
                 '' AS fecha,
                 'SALDO INICIAL' AS comprobante,
-                CASE WHEN p.inicialHistorico > 0 THEN p.inicialHistorico ELSE 0 END AS debe,
-                CASE WHEN p.inicialHistorico < 0 THEN ABS(p.inicialHistorico) ELSE 0 END AS haber,
+                CASE WHEN p.inicialHistorico < 0 THEN ABS(p.inicialHistorico) ELSE 0 END AS debe,
+                CASE WHEN p.inicialHistorico > 0 THEN p.inicialHistorico ELSE 0 END AS haber,
                 p.inicialHistorico AS movimiento,
                 'INICIAL' AS estado,
                 '' AS referencia,
@@ -591,8 +618,8 @@ async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean):
                 'COMPRA' AS proceso,
                 CONCAT(c.fecha, ' 00:00:00') AS fecha,
                 CONCAT(tc.descripcion, ' ', c.nroComprobante) AS comprobante,
-                c.total AS debe,
-                IFNULL(mt.contado, 0) AS haber,
+                IFNULL(mt.contado, 0) AS debe,
+                c.total AS haber,
                 CASE WHEN c.baja IS NOT NULL THEN 0 ELSE IFNULL(mt.montoCC, 0) + IFNULL(mt.montoSF, 0) END AS movimiento,
                 CASE
                     WHEN c.baja IS NOT NULL THEN 'ANULADA'
@@ -635,9 +662,9 @@ async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean):
                 pp.id,
                 'PAGO' AS proceso,
                 CONCAT(DATE(pp.fecha), ' ', TIME_FORMAT(pp.hora, '%H:%i:%s')) AS fecha,
-                CONCAT('PAGO # ', LPAD(pp.id, 8, '0')) AS comprobante,
-                0 AS debe,
-                pp.total AS haber,
+                CONCAT('ORDEN DE PAGO # ', LPAD(pp.id, 8, '0')) AS comprobante,
+                pp.total AS debe,
+                0 AS haber,
                 CASE WHEN pp.baja IS NOT NULL THEN 0 ELSE -pp.total END AS movimiento,
                 CASE WHEN pp.baja IS NOT NULL THEN 'ANULADO' ELSE '' END AS estado,
                 CASE
@@ -661,16 +688,25 @@ async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean):
             GROUP BY pp.id
     `;
 
-    // El conteo no necesita el acumulado: se evita la window function.
-    if (esTotal)
-        return `SELECT COUNT(*) AS total FROM ( ${ramas} ) AS subquery`;
+    const { where } = ArmarFiltroMovimientos(filtros);
 
+    // El conteo no necesita el acumulado: se evita la window function. Los filtros se aplican igual que en la
+    // grilla para que el total del paginador coincida con lo que se lista.
+    if (esTotal)
+        return `SELECT COUNT(*) AS total FROM ( ${ramas} ) AS subquery WHERE 1 = 1 ${where}`;
+
+    // El reporte va sin paginado y cronológico (como un extracto); la grilla, paginada y la más nueva primero.
     let paginado = "";
-    if (filtros.tamanioPagina != null)
+    if (!esReporte && filtros.tamanioPagina != null)
         paginado = " LIMIT " + filtros.tamanioPagina + " OFFSET " + ((filtros.pagina - 1) * filtros.tamanioPagina);
 
+    const orden = esReporte
+        ? "ORDER BY fecha ASC, orden_tipo ASC, id ASC"
+        : "ORDER BY fecha DESC, orden_tipo DESC, id DESC";
+
     // id ASC como desempate: varias compras del mismo día comparten fecha 00:00:00; sin desempate el
-    // acumulado podía cambiar entre recargas/páginas.
+    // acumulado podía cambiar entre recargas/páginas. El filtro (WHERE) va en la capa más externa, DESPUÉS
+    // del acumulado: así el saldo de cada fila es el real aunque se filtre la vista.
     return `
         SELECT * FROM (
             SELECT m.*,
@@ -680,8 +716,51 @@ async function ObtenerQueryMovimientosProveedor(filtros: any, esTotal: boolean):
                    ) AS saldo
             FROM ( ${ramas} ) m
         ) movimientos
-        ORDER BY fecha DESC, orden_tipo DESC, id DESC
+        WHERE 1 = 1 ${where}
+        ${orden}
     ` + paginado;
+}
+
+// Filtros del extracto (proceso y rango de fechas), parametrizados. "proceso" se valida contra lista blanca.
+// Si el rango trae solo la fecha desde (el datepicker de rango deja hasta en null), se toma ese único día.
+// Las filas INICIAL no tienen fecha (''), así que un filtro por fechas las excluye (igual que en clientes).
+function ArmarFiltroMovimientos(filtros: any): { where: string, params: any[] } {
+    let where = "";
+    const params: any[] = [];
+
+    if (['INICIAL', 'COMPRA', 'PAGO'].includes(filtros.proceso)) {
+        where += " AND proceso = ?";
+        params.push(filtros.proceso);
+    }
+
+    if (Array.isArray(filtros.fechas) && filtros.fechas[0]) {
+        const desde = moment.utc(filtros.fechas[0]).format('YYYY-MM-DD');
+        const hasta = moment.utc(filtros.fechas[1] ?? filtros.fechas[0]).add(1, 'day').format('YYYY-MM-DD');
+        where += " AND fecha >= ? AND fecha < ?";
+        params.push(desde, hasta);
+    }
+
+    return { where, params };
+}
+
+// Normaliza una fila del ledger: numéricos y excedente de saldo a favor (ver comentario en el cuerpo).
+function ParsearMovimientoProveedor(row: any): void {
+    row.debe = parseFloat(row.debe);
+    row.haber = parseFloat(row.haber);
+    row.saldo = parseFloat(row.saldo);
+    row.movimiento = parseFloat(row.movimiento);
+    row.pagado = parseFloat(row.pagado);
+
+    // El excedente que un pago generó como saldo a favor se resuelve aquí (no con CASE anidados en SQL): es
+    // justo el dato que el usuario no podía ver antes ("le pago una reserva... como se yo que tiene saldo a
+    // favor mio por eso?"). El monto exacto del excedente queda disponible en "Ver Detalle" (ObtenerPagoProveedor).
+    const montoExcedente = parseFloat(row.montoExcedente);
+    if (montoExcedente > 0) {
+        row.referencia = row.referencia
+            ? `${row.referencia} + EXCEDENTE A FAVOR`
+            : 'EXCEDENTE A FAVOR';
+    }
+    delete row.montoExcedente;
 }
 
 // Devuelve "total" = la porción de cada compra pagada con Cuenta Corriente (Proveedor), NO
