@@ -23,6 +23,7 @@ import { crearExcelConciliacion } from '../services/excelConciliacionService';
 import { crearExcelProductos } from '../services/excelProductosService';
 import { crearExcelClientes } from '../services/excelClientesService';
 import { crearExcelCuentas } from '../services/excelCuentasService';
+import { crearExcelCuentasProveedores } from '../services/excelCuentasProveedoresService';
 import { crearExcelMovimientosFondos } from '../services/excelFondosService';
 import { crearExcelProveedores } from '../services/excelProveedoresService';
 import { crearExcelCompras } from '../services/excelComprasService';
@@ -36,6 +37,7 @@ import { CuentasRepo } from '../data/cuentasRepository';
 import { FondosRepo } from '../data/fondosRepository';
 import { ProveedoresRepo } from '../data/proveedoresRepository';
 import { ComprasRepo } from '../data/comprasRepository';
+import { ComprasCuentasRepo } from '../data/comprasCuentasRepository';
 
 //#region IMPRESION DE PDFS
 const printer = require('pdf-to-printer');
@@ -302,6 +304,25 @@ router.post('/cuentas-excel', async (req, res) => {
         res.status(500).send(msg);
     }
 });
+router.post('/cuentas-proveedores-excel', async (req, res) => {
+    try {
+
+        const cuentas = await ComprasCuentasRepo.ObtenerCuentasProveedoresParaExcel(req.body);
+
+        const buffer = await crearExcelCuentasProveedores(cuentas);
+
+        res.setHeader('Content-Disposition', 'attachment; filename="cuentas-proveedores.xlsx"');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        res.send(buffer);
+    } catch(error:any){
+        const status = error?.status ?? 500;
+        const msg = error?.message ?? "Error al intentar generar el excel de cuentas de proveedores.";
+        if (status === 500) logger.error(msg + " " + (error?.message ?? ''));
+        res.status(status).send(msg);
+    }
+});
+
 router.post('/fondos-excel', async (req, res) => {
     try {
 

@@ -172,6 +172,14 @@ class ComprasCuentasRepository {
         }
     }
 
+    // Saldos de todos los proveedores para el Excel (files/cuentas-proveedores-excel): mismos filtros que la
+    // grilla pero SIN paginado (tamanioPagina null). Reutiliza ObtenerCuentasProveedores para que el saldo y el
+    // estado del Excel sean exactamente los de la pantalla.
+    async ObtenerCuentasProveedoresParaExcel(filtros: any) {
+        const resultado = await this.ObtenerCuentasProveedores({ ...filtros, pagina: 1, tamanioPagina: null });
+        return resultado.registros as any[];
+    }
+
     // Extracto completo para "Imprimir Reporte" (espejo de cuentasRepository.ObtenerVentasClienteReporte): mismos
     // filtros que la grilla pero SIN paginado y en orden cronológico ascendente. El saldo de cada fila es el real
     // acumulado, aunque se filtre la vista.
@@ -258,13 +266,15 @@ class ComprasCuentasRepository {
                     "INSERT INTO compras_pagos_proveedor_metodos (idPagoProveedor, idMetodo, monto, idChequeEmitido, idValorAcreditar) VALUES (?, ?, ?, ?, ?)",
                     [idPagoProveedor, m.idMetodo, m.monto, idChequeEmitido, idValorAcreditar]
                 );
-                await InsertMovimientoFondo(connection, {
-                    idCaja: data.idCaja, idFondo: metodoPago.idFondo, idEmpresa: data.idEmpresa,
-                    tipo: 'EGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: idPagoProveedor,
-                    tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
-                    monto: m.monto, descripcion: `Pago a proveedor #${data.idProveedor} (pago #${idPagoProveedor})`,
-                    usuario
-                });
+                if (MetodoMueveFondo(metodoPago.tipo)) {
+                    await InsertMovimientoFondo(connection, {
+                        idCaja: data.idCaja, idFondo: metodoPago.idFondo, idEmpresa: data.idEmpresa,
+                        tipo: 'EGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: idPagoProveedor,
+                        tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
+                        monto: m.monto, descripcion: `Pago a proveedor #${data.idProveedor} (pago #${idPagoProveedor})`,
+                        usuario
+                    });
+                }
             }
 
             let montoRestante = montoTotal;
@@ -390,12 +400,14 @@ class ComprasCuentasRepository {
             // Contra-asiento por cada método: recupera el fondo real de donde había salido la plata.
             for (const m of metodos) {
                 const metodoPago = await GetMetodoPago(connection, m.idMetodo);
-                await InsertMovimientoFondo(connection, {
-                    idCaja: pago.idCaja, idFondo: metodoPago.idFondo, idEmpresa: pago.idEmpresa,
-                    tipo: 'INGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: idPagoProveedor,
-                    tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
-                    monto: m.monto, descripcion: `Reverso de pago a proveedor #${idPagoProveedor}`, usuario
-                });
+                if (MetodoMueveFondo(metodoPago.tipo)) {
+                    await InsertMovimientoFondo(connection, {
+                        idCaja: pago.idCaja, idFondo: metodoPago.idFondo, idEmpresa: pago.idEmpresa,
+                        tipo: 'INGRESO', origen: 'PAGO_CC_PROVEEDOR', idReferencia: idPagoProveedor,
+                        tipoReferencia: 'COMPRA_PAGO_PROVEEDOR',
+                        monto: m.monto, descripcion: `Reverso de pago a proveedor #${idPagoProveedor}`, usuario
+                    });
+                }
             }
 
             // Contra-asiento por cada aplicación: restaura deuda/saldo inicial o anula el saldo a favor
@@ -828,6 +840,13 @@ async function GetMetodoPago(connection, idMetodoPago: number): Promise<{ idFond
     );
     if (!rows.length) throw new Error(`Método de pago ${idMetodoPago} no encontrado.`);
     return rows[0];
+}
+
+// Tipos de método de pago que NO generan movimientos en Fondos (decisión del cliente: pagos con tarjeta a
+// proveedores no se ven en Fondos). Quedan registrados en las tablas de pagos, pero sin asiento de fondo.
+const TIPOS_METODO_SIN_FONDO = ['TARJETA_PROVEEDOR'];
+export function MetodoMueveFondo(tipo: string): boolean {
+    return !TIPOS_METODO_SIN_FONDO.includes(tipo);
 }
 
 async function GetFondoVirtual(connection, tipo: string): Promise<number> {

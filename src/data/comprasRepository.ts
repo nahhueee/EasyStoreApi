@@ -3,7 +3,7 @@ import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
 import { Compra, DetalleCompra, CompraIva, CompraPercepcionIibb, PagoCompra } from '../models/Compra';
 import { ResultSetHeader } from 'mysql2';
-import { ObtenerSaldoAFavorProveedor } from './comprasCuentasRepository';
+import { ObtenerSaldoAFavorProveedor, MetodoMueveFondo } from './comprasCuentasRepository';
 import { ValidarPiernasCheque, EmitirChequePropio, EndosarValor, RevertirPiernaCheque, PiernaPago } from './chequesRepository';
 const moment = require('moment');
 
@@ -250,17 +250,19 @@ class ComprasRepository {
                     [compra.id, pago.idMetodo, pago.monto, idChequeEmitido, idValorAcreditar]
                 );
 
-                await InsertMovimientoFondo(connection, {
-                    idCaja: compra.idCaja,
-                    idFondo: pago.idFondo,
-                    idEmpresa: compra.idEmpresa,
-                    tipo: pago.tipo === 'CUENTA_CORRIENTE_PROVEEDOR' ? 'INGRESO' : 'EGRESO',
-                    origen: 'PAGO_PROVEEDOR',
-                    idReferencia: compra.id,
-                    monto: pago.monto,
-                    descripcion: `Compra #${compra.id}`,
-                    usuario
-                });
+                if (MetodoMueveFondo(pago.tipo)) {
+                    await InsertMovimientoFondo(connection, {
+                        idCaja: compra.idCaja,
+                        idFondo: pago.idFondo,
+                        idEmpresa: compra.idEmpresa,
+                        tipo: pago.tipo === 'CUENTA_CORRIENTE_PROVEEDOR' ? 'INGRESO' : 'EGRESO',
+                        origen: 'PAGO_PROVEEDOR',
+                        idReferencia: compra.id,
+                        monto: pago.monto,
+                        descripcion: `Compra #${compra.id}`,
+                        usuario
+                    });
+                }
             }
 
             await connection.commit();
@@ -337,17 +339,19 @@ class ComprasRepository {
                 const metodoPago = await GetMetodoPago(connection, pago.idMetodoPago);
                 const esCuentaCorriente = metodoPago.tipo === 'CUENTA_CORRIENTE_PROVEEDOR';
 
-                await InsertMovimientoFondo(connection, {
-                    idCaja: compraActual.idCaja,
-                    idFondo: metodoPago.idFondo,
-                    idEmpresa: compraActual.idEmpresa,
-                    tipo: esCuentaCorriente ? 'EGRESO' : 'INGRESO',
-                    origen: 'PAGO_PROVEEDOR', // mismo origen que el movimiento original (ver Agregar); la dirección la marca "tipo", no "origen" (igual criterio que NOTA_CREDITO en ventasRepository).
-                    idReferencia: compra.id,
-                    monto: Number(pago.monto),
-                    descripcion: `Reverso por baja de compra #${compra.id}`,
-                    usuario
-                });
+                if (MetodoMueveFondo(metodoPago.tipo)) {
+                    await InsertMovimientoFondo(connection, {
+                        idCaja: compraActual.idCaja,
+                        idFondo: metodoPago.idFondo,
+                        idEmpresa: compraActual.idEmpresa,
+                        tipo: esCuentaCorriente ? 'EGRESO' : 'INGRESO',
+                        origen: 'PAGO_PROVEEDOR', // mismo origen que el movimiento original (ver Agregar); la dirección la marca "tipo", no "origen" (igual criterio que NOTA_CREDITO en ventasRepository).
+                        idReferencia: compra.id,
+                        monto: Number(pago.monto),
+                        descripcion: `Reverso por baja de compra #${compra.id}`,
+                        usuario
+                    });
+                }
             }
 
             await connection.query("UPDATE compras SET baja = ?, observacionBaja = ?, usuarioBaja = ? WHERE id = ?", [moment().format('YYYY-MM-DD HH:mm'), motivo, usuario, compra.id]);
