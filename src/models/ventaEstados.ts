@@ -35,7 +35,7 @@ export enum IdProceso {
  * MOTIVOS_SIN_PRODUCTOS en el front (venta.constants.ts): el motivo elegido se guarda en
  * `ventas.observacion` y es lo que identifica a una Factura de adelanto (ver ventasAdelantos.ts).
  */
-export const MOTIVOS_SIN_PRODUCTOS = ['Adelanto de producción', 'Saldo orden de compra', 'Embajadores-premios', 'Camisas y pantalones'] as const;
+export const MOTIVOS_SIN_PRODUCTOS = ['Adelanto de producción', 'Saldo orden de compra', 'Embajadores-premios', 'Camisas'] as const;
 
 export enum TipoItemVenta {
     CATALOGO = "CATALOGO",
