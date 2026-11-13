@@ -2545,6 +2545,24 @@ export async function GetMetodoPago(connection, idMetodoPago): Promise<{ idFondo
     return { idFondo: rows[0].idFondo, tipo: rows[0].tipo };
 }
 
+// Tipos de metodos_pago que se pueden usar para COBRARLE a un cliente. El resto de los
+// valores del ENUM (TARJETA_PROVEEDOR, CHEQUE_PROPIO, *_PROVEEDOR) son de Compras: si
+// llegan a un cobro de cliente no entran al circuito de Valores a Acreditar y la plata
+// cae directo en el fondo del método (bug real, nov-2026: cobro de $414.000 cargado con
+// "Tarjeta de crédito" TARJETA_PROVEEDOR terminó en el fondo 15). Lista blanca a
+// propósito: un tipo nuevo del ENUM queda bloqueado hasta habilitarlo acá.
+// Va en los puntos de ALTA de cobros; no en GetMetodoPago, que también se usa al
+// revertir/dar de baja pagos viejos y no debe impedir corregir datos históricos.
+export const TIPOS_METODO_COBRO_CLIENTE = [
+    'CHEQUE', 'CREDITO', 'DEBITO', 'TRANSFERENCIA', 'EFECTIVO', 'DIGITAL', 'CUENTA_CORRIENTE', 'SALDO_FAVOR'
+];
+
+export function AsegurarMetodoCobroCliente(tipo: string, idMetodoPago: number): void {
+    if (!TIPOS_METODO_COBRO_CLIENTE.includes(tipo)) {
+        throw new Error(`El método de pago ${idMetodoPago} (tipo ${tipo}) no es válido para cobros a clientes.`);
+    }
+}
+
 // Resuelve el método de pago "Saldo a Favor" de una empresa por tipo (no por id
 // fijo): metodos_pago está scopeado por empresa, cada una tiene su propia fila
 // con un id distinto (mismo criterio ya usado para CUENTA_CORRIENTE en
@@ -3157,6 +3175,7 @@ async function InsertPagoVenta(connection, pago): Promise<number> {
         // #98 (empresa 5), y Venta #109 (Club Náutico San Isidro) con impaga mal
         // calculado por el mismo desacople - corregido 07/2026.
         const { tipo } = await GetMetodoPago(connection, pago.idMetodo);
+        AsegurarMetodoCobroCliente(tipo, pago.idMetodo);
         const idRecibo = tipo === 'CUENTA_CORRIENTE' ? null : pago.idRecibo;
 
         const consulta = " INSERT INTO ventas_pagos(idVenta, idMetodo, idRecibo, monto) " +

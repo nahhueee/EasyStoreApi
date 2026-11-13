@@ -5,7 +5,7 @@ import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
 import { CuentaCorriente, VentasClienteCuenta } from '../models/CuentaCorriente';
 import { MovimientoFondo } from '../models/MovimientoFondo';
-import { GetMetodoPago, GetIdFondoValoresAcreditar, GetIdFondoRetenciones, InsertValorAcreditar, InsertCheque, InsertRetencion } from './ventasRepository';
+import { GetMetodoPago, AsegurarMetodoCobroCliente, GetIdFondoValoresAcreditar, GetIdFondoRetenciones, InsertValorAcreditar, InsertCheque, InsertRetencion } from './ventasRepository';
 import { SQL_PROCESOS_CON_SALDO, IdProceso, TIPO_RELACIONADO_ENTREGA_SIN_CARGO } from '../models/ventaEstados';
 
 // Retención sufrida (Ganancias/IIBB/SUSS) al cobrar. Hoy solo se habilita en la UI
@@ -557,6 +557,7 @@ class CuentasRepository{
             // (no uno por cada venta que cancela) porque operativamente es un único
             // cheque/cupón físico, aunque internamente se reparta entre varias ventas.
             const { idFondo: idFondoDestino, tipo } = await GetMetodoPago(connection, data.idMetodo);
+            AsegurarMetodoCobroCliente(tipo, data.idMetodo);
             const esValorAcreditar = ['CHEQUE', 'CREDITO'].includes(tipo);
             const idFondoValores = esValorAcreditar ? await GetIdFondoValoresAcreditar(connection) : null;
 
@@ -1466,6 +1467,7 @@ class CuentasRepository{
                 );
 
                 const { idFondo: idFondoDestino, tipo } = await GetMetodoPago(connection, element.idMetodo);
+                AsegurarMetodoCobroCliente(tipo, element.idMetodo);
 
                 // Sale de cuenta corriente (esto pasa siempre, sea cual sea el método,
                 // por el total incluyendo la retención)
