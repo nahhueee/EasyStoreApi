@@ -1255,6 +1255,7 @@ class VentasRepository{
         // Misma idea para una Nota de Empaque (oct-2026): se factura tal cual fue aprobada.
         const errorPresupuesto = await ValidarFacturacionDePresupuesto(connection, venta)
             ?? await ValidarFacturacionDeNotaEmpaque(connection, venta)
+            ?? await ValidarFacturacionDePedido(connection, venta)
             ?? await ValidarNotaCreditoSobreAdelanto(connection, venta);
         if (errorPresupuesto) {
             connection.release();
@@ -1767,6 +1768,7 @@ class VentasRepository{
     async ValidarPresupuestoParaFacturar(connection: PoolConnection, venta: Venta): Promise<string | null> {
         return (await ValidarFacturacionDePresupuesto(connection, venta))
             ?? (await ValidarFacturacionDeNotaEmpaque(connection, venta))
+            ?? (await ValidarFacturacionDePedido(connection, venta))
             ?? (await ValidarNotaCreditoSobreAdelanto(connection, venta));
     }
 
@@ -2747,6 +2749,66 @@ async function ValidarFacturacionDePresupuesto(connection, venta:Venta): Promise
         const restantes = esperadosServicio.get(k);
         if (!restantes) return `Los servicios no coinciden con el presupuesto Nro ${venta.nroRelacionado}. Un presupuesto se factura tal cual fue aprobado.`;
         esperadosServicio.set(k, restantes - 1);
+    }
+
+    return null;
+}
+
+// Pedido (nov-2026, caso Pedido 453 cerrado por la Factura 554, que no tenía ningún producto del
+// Pedido): hasta acá facturar con tipoRelacionado=PEDIDO no validaba nada, y
+// ActualizarEstadoRelacionado cierra el Pedido por nroProceso a ciegas. Se valida solo lo
+// estructural: que el Pedido exista, esté abierto (Aprobado, sin baja) y sea del mismo cliente.
+// NO se validan ítems ni importes: el precio de un Pedido se negocia al facturar y es habitual
+// facturar con ajustes o por una parte (ver comentario de ValidarFacturacionDePresupuesto).
+// Si la factura no comparte ningún producto con el Pedido se deja un log (no bloquea), para
+// tener evidencia si vuelve a aparecer una relación espuria.
+// null si está OK, o el mensaje de error si no.
+async function ValidarFacturacionDePedido(connection, venta:Venta): Promise<string | null> {
+    const esFacturaDesdePedido =
+        venta.tipoRelacionado === TipoRelacionado.PEDIDO &&
+        [IdProceso.FACTURA, IdProceso.COTIZACION].includes(venta.idProceso!);
+
+    if (!esFacturaDesdePedido || !venta.nroRelacionado) return null;
+
+    const [pedidos]: any = await connection.query(
+        `SELECT id, estado, idCliente FROM ventas WHERE idProceso = ${IdProceso.PEDIDO} AND nroProceso = ? AND fechaBaja IS NULL ORDER BY id DESC LIMIT 1`,
+        [venta.nroRelacionado]
+    );
+    if (!Array.isArray(pedidos) || pedidos.length === 0)
+        return `No se encontró el pedido Nro ${venta.nroRelacionado} que se quiere facturar.`;
+
+    const pedido = pedidos[0];
+
+    // Un Pedido ya Facturado/Asociado no se vuelve a facturar, salvo que sea esta misma venta
+    // guardándose de nuevo (editar una factura que ya quedó relacionada a él).
+    if (pedido.estado !== EstadoVenta.APROBADO) {
+        let yaRelacionado = false;
+        if (venta.id) {
+            const [previa]: any = await connection.query(
+                "SELECT id FROM ventas WHERE id = ? AND nroRelacionado = ? AND tipoRelacionado = ?",
+                [venta.id, venta.nroRelacionado, TipoRelacionado.PEDIDO]
+            );
+            yaRelacionado = Array.isArray(previa) && previa.length > 0;
+        }
+        if (!yaRelacionado)
+            return `El pedido Nro ${venta.nroRelacionado} está ${pedido.estado}: solo se puede facturar un pedido Aprobado.`;
+    }
+
+    if (Number(pedido.idCliente ?? 0) !== Number(venta.cliente?.id ?? 0))
+        return `El cliente no coincide con el del pedido Nro ${venta.nroRelacionado}. Un pedido se factura al mismo cliente con el que fue cargado.`;
+
+    // Evidencia, no validación: el log nunca puede hacer fallar el guardado.
+    try {
+        const [lineasPedido]: any = await connection.query(
+            "SELECT DISTINCT idProducto FROM ventas_productos WHERE idVenta = ? AND idProducto IS NOT NULL",
+            [pedido.id]
+        );
+        const idsPedido = new Set<number>((lineasPedido ?? []).map((l: any) => Number(l.idProducto)));
+        const idsFactura = (venta.productos ?? []).map(p => Number(p.idProducto)).filter(id => !!id);
+        if (idsPedido.size > 0 && idsFactura.length > 0 && !idsFactura.some(id => idsPedido.has(id)))
+            console.warn(`[pedido cerrado sin productos en común] pedido nro=${venta.nroRelacionado} (id=${pedido.id}) cerrado por idProceso=${venta.idProceso} del cliente ${venta.cliente?.id}: ningún producto de la venta está en el pedido`);
+    } catch (errorLog) {
+        console.warn('[pedido cerrado sin productos en común] no se pudo evaluar', errorLog);
     }
 
     return null;
