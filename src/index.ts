@@ -121,6 +121,7 @@ import comprasCuentasRuta from './routes/comprasCuentasRoute';
 import chequesRuta from './routes/chequesRoute';
 import stockRuta from './routes/stockRoute';
 import feEmisionesRuta from './routes/feEmisionesRoute';
+import catalogosRuta from './routes/catalogosRoute';
 
 const base = config.servidor;
 app.use(`${base}/update`, actualizacionRuta)
@@ -149,6 +150,7 @@ app.use(`${base}/compras-cuentas`, comprasCuentasRuta);
 app.use(`${base}/cheques-emitidos`, chequesRuta);
 app.use(`${base}/stock`, stockRuta);
 app.use(`${base}/fe-emisiones`, feEmisionesRuta);
+app.use(`${base}/catalogos`, catalogosRuta);
 
 // AdminServer Route
 import adminServerRuta from './routes/adminRoute';

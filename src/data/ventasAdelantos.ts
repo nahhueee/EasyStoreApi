@@ -5,7 +5,8 @@
 import { PoolConnection } from 'mysql2/promise';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
-import { IdProceso, MOTIVOS_SIN_PRODUCTOS, TipoItemVenta } from '../models/ventaEstados';
+import { IdProceso, TipoItemVenta } from '../models/ventaEstados';
+import { TipoComprobante } from '../models/objFacturar';
 import { AdelantoVenta, Venta } from '../models/Venta';
 
 // NC fiscales A/B/C (ver TipoComprobante en ObjFacturar.ts). Una NC interna (X) no anula la factura.
@@ -17,12 +18,13 @@ const COTA_SANIDAD_TOTAL_NE = 1.21;
 
 // Criterio ÚNICO de "factura de adelanto" (alias `v` = ventas): Factura fiscal ya emitida, con
 // UNA sola línea no catalogada y sin servicios (así la deja el check "Sin productos o servicios"
-// de addmod-ventas), con uno de los motivos fijos, sin baja y sin NC fiscal asociada.
-// Los `?` son los motivos: pasar [...MOTIVOS_SIN_PRODUCTOS] al final de los parámetros de su posición.
+// de addmod-ventas), con uno de los motivos de motivos_sin_productos, sin baja y sin NC fiscal asociada.
+// El motivo se cruza SIN filtrar motivos_sin_productos.fechaBaja a propósito: dar de baja un motivo solo deja de
+// ofrecerlo, no le quita a los adelantos ya emitidos su condición de adelanto. No lleva parámetros `?`.
 const SQL_ES_ADELANTO = `
     v.idProceso = ${IdProceso.FACTURA}
     AND v.fechaBaja IS NULL
-    AND v.observacion IN (${MOTIVOS_SIN_PRODUCTOS.map(() => '?').join(', ')})
+    AND v.observacion IN (SELECT descripcion FROM motivos_sin_productos)
     AND EXISTS (SELECT 1 FROM ventas_factura vf0 WHERE vf0.idVenta = v.id)
     AND (SELECT COUNT(*) FROM ventas_productos vp WHERE vp.idVenta = v.id) = 1
     AND (SELECT COUNT(*) FROM ventas_productos vp WHERE vp.idVenta = v.id AND vp.tipoItem = '${TipoItemVenta.PRESUPUESTO}') = 1
@@ -66,7 +68,7 @@ export async function AdelantosDisponibles(connection: PoolConnection, idCliente
            AND (a.idNE IS NULL OR a.idNE = ?)
            AND ${SQL_ES_ADELANTO}
          ORDER BY v.fecha DESC, v.id DESC`,
-        [idCliente, idNE ?? 0, ...MOTIVOS_SIN_PRODUCTOS]
+        [idCliente, idNE ?? 0]
     );
     return (rows as any[]).map(mapear);
 }
@@ -118,6 +120,46 @@ export async function ValidarNotaCreditoSobreAdelanto(connection: PoolConnection
     return `La factura Nro ${venta.nroRelacionado} es un adelanto vinculado a la nota de empaque Nro ${rows[0].nroNE}: no se le puede emitir una nota de crédito. Primero desvinculala de la nota de empaque.`;
 }
 
+// Factura o NC X "sin productos o servicios" (ver el check homónimo de addmod-ventas y de nota-credito-x): un
+// importe libre con motivo y sin mercadería. El payload no trae un flag, se reconoce por su forma:
+//  - NC X: sin productos ni servicios.
+//  - Factura: una sola línea no catalogada (la que arma addmod-ventas), sin servicios y sin documento relacionado
+//    (una línea no catalogada CON relacionado es un Presupuesto facturado, no un adelanto).
+function EsComprobanteSinProductos(venta: Venta): boolean {
+    const productos = venta.productos ?? [];
+    const servicios = venta.servicios ?? [];
+
+    if (venta.idProceso === IdProceso.NOTA_CREDITO)
+        return venta.idTipoComprobante === TipoComprobante.NC_X && productos.length === 0 && servicios.length === 0;
+
+    if (venta.idProceso === IdProceso.FACTURA)
+        return !venta.nroRelacionado && productos.length === 1 && productos[0].tipoItem === TipoItemVenta.PRESUPUESTO && servicios.length === 0;
+
+    return false;
+}
+
+// Una Factura o NC X sin productos solo puede llevar como motivo uno ACTIVO de motivos_sin_productos. El front solo
+// ofrece los activos, pero el POST se puede armar a mano: esta es la validación real. Devuelve el mensaje de error
+// (mismo contrato que ValidarNotaCreditoSobreAdelanto) o null si está todo bien. No se valida en Modificar: editar
+// la fecha o el punto de venta de un adelanto histórico cuyo motivo ya está de baja tiene que seguir siendo posible.
+export async function ValidarMotivoSinProductos(connection: PoolConnection, venta: Venta): Promise<string | null> {
+    if (!EsComprobanteSinProductos(venta)) return null;
+
+    const motivo = venta.observacion ?? '';
+    const [rows]: any = await connection.query(
+        "SELECT descripcion FROM motivos_sin_productos WHERE descripcion = ? AND fechaBaja IS NULL LIMIT 1",
+        [motivo]
+    );
+
+    // La collation de la tabla no distingue mayúsculas ni acentos: se exige el texto EXACTO para que lo que queda
+    // en ventas.observacion sea idéntico al del catálogo.
+    if (Array.isArray(rows) && rows.length > 0 && rows[0].descripcion === motivo) return null;
+
+    return motivo.trim() === ''
+        ? 'Elegí un motivo para el comprobante sin productos o servicios.'
+        : `El motivo "${motivo}" no existe o está dado de baja. Elegí uno de la lista.`;
+}
+
 function error(mensaje: string, idNE?: number): AppError {
     return new AppError(CodigoError.VALIDACION, mensaje, 409, { modulo: 'VentasAdelantos', metodo: 'GuardarAdelantosNE', idNE });
 }
@@ -144,7 +186,7 @@ export async function GuardarAdelantosNE(connection: PoolConnection, venta: Vent
          LEFT JOIN ventas_adelantos a ON a.idFactura = v.id
          WHERE v.id IN (?) AND ${SQL_ES_ADELANTO}
          FOR UPDATE`,
-        [ids, ...MOTIVOS_SIN_PRODUCTOS]
+        [ids]
     );
 
     if ((filas as any[]).length !== ids.length)

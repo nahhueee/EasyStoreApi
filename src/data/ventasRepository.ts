@@ -8,7 +8,7 @@ import { PoolConnection } from 'mysql2/promise';
 import { AppError } from '../logger/AppError';
 import { CodigoError } from '../logger/CodigosError';
 import { Cliente } from '../models/Cliente';
-import { AdelantosDisponibles, AdelantosDeNE, AdelantosDeNEPorNro, GuardarAdelantosNE, ValidarNotaCreditoSobreAdelanto } from './ventasAdelantos';
+import { AdelantosDisponibles, AdelantosDeNE, AdelantosDeNEPorNro, GuardarAdelantosNE, ValidarNotaCreditoSobreAdelanto, ValidarMotivoSinProductos } from './ventasAdelantos';
 import { ResolverEstadoRelacionado, IdProceso, EstadoVenta, puedeDarseDeBaja, TipoItemVenta, TipoRelacionado, esProcesoDeCierre, puedeEditarseNotaEmpaque, SQL_METODO_PAGO_CASE, SQL_LISTA_PRECIO_NETO, SQL_PUNTO_VENTA_COMPROBANTE, SQL_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_RECARGO_TRANSFERENCIA, DESCRIPCION_ITEM_ADELANTO, MotivoEntregaSinCargo, TIPO_RELACIONADO_ENTREGA_SIN_CARGO } from '../models/ventaEstados';
 import { TipoComprobante } from '../models/objFacturar';
 import { analizarTalle } from '../services/excelConciliacionService';
@@ -1256,7 +1256,8 @@ class VentasRepository{
         const errorPresupuesto = await ValidarFacturacionDePresupuesto(connection, venta)
             ?? await ValidarFacturacionDeNotaEmpaque(connection, venta)
             ?? await ValidarFacturacionDePedido(connection, venta)
-            ?? await ValidarNotaCreditoSobreAdelanto(connection, venta);
+            ?? await ValidarNotaCreditoSobreAdelanto(connection, venta)
+            ?? await ValidarMotivoSinProductos(connection, venta);
         if (errorPresupuesto) {
             connection.release();
             // Se lanza (antes se devolvía el texto con HTTP 200): el front tomaba el string como
@@ -1769,7 +1770,8 @@ class VentasRepository{
         return (await ValidarFacturacionDePresupuesto(connection, venta))
             ?? (await ValidarFacturacionDeNotaEmpaque(connection, venta))
             ?? (await ValidarFacturacionDePedido(connection, venta))
-            ?? (await ValidarNotaCreditoSobreAdelanto(connection, venta));
+            ?? (await ValidarNotaCreditoSobreAdelanto(connection, venta))
+            ?? (await ValidarMotivoSinProductos(connection, venta));
     }
 
     // F4.3 - HANDOFF blindaje facturacion y logs. Persiste la venta de un pendiente
