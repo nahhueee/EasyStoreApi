@@ -1161,9 +1161,9 @@ class VentasRepository{
 
 
         // Reservas de stock (oct-2026): antes de descontar, se valida que el stock no esté reservado
-        // por una NE/Pedido Aprobado de otro cliente. Mismas condiciones que el descuento de abajo; no
+        // por una NE Aprobada de otro cliente. Mismas condiciones que el descuento de abajo; no
         // corre en Regularizar (permitirNegativo): un CAE ya emitido manda sobre el stock. Si la venta
-        // sale de un Pedido/NE, solo se exige disponible por el excedente sobre lo que ese documento
+        // sale de una NE, solo se exige disponible por el excedente sobre lo que ese documento
         // ya tenía reservado (ver ValidarDisponibleReservas).
         const descuentaStockAhora = facturando
             || (venta.idProceso == IdProceso.COTIZACION && venta.estado == EstadoVenta.FINALIZADA)
@@ -1805,7 +1805,7 @@ class VentasRepository{
             await connection.beginTransaction();
 
             // Aprobar RESERVA stock (oct-2026): se valida que haya disponible (stock físico menos lo
-            // reservado por Pedidos y otras NE Aprobadas) antes de pasar a Aprobada. Va en
+            // reservado por otras NE Aprobadas) antes de pasar a Aprobada. Va en
             // transacción y con locks (fila de la NE, sus ítems y el stock de los talles) para que
             // dos aprobaciones simultáneas de la misma prenda no pasen las dos. La primera lectura
             // tiene que ser con lock (ver ValidarDisponibleReservas).

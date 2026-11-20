@@ -370,8 +370,8 @@ class ProductosRepository{
     }
 
     // Unidades reservadas por talle de un producto: suma de los documentos vigentes que reservan
-    // stock (ver ESTADO_QUE_RESERVA_STOCK: Pedido Aprobado y Nota de Empaque Aprobada, sin
-    // fechaBaja). Fuente ÚNICA del cálculo de reservas - la usan el "disponible" que ve el front y
+    // stock (ver ESTADO_QUE_RESERVA_STOCK: hoy solo la Nota de Empaque Aprobada, sin
+    // fechaBaja; el Pedido no reserva desde nov-2026). Fuente ÚNICA del cálculo de reservas - la usan el "disponible" que ve el front y
     // (próximas fases) la validación al aprobar una NE y al descontar stock. `executor` es una
     // conexión (idealmente la de la transacción, para que el cálculo corra dentro del mismo lock) o
     // el pool. `excluirVenta` deja afuera un documento puntual (ej. la NE que se está editando);
@@ -415,9 +415,9 @@ class ProductosRepository{
         return reservado;
     }
 
-    // Id del Pedido / Nota de Empaque desde el que sale una venta (nroRelacionado + tipoRelacionado),
-    // solo si ese tipo de documento reserva stock. Un Presupuesto o una venta sin relación devuelven
-    // undefined. Se resuelve por (idProceso, nroProceso), igual que ActualizarEstadoRelacionado.
+    // Id de la Nota de Empaque desde la que sale una venta (nroRelacionado + tipoRelacionado), solo si
+    // ese tipo de documento reserva stock. Un Pedido (no reserva, no cubre nada), un Presupuesto o una
+    // venta sin relación devuelven undefined. Se resuelve por (idProceso, nroProceso), igual que ActualizarEstadoRelacionado.
     async ObtenerIdOrigenReserva(executor: { query: (sql: string, params?: any[]) => Promise<any> },
                                  nroRelacionado?: number, tipoRelacionado?: string): Promise<number | undefined> {
         if (!nroRelacionado) return undefined;
@@ -437,9 +437,9 @@ class ProductosRepository{
     //
     // Opciones:
     //  - excluirVenta: el propio documento, para que no se descuente a sí mismo.
-    //  - origenReserva: id del Pedido/NE desde el que se factura. Lo que ese documento YA reservó
+    //  - origenReserva: id de la NE desde la que se factura. Lo que ese documento YA reservó
     //    para el mismo talle no se vuelve a exigir contra el disponible (quedó garantizado cuando
-    //    se aprobó; si no, un Pedido sobre-comprometido nunca se podría facturar). Solo se valida
+    //    se aprobó la NE). Solo se valida
     //    el excedente: unidades que se facturan por encima de lo que reservaba el origen. Lo que sí
     //    sigue exigiendo siempre el stock FÍSICO es ActualizarInventario.
     //  - bloquear (default true): toma FOR UPDATE sobre talles_producto; en false es de solo
@@ -520,7 +520,7 @@ class ProductosRepository{
         if (faltantes.length > 0) {
             throw new AppError(
                 CodigoError.STOCK_INSUFICIENTE,
-                `No hay stock disponible (descontadas las reservas de notas de empaque y pedidos): ${faltantes.join('; ')}.`,
+                `No hay stock disponible (descontadas las reservas de notas de empaque aprobadas): ${faltantes.join('; ')}.`,
                 409,
                 { modulo: 'ProductosRepository', metodo: 'ValidarDisponibleReservas', excluirVenta, origenReserva, faltantes }
             );
@@ -528,9 +528,9 @@ class ProductosRepository{
     }
 
     // Stock físico y disponible por talle. disponible = cantidad - reservado, y se muestra en 0 si
-    // las reservas superan el stock (los Pedidos pueden reservar de más: son venta a futuro). Antes
-    // solo descontaba Pedidos Aprobados; ahora descuenta todo lo que reserva (ver
-    // ObtenerReservadoPorTalle). Un Pedido ya facturado (estado Facturado) o dado de baja deja de
+    // las reservas superan el stock (puede pasar si el stock físico baja después de aprobar una NE).
+    // Descuenta todo lo que reserva (ver ObtenerReservadoPorTalle). Una NE ya facturada (estado
+    // Facturada) o dada de baja deja de
     // reservar: el filtro de estado/fechaBaja evita contar dos veces unidades que ya descontaron
     // stock real (bug sep-2026, producto 827 / PLL LUCRECIA).
     async ObtenerStockDisponiblePorProducto(idProducto, excluirVenta?: number) {
@@ -1073,9 +1073,9 @@ class ProductosRepository{
                 }
             }
 
-            // Reservas de NE/Pedidos Aprobados (misma regla que al guardar, de solo lectura): el stock
-            // físico alcanza pero puede estar reservado para otro documento. Si la venta sale de un
-            // Pedido/NE, lo que ese documento ya reservó no se vuelve a exigir.
+            // Reservas de NE Aprobadas (misma regla que al guardar, de solo lectura): el stock
+            // físico alcanza pero puede estar reservado para otro documento. Si la venta sale de una
+            // NE, lo que ese documento ya reservó no se vuelve a exigir.
             const origen = await this.ObtenerIdOrigenReserva(connection, relacion?.nroRelacionado, relacion?.tipoRelacionado);
             await this.ValidarDisponibleReservas(connection, productos, { origenReserva: origen, bloquear: false });
         } finally {
