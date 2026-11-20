@@ -1081,6 +1081,13 @@ class VentasRepository{
         // Devolución de entrega: valida contra la ESC (con lock de su fila, dentro de la transacción) y
         // fuerza los campos; ver ValidarYNormalizarDevolucionEntrega.
         if (venta.idProceso === IdProceso.DEVOLUCION_ENTREGA) await ValidarYNormalizarDevolucionEntrega(connection, venta);
+        // Nota de Empaque armada desde un Pedido (nov-2026): se valida acá, dentro de la transacción y con
+        // lock sobre el Pedido, para que dos NE simultáneas no tomen el mismo Pedido.
+        if (venta.idProceso === IdProceso.NOTA_EMPAQUE) {
+            const errorPedido = await ValidarNotaEmpaqueDesdePedido(connection, venta);
+            if (errorPedido)
+                throw new AppError(CodigoError.VALIDACION, errorPedido, 409, { modulo: 'VentasRepository', metodo: 'AgregarBody', nroRelacionado: venta.nroRelacionado });
+        }
         // Obtenemos el proximo nro de venta e insertamos, con reintento si choca
         // contra UNIQUE(idProceso, nroProceso). El FOR UPDATE de abajo debería
         // alcanzar solo para serializar guardados concurrentes, pero en
@@ -1510,7 +1517,7 @@ class VentasRepository{
         const connection = await db.getConnection();
         try {
             const [[venta]]: any = await connection.query(
-                "SELECT idProceso, estado, fechaBaja FROM ventas WHERE id = ?",
+                "SELECT idProceso, estado, fechaBaja, idCliente, nroRelacionado, tipoRelacionado FROM ventas WHERE id = ?",
                 [idVenta]
             );
 
@@ -1534,6 +1541,13 @@ class VentasRepository{
                 );
                 if (venta.idProceso === IdProceso.NOTA_EMPAQUE)
                     await connection.query("DELETE FROM ventas_adelantos WHERE idNE = ?", [idVenta]);
+                // NE armada desde un Pedido (nov-2026): el Pedido vuelve a Aprobado para poder usarse de nuevo.
+                // Se filtra por cliente y por estado Relacionado (nroProceso solo no alcanza, hubo duplicados).
+                if (venta.idProceso === IdProceso.NOTA_EMPAQUE && venta.tipoRelacionado === TipoRelacionado.PEDIDO && venta.nroRelacionado)
+                    await connection.query(
+                        "UPDATE ventas SET estado = ? WHERE idProceso = ? AND nroProceso = ? AND idCliente = ? AND estado = ? AND fechaBaja IS NULL",
+                        [EstadoVenta.APROBADO, IdProceso.PEDIDO, venta.nroRelacionado, venta.idCliente, EstadoVenta.RELACIONADO]
+                    );
                 await connection.commit();
             } catch (e) {
                 await connection.rollback();
@@ -1587,6 +1601,11 @@ class VentasRepository{
             // Modificar una NE (incluso una ya Aprobada) la devuelve a Pendiente: hay que
             // volver a controlarla. Se fuerza acá aunque el front ya lo mande.
             venta.estado = EstadoVenta.PENDIENTE;
+
+            // Si la NE sale de un Pedido (nov-2026) sigue siendo una copia fiel de él (ítems y cliente).
+            const errorPedido = await ValidarNotaEmpaqueDesdePedido(connection, venta);
+            if (errorPedido)
+                throw new AppError(CodigoError.VALIDACION, errorPedido, 409, { modulo: 'VentasRepository', metodo: 'ModificarBody', idVenta: venta.id, nroRelacionado: venta.nroRelacionado });
         }
 
         //Insertamos la venta
@@ -2812,6 +2831,72 @@ async function ValidarFacturacionDePedido(connection, venta:Venta): Promise<stri
     } catch (errorLog) {
         console.warn('[pedido cerrado sin productos en común] no se pudo evaluar', errorLog);
     }
+
+    return null;
+}
+
+// Nota de Empaque armada desde un Pedido (nov-2026): la NE es una conversión FIEL del Pedido, igual que
+// la Factura lo es de la NE (el bloqueo del front es solo UI). Reglas, con lock de la fila del Pedido:
+//  1. El Pedido tiene que estar Aprobado. Excepción: re-guardado de la misma NE que ya lo relacionó
+//     (el Pedido quedó Relacionado). Esto corta que dos NE tomen el mismo Pedido.
+//  2. Mismo cliente que el Pedido y mismos ítems (producto + cantidad + talles) y servicios. No se
+//     compara el precio. Para cambiar algo se da de baja la NE (el Pedido vuelve a Aprobado) o se
+//     corrige el Pedido antes. null si está OK, o el mensaje de error si no.
+async function ValidarNotaEmpaqueDesdePedido(connection, venta: Venta): Promise<string | null> {
+    const esNotaDesdePedido =
+        venta.idProceso === IdProceso.NOTA_EMPAQUE && venta.tipoRelacionado === TipoRelacionado.PEDIDO;
+    if (!esNotaDesdePedido || !venta.nroRelacionado) return null;
+
+    const [pedidos]: any = await connection.query(
+        `SELECT id, estado, idCliente FROM ventas WHERE idProceso = ${IdProceso.PEDIDO} AND nroProceso = ? AND fechaBaja IS NULL ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+        [venta.nroRelacionado]
+    );
+    if (!Array.isArray(pedidos) || pedidos.length === 0)
+        return `No se encontró el pedido Nro ${venta.nroRelacionado} desde el que se quiere armar la nota de empaque.`;
+    const pedido = pedidos[0];
+
+    if (pedido.estado !== EstadoVenta.APROBADO) {
+        let yaRelacionado = false;
+        if (venta.id) {
+            const [previa]: any = await connection.query(
+                "SELECT id FROM ventas WHERE id = ? AND nroRelacionado = ? AND tipoRelacionado = ?",
+                [venta.id, venta.nroRelacionado, TipoRelacionado.PEDIDO]
+            );
+            yaRelacionado = Array.isArray(previa) && previa.length > 0;
+        }
+        if (!yaRelacionado)
+            return `El pedido Nro ${venta.nroRelacionado} está ${pedido.estado}: solo se puede armar una nota de empaque desde un pedido Aprobado.`;
+    }
+
+    if (Number(pedido.idCliente ?? 0) !== Number(venta.cliente?.id ?? 0))
+        return `El cliente no coincide con el del pedido Nro ${venta.nroRelacionado}. La nota de empaque se arma para el mismo cliente del pedido.`;
+
+    const mensajeItems = `Los ítems no coinciden con el pedido Nro ${venta.nroRelacionado}. La nota de empaque es una copia fiel del pedido: si hay que cambiar algo, corrija el pedido o dé de baja la nota y vuelva a armarla.`;
+    const [lineasOrigen]: any = await connection.query(
+        "SELECT idProducto, cantidad, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 FROM ventas_productos WHERE idVenta = ?", [pedido.id]);
+    const [serviciosOrigen]: any = await connection.query(
+        "SELECT idServicio, cantidad FROM ventas_servicios WHERE idVenta = ?", [pedido.id]);
+    const enviados = venta.productos ?? [];
+    const serviciosEnviados = venta.servicios ?? [];
+    if (enviados.length !== (lineasOrigen as any[]).length || serviciosEnviados.length !== (serviciosOrigen as any[]).length)
+        return mensajeItems;
+
+    // Comparación por contenido, no por orden (el front puede reordenar la grilla).
+    const contenidoCoincide = (origen: any[], recibidos: any[], clave: (x: any) => string): boolean => {
+        const esperados = new Map<string, number>();
+        for (const o of origen) esperados.set(clave(o), (esperados.get(clave(o)) ?? 0) + 1);
+        for (const r of recibidos) {
+            const restantes = esperados.get(clave(r));
+            if (!restantes) return false;
+            esperados.set(clave(r), restantes - 1);
+        }
+        return true;
+    };
+    const claveProducto = (x: any) =>
+        `${x.idProducto ?? 'null'}|${Number(x.cantidad ?? 0)}|${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(i => Number(x[`t${i}`] ?? 0)).join(',')}`;
+    const claveServicio = (x: any) => `${x.idServicio ?? 'null'}|${Number(x.cantidad ?? 0)}`;
+    if (!contenidoCoincide(lineasOrigen, enviados, claveProducto) || !contenidoCoincide(serviciosOrigen, serviciosEnviados, claveServicio))
+        return mensajeItems;
 
     return null;
 }

@@ -64,6 +64,8 @@ export enum EstadoVenta {
     // comprobante ni cobro). Si en cambio el Presupuesto se factura directo
     // (Factura/Cotización), el cierre es real y pasa a FACTURADO (ver
     // RELACION_CIERRE) - ago-2026, antes los dos casos quedaban mezclados acá.
+    // Desde nov-2026 también es el estado del Pedido usado para armar una Nota de Empaque (ver
+    // ResolverEstadoRelacionado).
     RELACIONADO = "Relacionado",
 
     FACTURADO = "Facturado",
@@ -134,6 +136,12 @@ export function ResolverEstadoRelacionado(idProcesoVenta?: number, tipoRelaciona
 
     const relacion = RELACION_PROCESO[tipoRelacionado as TipoRelacionado];
     if (!relacion) return null;
+
+    // Pedido usado para armar una Nota de Empaque (nov-2026): pasa a Relacionado y no a Asociado. Ya no
+    // está abierto (no se factura directo ni vuelve a ofrecerse para otra NE) y no reserva stock: desde
+    // ahí reserva la NE al aprobarse. Si la NE se da de baja vuelve a Aprobado (ver DarBajaVenta).
+    if (tipoRelacionado === TipoRelacionado.PEDIDO && idProcesoVenta === IdProceso.NOTA_EMPAQUE)
+        return { idProceso: relacion.idProceso, estado: EstadoVenta.RELACIONADO };
 
     const estadoCierre = cierraRelacionado(idProcesoVenta)
         ? RELACION_CIERRE[tipoRelacionado as TipoRelacionado]
