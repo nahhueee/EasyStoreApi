@@ -12,14 +12,30 @@ import { CodigoError } from '../logger/CodigosError';
 interface CatalogoConfig {
     tabla: string;
     // Campos editables además de id / fechaBaja / usuarioBaja. Cada campo nuevo necesita su validación en Normalizar.
-    campos: ('descripcion' | 'orden')[];
+    campos: ('descripcion' | 'abreviatura' | 'orden')[];
     ordenarPor: string;
     maxDescripcion: number;
+    // Solo para catálogos con campo 'abreviatura' (obligatoria, se guarda en mayúsculas).
+    maxAbreviatura?: number;
     // Subconsulta que cuenta cuántas veces se usa el registro `t` (alimenta la columna "En uso" y las reglas de edición).
     sqlUso: string;
     // Si es true, la descripción de un registro en uso no se puede cambiar: el cruce con los comprobantes es por TEXTO.
     descripcionBloqueadaSiEnUso: boolean;
-    mensajeRenombreBloqueado: (enUso: number) => string;
+    mensajeRenombreBloqueado?: (enUso: number) => string;
+}
+
+// Catálogos de producto (F2): los productos referencian por ID (idTipo, idSubTipo, idTemporada, idGenero), así que
+// renombrar o cambiar la abreviatura no rompe nada: solo afecta a los nombres de productos que se creen después.
+function CatalogoDeProducto(tabla: string, columnaProducto: string): CatalogoConfig {
+    return {
+        tabla,
+        campos: ['descripcion', 'abreviatura'],
+        ordenarPor: 't.descripcion',
+        maxDescripcion: 50,
+        maxAbreviatura: 10,
+        sqlUso: `SELECT COUNT(*) FROM productos p WHERE p.${columnaProducto} = t.id AND p.fechaBaja IS NULL`,
+        descripcionBloqueadaSiEnUso: false,
+    };
 }
 
 const CATALOGOS: Record<string, CatalogoConfig> = {
@@ -33,6 +49,11 @@ const CATALOGOS: Record<string, CatalogoConfig> = {
         mensajeRenombreBloqueado: (enUso) =>
             `Este motivo ya se usó en ${enUso} comprobante${enUso === 1 ? '' : 's'}; no se puede renombrar. Dalo de baja y creá uno nuevo.`,
     },
+    // En la UI "Producto" = tipos_producto y "Tipo" = subtipos_producto (las tablas no se renombran).
+    'tipos-producto': CatalogoDeProducto('tipos_producto', 'idTipo'),
+    'subtipos-producto': CatalogoDeProducto('subtipos_producto', 'idSubTipo'),
+    'temporadas': CatalogoDeProducto('temporadas', 'idTemporada'),
+    'generos': CatalogoDeProducto('generos', 'idGenero'),
 };
 
 function Validacion(mensaje: string, cat?: string): AppError {
@@ -65,6 +86,12 @@ function Normalizar(cfg: CatalogoConfig, body: any): Record<string, any> {
             if (descripcion.length > cfg.maxDescripcion)
                 throw Validacion(`La descripción no puede superar los ${cfg.maxDescripcion} caracteres.`);
             datos.descripcion = descripcion;
+        } else if (campo === 'abreviatura') {
+            const abreviatura = String(body?.abreviatura ?? '').trim().toUpperCase();
+            const max = cfg.maxAbreviatura ?? 10;
+            if (!abreviatura) throw Validacion('La abreviatura es obligatoria.');
+            if (abreviatura.length > max) throw Validacion(`La abreviatura no puede superar los ${max} caracteres.`);
+            datos.abreviatura = abreviatura;
         } else if (campo === 'orden') {
             const crudo = body?.orden;
             if (crudo === undefined || crudo === null || crudo === '') continue; // alta: se asigna el siguiente; modificación: no se toca
@@ -161,7 +188,7 @@ class CatalogosRepository {
             if (!actual) throw NoEncontrado('El registro no existe.', cat);
 
             if (cfg.descripcionBloqueadaSiEnUso && datos.descripcion !== actual.descripcion && actual.enUso > 0)
-                throw Validacion(cfg.mensajeRenombreBloqueado(actual.enUso), cat);
+                throw Validacion(cfg.mensajeRenombreBloqueado?.(actual.enUso) ?? 'La descripción no se puede modificar porque el registro está en uso.', cat);
 
             await ValidarDuplicado(connection, cfg, datos.descripcion, idRegistro);
 
